@@ -10,11 +10,16 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"text/template/parse"
+	"time"
 )
 
 // execError matches the position prefix of a text/template execution error
 // (":1:2: executing \"\" at ").
 var execError = regexp.MustCompile(`^:(\d+):(\d+): executing "" at `)
+
+// renderTimeout bounds the time a template may take.
+const renderTimeout = time.Second
 
 // maxRendered bounds a rendered body, so a template cannot make the server
 // build an unbounded reply.
@@ -27,7 +32,48 @@ func parseTemplate(s string) (*template.Template, error) {
 		msg := strings.TrimPrefix(err.Error(), "template: :")
 		return nil, errors.New("template error at line " + msg)
 	}
+	// Loops and sub-templates have nothing to do here (the data has no lists)
+	// and could keep a request busy without end: {{range 1000000000}}.
+	if len(t.Templates()) > 1 {
+		return nil, errors.New("template error: define and block are not supported")
+	}
+	if t.Tree != nil {
+		if what := forbidden(t.Tree.Root); what != "" {
+			return nil, errors.New("template error: " + what + " is not supported")
+		}
+	}
 	return t, nil
+}
+
+// forbidden finds a range or template action anywhere in the tree.
+func forbidden(n parse.Node) string {
+	switch x := n.(type) {
+	case *parse.ListNode:
+		if x == nil {
+			return ""
+		}
+		for _, c := range x.Nodes {
+			if w := forbidden(c); w != "" {
+				return w
+			}
+		}
+	case *parse.RangeNode:
+		return "range"
+	case *parse.TemplateNode:
+		return "template"
+	case *parse.IfNode:
+		return first(forbidden(x.List), forbidden(x.ElseList))
+	case *parse.WithNode:
+		return first(forbidden(x.List), forbidden(x.ElseList))
+	}
+	return ""
+}
+
+func first(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // Data is what a template sees, e.g.
@@ -133,8 +179,8 @@ func (r Reply) Render(d *Data) (Rendered, error) {
 		if err != nil {
 			return Rendered{}, fmt.Errorf("header %s: %w", h.Name, err)
 		}
-		if strings.ContainsAny(v, "\r\n") {
-			return Rendered{}, fmt.Errorf("header %s: the rendered value has a line break", h.Name)
+		if badHeaderValue(v) {
+			return Rendered{}, fmt.Errorf("header %s: the rendered value has a line break or a control character", h.Name)
 		}
 		out.Headers = append(out.Headers, Header{h.Name, v})
 	}
@@ -154,9 +200,18 @@ func render(src string, d *Data) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The template language cannot loop here, but a deadline keeps a request
+	// from hanging on anything unforeseen; the result is then dropped.
 	var buf capped
-	if err := t.Execute(&buf, d); err != nil {
-		return "", errors.New(execError.ReplaceAllString(strings.TrimPrefix(err.Error(), "template: "), "line $1, column $2: "))
+	done := make(chan error, 1)
+	go func() { done <- t.Execute(&buf, d) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return "", errors.New(execError.ReplaceAllString(strings.TrimPrefix(err.Error(), "template: "), "line $1, column $2: "))
+		}
+	case <-time.After(renderTimeout):
+		return "", fmt.Errorf("rendering took over %s", renderTimeout)
 	}
 	return buf.String(), nil
 }

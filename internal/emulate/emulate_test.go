@@ -51,6 +51,9 @@ func TestValidate(t *testing.T) {
 		c.Checks[0].Error = &errReply
 		mutate(&c)
 		err := c.Validate(wait)
+		if want == "nested range" {
+			want = "range is not supported"
+		}
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err = %v", want, err)
 		}
@@ -177,9 +180,9 @@ func TestRender(t *testing.T) {
 	if _, err := (Reply{Headers: []Header{{"X", "{{.Body}}"}}}).Render(NewData(Request{Body: []byte("a\r\nb")}, nil, 0)); err == nil {
 		t.Fatal("a header value rendered with a line break must fail")
 	}
-	big := Reply{Body: `{{range .Var.X}}{{end}}{{printf "%01048577d" 0}}`}
-	if _, err := big.Render(d); err == nil {
-		t.Fatal("a body over 1 MiB must fail")
+	big := Reply{Body: `{{printf "%0999999d" 0}}{{printf "%0999999d" 0}}`}
+	if _, err := big.Render(d); err == nil || !strings.Contains(err.Error(), "over 1048576 bytes") {
+		t.Fatalf("a body over 1 MiB must fail: %v", err)
 	}
 	notJSON := NewData(Request{Body: []byte("a=1")}, nil, 0)
 	if notJSON.JSON("a") != "" {
@@ -240,5 +243,17 @@ func TestOutcome(t *testing.T) {
 	}
 	if got := ParseOutcome(o.String(), 0); got.Rule != 2 || got.Label != "every 3rd" {
 		t.Fatalf("round trip %+v", got)
+	}
+}
+
+func TestDelayObeysTheCurrentLimit(t *testing.T) {
+	r := Reply{DelayMs: 10_000, JitterMs: 1<<63 - 1}
+	for range 100 {
+		if d := r.Delay(2 * time.Second); d > 2*time.Second || d < 0 {
+			t.Fatalf("delay %v over the 2 s limit", d)
+		}
+	}
+	if d := (Reply{DelayMs: 100}).Delay(time.Minute); d != 100*time.Millisecond {
+		t.Fatalf("plain delay %v", d)
 	}
 }

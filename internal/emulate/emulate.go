@@ -162,8 +162,8 @@ func (r Reply) validate(maxWait time.Duration) error {
 		if framing[strings.ToLower(h.Name)] {
 			return fmt.Errorf("header %s is set by the server (message framing) and cannot be set here", h.Name)
 		}
-		if strings.ContainsAny(h.Value, "\r\n") {
-			return fmt.Errorf("header %s: a value is one line", h.Name)
+		if badHeaderValue(h.Value) {
+			return fmt.Errorf("header %s: a value is one line without control characters", h.Name)
 		}
 		if _, err := parseTemplate(h.Value); err != nil {
 			return fmt.Errorf("header %s: %w", h.Name, err)
@@ -175,7 +175,9 @@ func (r Reply) validate(maxWait time.Duration) error {
 	if r.DelayMs < 0 || r.JitterMs < 0 {
 		return errors.New("delay and jitter cannot be negative")
 	}
-	if time.Duration(r.DelayMs+r.JitterMs)*time.Millisecond > maxWait {
+	// Each part is checked alone first, so the sum cannot overflow.
+	limit := maxWait.Milliseconds()
+	if r.DelayMs > limit || r.JitterMs > limit || r.DelayMs+r.JitterMs > limit {
 		return fmt.Errorf("delay plus jitter is over the maximum wait of %s", maxWait)
 	}
 	return nil
@@ -223,6 +225,12 @@ func (ch Check) validate(maxWait time.Duration) error {
 		}
 	}
 	return nil
+}
+
+// badHeaderValue reports control characters other than a tab, which a
+// header value may not carry (RFC 9110, 5.5).
+func badHeaderValue(v string) bool {
+	return strings.IndexFunc(v, func(r rune) bool { return (r < 0x20 && r != '\t') || r == 0x7f }) >= 0
 }
 
 // Label is a short description of the condition: "every 3rd", "first 2",
@@ -376,11 +384,13 @@ func (f Failed) Refusal() Reply {
 }
 
 // Delay is how long to wait before replying: the fixed delay plus a random
-// part of the jitter.
-func (r Reply) Delay() time.Duration {
-	d := r.DelayMs
-	if r.JitterMs > 0 {
-		d += rand.Int64N(r.JitterMs + 1)
+// part of the jitter, never more than maxWait (a configuration saved under a
+// higher limit still obeys the current one).
+func (r Reply) Delay(maxWait time.Duration) time.Duration {
+	limit := maxWait.Milliseconds()
+	d := min(max(r.DelayMs, 0), limit)
+	if j := min(max(r.JitterMs, 0), limit); j > 0 {
+		d += rand.Int64N(j + 1)
 	}
-	return time.Duration(d) * time.Millisecond
+	return time.Duration(min(d, limit)) * time.Millisecond
 }

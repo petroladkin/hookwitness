@@ -68,7 +68,9 @@ sent, the measured delay, how long a timed-out sender waited.
 Header values and bodies are Go templates over the request:
 `{{.Header "X-Request-Id"}}`, `{{.Query "name"}}`, `{{.JSON "event.items.0.id"}}`
 (a field of a JSON body), `{{.Var.TOKEN}}`, `{{.N}}` (the request's number
-since the counter reset), `{{.Method}}`, `{{.Path}}`, `{{.Body}}`.
+since the counter reset), `{{.Method}}`, `{{.Path}}`, `{{.Body}}`, with `if`,
+`with` and the standard functions; `range` and sub-templates are not
+supported, and rendering is capped at 1 MiB and one second.
 
 Examples:
 

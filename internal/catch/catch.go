@@ -213,7 +213,7 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 			Body:    []byte("Hookwitness could not render this endpoint's reply: " + err.Error() + "\n")}
 	}
 	pl.out.SetReply(rendered)
-	if d := pl.reply.Delay(); d > 0 && err == nil {
+	if d := pl.reply.Delay(h.maxWait()); d > 0 && err == nil {
 		pl.out.DelayMs = h.wait(r, d).Milliseconds()
 	}
 	hd := w.Header()
