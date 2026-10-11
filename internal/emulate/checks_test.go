@@ -272,3 +272,15 @@ func TestSignedContentOfALargeBody(t *testing.T) {
 		t.Fatalf("%+v", vs[0])
 	}
 }
+
+func TestStampWhy(t *testing.T) {
+	for want, o := range map[string]Outcome{
+		"check 1: Stripe signature":     {Source: FromCheck, Check: "check 1: Stripe signature: timestamp 412 s old (tolerance 300 s)"},
+		"check 2: header X-Env missing": {Source: FromCheck, Check: "check 2: header X-Env missing"},
+		"rule 1 · first 2":              {Source: FromRule, Rule: 1, Label: "first 2"},
+	} {
+		if got := o.StampWhy(); got != want {
+			t.Errorf("%q, want %q", got, want)
+		}
+	}
+}

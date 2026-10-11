@@ -312,7 +312,7 @@ templ exhibit(x exhibitView) {
 		</div>
 		<div class={ "stamp", templ.KV("bad", !x.Outcome.Good()) }>
 			{ x.Outcome.Stamp() }
-			if w := x.Outcome.Why(); w != "" {
+			if w := x.Outcome.StampWhy(); w != "" {
 				<small>{ w }</small>
 			}
 		</div>
@@ -407,7 +407,7 @@ templ verdicts(x exhibitView) {
 			for _, v := range x.Verdicts {
 				<div class={ "verdict", "verdict-" + verdictClass(string(v.Result)) }>
 					<div class="vstamp">{ v.Label }: { resultLabel(v.Result) }</div>
-					<p class="note">{ v.Reason }<span class="when">· check { strconv.Itoa(v.Check) } · checked { fullTime(v.At) }</span></p>
+					<p class="note">{ v.Reason }<span class="when">{ " · check " + strconv.Itoa(v.Check) + " · checked " + fullTime(v.At) }</span></p>
 					if v.Expected != "" || v.Received != "" {
 						<div class="scroll">
 							<table class="kv">

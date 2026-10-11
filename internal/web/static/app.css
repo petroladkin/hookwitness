@@ -288,7 +288,7 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 }
 
 /* Authorization verdicts. */
-.row .m .tag{font:600 10px/1 var(--f-data);letter-spacing:.06em;text-transform:uppercase;margin-left:6px;color:var(--alarm)}
+.row .m .tag{font:600 10px/1 var(--f-data);letter-spacing:.06em;text-transform:uppercase;margin-left:6px;color:var(--alarm);white-space:nowrap}
 .row .m .tag.verdict-pass{color:var(--ink)}
 .row .m .tag.verdict-nv{color:var(--muted)}
 .verdict-counts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:8px 0;border-bottom:1px solid var(--rule);font:400 12px/1.3 var(--f-data);color:var(--muted)}

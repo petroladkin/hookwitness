@@ -27,7 +27,7 @@ func TestExhibitVerdicts(t *testing.T) {
 		"<h2>Authorization</h2>",
 		`<div class="verdict verdict-fail"><div class="vstamp">Stripe signature: fail</div>`,
 		"timestamp 412 s old (tolerance 300 s)",
-		"checked 2026-10-11 20:13:02.000 UTC",
+		"timestamp 412 s old (tolerance 300 s)<span class=\"when\"> · check 1 · checked 2026-10-11 20:13:02.000 UTC</span>",
 		"<tr><th>expected</th><td>t=1,v1=c4bcbd5f…</td></tr>",
 		`<div class="verdict verdict-pass"><div class="vstamp">Bearer token: pass</div>`,
 		`data-verdict="fail"`,
