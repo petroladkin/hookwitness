@@ -187,3 +187,40 @@ func TestStandard(t *testing.T) {
 		t.Error("a key that is not base64 accepted")
 	}
 }
+
+func TestHMAC(t *testing.T) {
+	vs := load(t)
+	gh := vs.GitHub[0]
+	asGitHub := HMACParams{Header: "X-Hub-Signature-256", Algo: "sha256", Encoding: "hex", Prefix: "sha256="}
+	check(t, "GitHub through the generic check", HMAC(in(gh.Body, asGitHub.Header, gh.Header), asGitHub, gh.Secret, []byte(gh.Body)),
+		outcome{Pass, "signature matches"})
+	for _, v := range vs.HMAC {
+		p := HMACParams{Header: v.Header, Algo: v.Algo, Encoding: v.Encoding, Prefix: v.Prefix}
+		check(t, v.Name, HMAC(in(v.Body, v.Header, v.Value), p, v.Secret, []byte(v.Body)), outcome{Pass, "signature matches"})
+		check(t, v.Name+", other content", HMAC(in(v.Body, v.Header, v.Value), p, v.Secret, []byte(v.Body+" ")), outcome{Fail, "signature does not match"})
+	}
+	sha1 := vs.HMAC[0]
+	p := HMACParams{Header: sha1.Header, Algo: "sha1", Encoding: "hex", Prefix: "sha1="}
+	b64 := vs.HMAC[1]
+	pb := HMACParams{Header: b64.Header, Algo: "sha512", Encoding: "base64"}
+	for _, c := range []struct {
+		name string
+		v    Verdict
+		want outcome
+	}{
+		{"missing", HMAC(in(sha1.Body), p, sha1.Secret, []byte(sha1.Body)), outcome{Fail, "header X-Hub-Signature missing"}},
+		{"prefix absent", HMAC(in(sha1.Body, p.Header, sha1.Value[5:]), p, sha1.Secret, []byte(sha1.Body)), outcome{Fail, `value does not start with "sha1="`}},
+		{"not hex", HMAC(in(sha1.Body, p.Header, "sha1=xyz"), p, sha1.Secret, []byte(sha1.Body)), outcome{Fail, "signature is not hex"}},
+		{"not base64", HMAC(in(b64.Body, pb.Header, "***"), pb, b64.Secret, []byte(b64.Body)), outcome{Fail, "signature is not base64"}},
+		{"wrong secret", HMAC(in(sha1.Body, p.Header, sha1.Value), p, "other", []byte(sha1.Body)), outcome{Fail, "signature does not match"}},
+		{"no body kept", HMAC(Input{Headers: []Header{{p.Header, sha1.Value}}}, p, sha1.Secret, nil), outcome{NotVerifiable, "body not kept (over the size limit)"}},
+	} {
+		check(t, c.name, c.v, c.want)
+	}
+	if got := HMAC(in(sha1.Body, p.Header, "sha1=00"), p, sha1.Secret, []byte(sha1.Body)); got.Expected != "sha1=01dc10d0…" || got.Received != "sha1=00" {
+		t.Errorf("evidence: expected %q received %q", got.Expected, got.Received)
+	}
+	if !ValidAlgo("sha512") || ValidAlgo("md5") {
+		t.Error("ValidAlgo")
+	}
+}
