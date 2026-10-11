@@ -137,3 +137,53 @@ func TestStripe(t *testing.T) {
 		t.Errorf("evidence: expected %q received %q", got.Expected, got.Received)
 	}
 }
+
+func TestStandard(t *testing.T) {
+	v := load(t).Standard[0]
+	tol := Tolerance{Seconds: 300}
+	headers := func(prefix, sig string) []string {
+		return []string{prefix + "id", v.ID, prefix + "timestamp", v.Timestamp, prefix + "signature", sig}
+	}
+	other := "v1,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	for _, c := range []struct {
+		name     string
+		headers  []string
+		received int64 // the vector is signed at 1614265330
+		tol      Tolerance
+		want     outcome
+	}{
+		{"published vector", headers("webhook-", v.Signature), 1614265340, tol, outcome{Pass, "signature matches"}},
+		{"svix headers", headers("svix-", v.Signature), 1614265340, tol, outcome{Pass, "signature matches"}},
+		{"several signatures", headers("webhook-", other+" "+v.Signature), 1614265340, tol, outcome{Pass, "signature matches"}},
+		{"unknown version only", headers("webhook-", "v1a,"+v.Signature[3:]), 1614265340, tol, outcome{Fail, "no v1 signature in webhook-signature"}},
+		{"mismatch", headers("webhook-", other), 1614265340, tol, outcome{Fail, "signature does not match"}},
+		{"missing id", headers("webhook-", v.Signature)[2:], 1614265340, tol, outcome{Fail, "header webhook-id missing"}},
+		{"missing svix id", headers("svix-", v.Signature)[2:], 1614265340, tol, outcome{Fail, "header svix-id missing"}},
+		{"missing timestamp", append(headers("webhook-", v.Signature)[:2], headers("webhook-", v.Signature)[4:]...), 1614265340, tol, outcome{Fail, "header webhook-timestamp missing"}},
+		{"nothing at all", nil, 1614265340, tol, outcome{Fail, "header webhook-signature missing"}},
+		{"timestamp not a number", []string{"webhook-id", v.ID, "webhook-timestamp", "now", "webhook-signature", v.Signature}, 1614265340, tol, outcome{Fail, "header webhook-timestamp is not a unix time"}},
+		{"old", headers("webhook-", v.Signature), 1614265330 + 301, tol, outcome{Fail, "timestamp 301 s old (tolerance 300 s)"}},
+		{"future", headers("webhook-", v.Signature), 1614265330 - 400, tol, outcome{Fail, "timestamp 400 s in the future (tolerance 300 s)"}},
+		{"old but ignored", headers("webhook-", v.Signature), 1714265330, Tolerance{Ignore: true}, outcome{Pass, "signature matches"}},
+	} {
+		x := in(v.Body, c.headers...)
+		x.Received = time.Unix(c.received, 0)
+		check(t, c.name, Standard(x, v.Secret, c.tol), c.want)
+	}
+	x := in(v.Body, headers("webhook-", v.Signature)...)
+	x.Received = time.Unix(1614265340, 0)
+	check(t, "not a whsec_ secret", Standard(x, "whsec_***", tol), outcome{Fail, `the secret is not "whsec_" and base64`})
+	check(t, "no body kept", Standard(Input{Headers: x.Headers, Received: x.Received}, v.Secret, tol),
+		outcome{NotVerifiable, "body not kept (over the size limit)"})
+	x = in(v.Body, headers("webhook-", other)...)
+	x.Received = time.Unix(1614265340, 0)
+	if got := Standard(x, v.Secret, tol); got.Expected != "v1,g0hM9SsE…" || got.Received != other {
+		t.Errorf("evidence: expected %q received %q", got.Expected, got.Received)
+	}
+	if _, err := StandardKey("whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"); err != nil {
+		t.Error(err)
+	}
+	if _, err := StandardKey("not base64!"); err == nil {
+		t.Error("a key that is not base64 accepted")
+	}
+}
