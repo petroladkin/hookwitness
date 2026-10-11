@@ -186,11 +186,19 @@ func TestVerify(t *testing.T) {
 		t.Fatalf("no body: %+v %+v", refuse, vs)
 	}
 
-	// A signing key that cannot be opened: not verifiable, with the reason.
+	// A signing key that cannot be opened: not verifiable, with the reason;
+	// enforced, that refuses (a lost key must not open the endpoint).
 	c.Secrets[0].Sealed = "garbled"
-	vs, _ = c.Verify(req("X-Env", "1", "X-Hub-Signature-256", good, "Authorization", "Bearer tok_test"), at, true, keyring{})
+	vs, refuse = c.Verify(req("X-Env", "1", "X-Hub-Signature-256", good, "Authorization", "Bearer tok_test"), at, true, keyring{})
 	if vs[0].Result != auth.NotVerifiable || vs[0].Reason != "secret GH cannot be decrypted (wrong secret key?)" {
 		t.Fatalf("unreadable secret: %+v", vs[0])
+	}
+	if refuse == nil || refuse.Index != 2 || refuse.Refusal().Status != 401 {
+		t.Fatalf("an enforced check that cannot verify must refuse: %+v", refuse)
+	}
+	c.Checks[1].Enforce = false
+	if _, refuse = c.Verify(req("X-Env", "1", "X-Hub-Signature-256", good, "Authorization", "Bearer tok_test"), at, true, keyring{}); refuse != nil {
+		t.Fatalf("record only must not refuse: %+v", refuse)
 	}
 }
 

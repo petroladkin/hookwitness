@@ -115,8 +115,9 @@ secret cannot be decrypted). Add checks on the Behaviour page's Checks tab:
 | Basic credentials | `Authorization: Basic base64(user:password)` |
 
 A check records its verdict and lets the request through (the reply is the
-usual one). Switch on **enforce** and a failing request is refused before the
-rules (and not counted): `401` with the reason, `WWW-Authenticate` for bearer
+usual one). Switch on **enforce** and a request that does not pass is refused
+before the rules (and not counted) — also when the check cannot verify it,
+e.g. its secret cannot be decrypted: `401` with the reason, `WWW-Authenticate` for bearer
 and basic, or your own reply. A failed signature shows the signature received
 in full and the first 8 characters of the expected one, enough to tell a
 wrong secret from wrong content, not enough to forge a signature. Signed

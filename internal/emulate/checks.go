@@ -185,7 +185,8 @@ func (c Config) validateAuth(ch Check, maxWait time.Duration) error {
 
 // Verify runs the checks in order. Every authorization check gives a verdict,
 // whatever the others did; the first failure that refuses — a required
-// header, or an authorization check with Enforce — is returned. received is
+// header, or an authorization check with Enforce that did not pass — is
+// returned. received is
 // when the request arrived (signed timestamps are judged against it, so a
 // re-check later agrees); each verdict records when it was computed.
 // hasBody is false for a request whose body was not kept.
@@ -210,7 +211,10 @@ func (c Config) Verify(r Request, received time.Time, hasBody bool, keys Keyring
 		v := c.verify(ch, r, in, keys)
 		v.Check, v.Label, v.At = i+1, ch.Label(), now
 		verdicts = append(verdicts, v)
-		if refuse == nil && ch.Enforce && v.Result == auth.Fail {
+		// An enforced check lets through only what it could verify: a secret it
+		// cannot open (a lost key file) must not open the endpoint. A body that
+		// was not kept is answered 413 anyway.
+		if refuse == nil && ch.Enforce && v.Result != auth.Pass && (v.Result == auth.Fail || hasBody) {
 			refuse = &Failed{Index: i + 1, Check: ch, Why: v.Reason}
 		}
 	}

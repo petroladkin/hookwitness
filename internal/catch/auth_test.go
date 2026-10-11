@@ -178,3 +178,21 @@ func TestNoChecksNoVerdict(t *testing.T) {
 		t.Fatalf("%q %q", r.Verdict, r.Verdicts)
 	}
 }
+
+// TestLostKeyKeepsEnforcedEndpointsClosed: with a key that cannot open the
+// signing key (the key file was lost and recreated), an enforced check
+// refuses even a correctly signed request instead of letting it through.
+func TestLostKeyKeepsEnforcedEndpointsClosed(t *testing.T) {
+	h, st, _ := setup(t, 1<<20)
+	k := withKeys(t, h)
+	url := serve(t, h)
+	ep := configure(t, st, "/gh", authConfig(k, true))
+	withKeys(t, h) // a new, different key
+	resp, body, _ := do(t, http.DefaultClient, "POST", url+"/gh", `{"a":1}`, "X-Hub-Signature-256", ghSignature("gh_test", `{"a":1}`))
+	if resp.StatusCode != 401 || !strings.Contains(body, "cannot be decrypted") {
+		t.Fatalf("%d %q", resp.StatusCode, body)
+	}
+	if r, _ := lastOutcome(t, st, ep); r.Verdict != "n/v" {
+		t.Fatalf("verdict %q", r.Verdict)
+	}
+}
