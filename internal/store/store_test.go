@@ -195,3 +195,38 @@ func TestPathWithURICharacters(t *testing.T) {
 		t.Fatalf("database not at %q; directory holds %v", p, names)
 	}
 }
+
+// Two processes starting on one new database must not both apply the same
+// migration; here two pools stand in for the two processes.
+func TestConcurrentOpenAppliesOnce(t *testing.T) {
+	ctx := context.Background()
+	p := tempDB(t)
+	const n = 4
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			s, err := Open(ctx, p)
+			if err == nil {
+				s.Close()
+			}
+			errs <- err
+		}()
+	}
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent open: %v", err)
+		}
+	}
+	s, err := Open(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var rows int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if _, count := newest(t); rows != count {
+		t.Fatalf("%d migration rows, want %d", rows, count)
+	}
+}

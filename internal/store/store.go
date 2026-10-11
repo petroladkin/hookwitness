@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/rand/v2"
 	"net/url"
 	"path"
 	"sort"
@@ -16,7 +17,8 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite" // registers the "sqlite" driver
+	"modernc.org/sqlite" // also registers the "sqlite" driver
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 //go:embed migrations/*.sql
@@ -53,15 +55,51 @@ func open(ctx context.Context, dbPath string, migrations fs.FS) (*Store, error) 
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", dbPath, err)
 	}
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("open %s: %w", dbPath, err)
+	// Two processes starting on the same new file race for the switch to WAL,
+	// and SQLite reports that as SQLITE_BUSY without waiting on busy_timeout.
+	// The loser retries the whole setup for a while; migrations are idempotent.
+	deadline := time.Now().Add(setupRetry)
+	for {
+		err = setup(ctx, db, dbPath, ms)
+		if err == nil || !isBusy(err) || time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+		case <-time.After(time.Duration(10+rand.IntN(40)) * time.Millisecond):
+			continue
+		}
+		break
 	}
-	if err := migrate(ctx, db, ms); err != nil {
+	if err != nil {
 		db.Close()
 		return nil, err
 	}
 	return &Store{db: db}, nil
+}
+
+// setupRetry bounds how long Open keeps retrying a busy database.
+const setupRetry = 10 * time.Second
+
+func setup(ctx context.Context, db *sql.DB, dbPath string, ms []migration) error {
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("open %s: %w", dbPath, err)
+	}
+	return migrate(ctx, db, ms)
+}
+
+// isBusy reports SQLITE_BUSY or SQLITE_LOCKED, including extended codes.
+func isBusy(err error) bool {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.Code() & 0xff {
+	case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+		return true
+	}
+	return false
 }
 
 // uriPath escapes the characters that would otherwise end the path part of a
@@ -70,11 +108,13 @@ func open(ctx context.Context, dbPath string, migrations fs.FS) (*Store, error) 
 var uriPath = strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23")
 
 // dsn builds the modernc.org/sqlite connection string. The pragmas are set on
-// every new connection of the pool, not once.
+// every new connection of the pool, not once, in this order: busy_timeout
+// first, so that switching to WAL waits for a lock instead of failing at once
+// when another process opens the same new file.
 func dsn(dbPath string) string {
 	q := url.Values{}
-	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_txlock", "immediate")
 	return "file:" + uriPath.Replace(dbPath) + "?" + q.Encode()
@@ -145,6 +185,15 @@ func apply(ctx context.Context, db *sql.DB, m migration) error {
 		return fmt.Errorf("migration %s: %w", m.name, err)
 	}
 	defer tx.Rollback()
+	// Another process may have applied it since the version was read; the
+	// transaction is IMMEDIATE (_txlock), so this re-read is under the lock.
+	var done int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, m.version).Scan(&done); err != nil {
+		return fmt.Errorf("migration %s: %w", m.name, err)
+	}
+	if done > 0 {
+		return nil
+	}
 	if _, err := tx.ExecContext(ctx, m.sql); err != nil {
 		return fmt.Errorf("migration %s: %w", m.name, err)
 	}
