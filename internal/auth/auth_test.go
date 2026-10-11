@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -301,4 +302,21 @@ func TestStripeRepeatedTimestamp(t *testing.T) {
 	// The last t= wins, as in a simple key=value parse; the signature was made for the first.
 	x := in(v.Body, "Stripe-Signature", "t="+v.Timestamp+",t=1760200001,v1="+v.V1)
 	check(t, "repeated t", Stripe(x, v.Secret, Tolerance{Seconds: 300}), outcome{Fail, "signature does not match"})
+}
+
+func TestParserLeniency(t *testing.T) {
+	check(t, "bearer after a tab", Bearer(in("", "Authorization", "Bearer\ttok_test_123"), equals("tok_test_123")), outcome{Pass, "token matches"})
+	v := load(t).HMAC[1] // sha512 base64
+	p := HMACParams{Header: v.Header, Algo: v.Algo, Encoding: "base64"}
+	std, _ := base64.StdEncoding.DecodeString(v.Value)
+	for name, enc := range map[string]string{
+		"URL alphabet":    base64.URLEncoding.EncodeToString(std),
+		"no padding":      base64.RawStdEncoding.EncodeToString(std),
+		"URL, no padding": base64.RawURLEncoding.EncodeToString(std),
+	} {
+		check(t, name, HMAC(in(v.Body, v.Header, enc), p, v.Secret, []byte(v.Body)), outcome{Pass, "signature matches"})
+	}
+	gh := load(t).GitHub[0]
+	ph := HMACParams{Header: "X-Sig", Algo: "sha256", Encoding: "hex", Prefix: "sha256="}
+	check(t, "upper-case hex", HMAC(in(gh.Body, "X-Sig", strings.ToUpper(gh.Header[:7])[:0]+"sha256="+strings.ToUpper(gh.Header[7:])), ph, gh.Secret, []byte(gh.Body)), outcome{Pass, "signature matches"})
 }

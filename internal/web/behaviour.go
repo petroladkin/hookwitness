@@ -236,6 +236,12 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 			if ed = openEditor(cfg, section); ed != nil && ed.Kind != "default" {
 				ed.I = r.PostFormValue("i")
 			}
+			// A refused replacement shows the secret as it is still stored.
+			if ed != nil && ed.Kind == "secret" {
+				if n, err := strconv.Atoi(ed.I); err == nil && n < len(stored.Secrets) {
+					ed.Secret = stored.Secrets[n]
+				}
+			}
 		}
 		refuse(http.StatusUnprocessableEntity, section, err.Error(), ed)
 		return

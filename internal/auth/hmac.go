@@ -14,6 +14,25 @@ type HMACParams struct {
 	Prefix   string // before the signature, e.g. "sha256="; may be empty
 }
 
+// decodeSig decodes a received signature: hex in either case, or base64 in
+// any of its forms (standard or URL alphabet, padded or not), since senders
+// differ.
+func decodeSig(encoding, sig string) ([]byte, bool) {
+	if sig == "" {
+		return nil, false
+	}
+	if encoding != "base64" {
+		b, err := hex.DecodeString(sig)
+		return b, err == nil
+	}
+	for _, e := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.RawURLEncoding} {
+		if b, err := e.DecodeString(sig); err == nil {
+			return b, true
+		}
+	}
+	return nil, false
+}
+
 // ValidAlgo reports whether the generic check knows the algorithm.
 func ValidAlgo(a string) bool { return algos[a] != nil }
 
@@ -36,16 +55,15 @@ func HMAC(in Input, p HMACParams, secret string, content []byte) Verdict {
 	}
 	sig, found := strings.CutPrefix(got, p.Prefix)
 	v := pass()
+	raw, ok := decodeSig(p.Encoding, sig)
 	switch {
 	case !found:
 		v = fail(`value does not start with "` + p.Prefix + `"`)
-	case p.Encoding == "base64" && !isBase64(sig):
+	case !ok && p.Encoding == "base64":
 		v = fail("signature is not base64")
-	case p.Encoding != "base64" && !isHex(sig):
+	case !ok:
 		v = fail("signature is not hex")
-	case p.Encoding == "base64" && !same([]byte(enc), []byte(sig)):
-		v = fail("signature does not match")
-	case p.Encoding != "base64" && !same([]byte(enc), []byte(strings.ToLower(sig))):
+	case !same(sum, raw):
 		v = fail("signature does not match")
 	}
 	v.Expected, v.Received = Short(p.Prefix, enc), got

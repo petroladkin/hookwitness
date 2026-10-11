@@ -354,6 +354,11 @@ func TestSecretsWriteOnly(t *testing.T) {
 	if rec.Code != http.StatusUnprocessableEntity || strings.Contains(rec.Body.String(), "whsec_test_plain_3") || !strings.Contains(rec.Body.String(), `<h2 id="dialog-title">New secret</h2>`) {
 		t.Errorf("refused secret: %d", rec.Code)
 	}
+	// A refused replacement shows the stored fingerprint, not the attempted one.
+	rec = e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"0"}, "value": {" padded "}})
+	if body := rec.Body.String(); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(body, "now <code>"+c.Secrets[0].Fingerprint+"</code>") {
+		t.Errorf("refused replace: %d %q", rec.Code, errorOf(body))
+	}
 	// Replacing keeps the name and kind, changes the value.
 	old := c.Secrets[0].Sealed
 	if rec := e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"0"}, "name": {"OTHER"}, "secret_kind": {"token"}, "value": {"whsec_test_plain_4"}}); rec.Code != http.StatusSeeOther {

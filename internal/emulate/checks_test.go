@@ -256,3 +256,19 @@ func TestRefusalDoesNotRunRequestText(t *testing.T) {
 		t.Fatalf("%q %v", out.Body, err)
 	}
 }
+
+// TestSignedContentOfALargeBody: the content template holds the whole body,
+// which may be over a reply's 1 MiB cap (found in review).
+func TestSignedContentOfALargeBody(t *testing.T) {
+	body := strings.Repeat("x", 2<<20)
+	m := hmac.New(sha256.New, []byte("k_test"))
+	m.Write([]byte("evt_9." + body))
+	sig := hex.EncodeToString(m.Sum(nil))
+	c := Config{Secrets: []Secret{signingKey("K", "k_test")}, Checks: []Check{
+		{Kind: KindHMAC, Secret: "K", Header: "X-Sig", Algo: "sha256", Encoding: "hex", Content: `{{.Header "X-Id"}}.{{.Body}}`},
+	}}
+	vs, _ := c.Verify(Request{Body: []byte(body), Headers: []Header{{"X-Id", "evt_9"}, {"X-Sig", sig}}}, time.Now(), true, keyring{})
+	if vs[0].Result != auth.Pass {
+		t.Fatalf("%+v", vs[0])
+	}
+}

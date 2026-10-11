@@ -3,7 +3,6 @@ package catch
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -15,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/petroladkin/hookwitness/internal/auth"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -115,6 +113,7 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	if errors.Is(err, store.ErrNotFound) {
 		// The endpoint was deleted after the lookup: the path is unknown now.
 		req.EndpointID = store.Unmatched
+		req.Verdict, req.Verdicts = "", "" // the endpoint's checks no longer apply
 		plan = h.plan(req, "")
 		err = h.Store.AddRequest(ctx, req, h.Retention, nil)
 	}
@@ -168,7 +167,7 @@ func (h *Handler) plan(req *store.Request, cfgText string) *plan {
 	// Every authorization check gives its verdict, also on a request whose
 	// body was not kept (those that need it say "not verifiable").
 	verdicts, f := cfg.Verify(er, req.ReceivedAt, !req.TooLarge, h.Keys)
-	req.Verdict, req.Verdicts = emulate.Overall(verdicts), verdictsJSON(verdicts)
+	req.Verdict, req.Verdicts = emulate.Overall(verdicts), emulate.VerdictsJSON(verdicts)
 	if req.TooLarge {
 		pl.out = emulate.Outcome{Source: emulate.FromLimit, Action: emulate.ActReply, Status: http.StatusRequestEntityTooLarge}
 		req.Status, req.Outcome = pl.out.Status, pl.out.String()
@@ -205,15 +204,6 @@ func EmulateRequest(r store.Request) emulate.Request {
 		er.Headers = append(er.Headers, emulate.Header{Name: hd.Name, Value: hd.Value})
 	}
 	return er
-}
-
-// verdictsJSON is the stored form of verdicts, "" without any.
-func verdictsJSON(vs []auth.Verdict) string {
-	if len(vs) == 0 {
-		return ""
-	}
-	b, _ := json.Marshal(vs)
-	return string(b)
 }
 
 // carryOut answers the request as planned and reports whether the outcome

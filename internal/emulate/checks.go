@@ -1,6 +1,7 @@
 package emulate
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -262,13 +263,23 @@ func (c Config) verify(ch Check, r Request, in auth.Input, keys Keyring) auth.Ve
 	}
 	content := r.Body
 	if ch.Content != "" && in.HasBody {
-		out, err := render(ch.Content, NewData(r, nil, 0))
+		// The body plus a reply's worth of room for whatever surrounds it.
+		out, err := renderUpTo(ch.Content, NewData(r, nil, 0), len(r.Body)+maxRendered)
 		if err != nil {
 			return auth.Verdict{Result: auth.Fail, Reason: "signed content: " + err.Error()}
 		}
 		content = []byte(out)
 	}
 	return auth.HMAC(in, auth.HMACParams{Header: ch.Header, Algo: ch.Algo, Encoding: ch.Encoding, Prefix: ch.Prefix}, key, content)
+}
+
+// VerdictsJSON is the stored form of verdicts, "" without any.
+func VerdictsJSON(vs []auth.Verdict) string {
+	if len(vs) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(vs)
+	return string(b)
 }
 
 // Overall is a request's verdict across its checks: fail if any failed,

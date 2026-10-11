@@ -81,13 +81,8 @@ func (h *Handler) recheck(w http.ResponseWriter, r *http.Request) {
 			er.Headers = append(er.Headers, emulate.Header{Name: hd.Name, Value: hd.Value})
 		}
 		vs, _ := cfg.Verify(er, req.ReceivedAt, !req.TooLarge, h.keys)
-		stored := ""
-		if len(vs) > 0 {
-			b, _ := json.Marshal(vs)
-			stored = string(b)
-		}
 		n++
-		return h.store.SetVerdicts(ctx, req.ID, emulate.Overall(vs), stored)
+		return h.store.SetVerdicts(ctx, req.ID, emulate.Overall(vs), emulate.VerdictsJSON(vs))
 	})
 	if err != nil {
 		h.fail(w, "re-check", err)

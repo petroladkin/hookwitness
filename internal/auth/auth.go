@@ -12,7 +12,6 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/hex"
 	"hash"
 	"strings"
@@ -91,10 +90,5 @@ func noBody() Verdict {
 
 func isHex(s string) bool {
 	_, err := hex.DecodeString(s)
-	return err == nil && s != ""
-}
-
-func isBase64(s string) bool {
-	_, err := base64.StdEncoding.DecodeString(s)
 	return err == nil && s != ""
 }

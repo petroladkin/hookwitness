@@ -162,10 +162,13 @@ type Rendered struct {
 // errTooLarge is returned when a template renders more than maxRendered.
 var errTooLarge = fmt.Errorf("the rendered body is over %d bytes", maxRendered)
 
-type capped struct{ bytes.Buffer }
+type capped struct {
+	bytes.Buffer
+	limit int
+}
 
 func (c *capped) Write(p []byte) (int, error) {
-	if c.Len()+len(p) > maxRendered {
+	if c.Len()+len(p) > c.limit {
 		return 0, errTooLarge
 	}
 	return c.Buffer.Write(p)
@@ -192,7 +195,11 @@ func (r Reply) Render(d *Data) (Rendered, error) {
 	return out, nil
 }
 
-func render(src string, d *Data) (string, error) {
+func render(src string, d *Data) (string, error) { return renderUpTo(src, d, maxRendered) }
+
+// renderUpTo renders with its own size cap: signed content holds the whole
+// body, which may be larger than a reply may be.
+func renderUpTo(src string, d *Data, limit int) (string, error) {
 	if !strings.Contains(src, "{{") {
 		return src, nil
 	}
@@ -202,7 +209,7 @@ func render(src string, d *Data) (string, error) {
 	}
 	// The template language cannot loop here, but a deadline keeps a request
 	// from hanging on anything unforeseen; the result is then dropped.
-	var buf capped
+	buf := capped{limit: limit}
 	done := make(chan error, 1)
 	go func() { done <- t.Execute(&buf, d) }()
 	select {

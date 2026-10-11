@@ -15,7 +15,11 @@ func credentials(in Input, scheme string) (string, Verdict, bool) {
 	if !ok {
 		return "", fail("header Authorization missing"), false
 	}
-	s, cred, _ := strings.Cut(strings.TrimSpace(got), " ")
+	got = strings.TrimSpace(got)
+	s, cred := got, ""
+	if i := strings.IndexAny(got, " \t"); i >= 0 {
+		s, cred = got[:i], got[i+1:]
+	}
 	if !strings.EqualFold(s, scheme) {
 		return "", fail("scheme is " + s + ", not " + scheme), false
 	}
