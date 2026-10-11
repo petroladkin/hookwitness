@@ -33,6 +33,14 @@ func send(h *Handler, method, target string, body io.Reader) *httptest.ResponseR
 	return rec
 }
 
+func sendRequest(h *Handler, req *http.Request) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(req.Method, req.URL.String(), req.Body)
+	r.Header = req.Header
+	rec := httptest.NewRecorder()
+	h.Catch(rec, r, nil, false)
+	return rec
+}
+
 func TestAnyMethodToAnEndpoint(t *testing.T) {
 	h, st, _ := setup(t, 1<<20)
 	ep, _ := st.CreateEndpoint(context.Background(), "/hooks/a")

@@ -186,7 +186,8 @@ func (c Config) validateAuth(ch Check, maxWait time.Duration) error {
 // Verify runs the checks in order. Every authorization check gives a verdict,
 // whatever the others did; the first failure that refuses — a required
 // header, or an authorization check with Enforce — is returned. received is
-// when the request arrived (signed timestamps are judged against it);
+// when the request arrived (signed timestamps are judged against it, so a
+// re-check later agrees); each verdict records when it was computed.
 // hasBody is false for a request whose body was not kept.
 func (c Config) Verify(r Request, received time.Time, hasBody bool, keys Keyring) ([]auth.Verdict, *Failed) {
 	in := auth.Input{Body: r.Body, HasBody: hasBody, Received: received}
@@ -195,6 +196,7 @@ func (c Config) Verify(r Request, received time.Time, hasBody bool, keys Keyring
 	}
 	var verdicts []auth.Verdict
 	var refuse *Failed
+	now := time.Now().UTC().Truncate(time.Millisecond)
 	for i, ch := range c.Checks {
 		if !ch.IsAuth() {
 			if refuse == nil {
@@ -206,7 +208,7 @@ func (c Config) Verify(r Request, received time.Time, hasBody bool, keys Keyring
 			continue
 		}
 		v := c.verify(ch, r, in, keys)
-		v.Check, v.Label, v.At = i+1, ch.Label(), received.UTC()
+		v.Check, v.Label, v.At = i+1, ch.Label(), now
 		verdicts = append(verdicts, v)
 		if refuse == nil && ch.Enforce && v.Result == auth.Fail {
 			refuse = &Failed{Index: i + 1, Check: ch, Why: v.Reason}
@@ -219,6 +221,9 @@ func (c Config) verify(ch Check, r Request, in auth.Input, keys Keyring) auth.Ve
 	s, ok := c.SecretByName(ch.Secret)
 	if !ok {
 		return auth.Verdict{Result: auth.NotVerifiable, Reason: "secret " + ch.Secret + " does not exist"}
+	}
+	if keys == nil {
+		return auth.Verdict{Result: auth.NotVerifiable, Reason: "no secret key loaded"}
 	}
 	if !ch.usesKey() {
 		match := func(v string) bool { return keys.MatchToken(s.Hash, v) }

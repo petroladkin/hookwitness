@@ -17,6 +17,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/config"
 	"github.com/petroladkin/hookwitness/internal/live"
+	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/server"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/version"
@@ -83,6 +84,18 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	}
 	defer st.Close()
 
+	// Endpoint secrets are sealed or hashed with this key; a database copied
+	// without it reveals none of them.
+	keys, err := secret.Load(getenv("HOOKWITNESS_SECRET_KEY"), cfg.DBPath+".key")
+	if err != nil {
+		log.Error("cannot load the secret key", "err", err)
+		return 1
+	}
+	keySource := "HOOKWITNESS_SECRET_KEY"
+	if getenv("HOOKWITNESS_SECRET_KEY") == "" {
+		keySource = cfg.DBPath + ".key"
+	}
+
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
 		log.Error("cannot listen", "addr", cfg.Addr, "err", err)
@@ -93,10 +106,10 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 		"version", version.Version, "commit", version.Commit,
 		"addr", ln.Addr().String(), "db", cfg.DBPath, "schema", schema,
 		"ui", "http://"+ln.Addr().String()+cfg.AdminPrefix+"/",
-		"max_body", cfg.MaxBody, "retention", cfg.Retention)
+		"max_body", cfg.MaxBody, "retention", cfg.Retention, "secret_key", keySource)
 
 	broker := live.New()
-	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, Retention: cfg.Retention, MaxWait: cfg.MaxWait}
+	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, Retention: cfg.Retention, MaxWait: cfg.MaxWait, Keys: keys}
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait,
 	})

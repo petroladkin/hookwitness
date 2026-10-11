@@ -144,7 +144,7 @@ func TestVerify(t *testing.T) {
 	if refuse != nil || len(vs) != 2 {
 		t.Fatalf("recording-only failure refused: %+v %+v", refuse, vs)
 	}
-	if vs[0].Check != 2 || vs[0].Label != "GitHub signature" || vs[0].Result != auth.Pass || !vs[0].At.Equal(at) ||
+	if vs[0].Check != 2 || vs[0].Label != "GitHub signature" || vs[0].Result != auth.Pass || time.Since(vs[0].At) > time.Minute ||
 		vs[1].Check != 3 || vs[1].Result != auth.Fail || vs[1].Reason != "token does not match" {
 		t.Fatalf("verdicts %+v", vs)
 	}

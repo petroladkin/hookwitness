@@ -3,6 +3,7 @@ package catch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/petroladkin/hookwitness/internal/auth"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -34,6 +36,8 @@ type Handler struct {
 	// MaxWait caps a timeout's hold (delays are capped when configured).
 	// Zero means DefaultMaxWait.
 	MaxWait time.Duration
+	// Keys opens signing keys and matches tokens of authorization checks.
+	Keys emulate.Keyring
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -154,23 +158,24 @@ func (h *Handler) plan(req *store.Request, cfgText string) *plan {
 		pl.closing = req.TooLarge
 		return pl
 	}
-	if req.TooLarge {
-		pl.out = emulate.Outcome{Source: emulate.FromLimit, Action: emulate.ActReply, Status: http.StatusRequestEntityTooLarge}
-		req.Status, req.Outcome = pl.out.Status, pl.out.String()
-		pl.closing = true
-		return pl
-	}
 	cfg, err := emulate.Parse(cfgText)
 	if err != nil {
 		h.Log.Error("catch: endpoint behaviour unreadable; using the default reply", "path", req.Path, "err", err)
 		cfg = emulate.DefaultConfig()
 	}
 	pl.cfg = cfg
-	er := emulate.Request{Method: req.Method, Path: req.Path, RawQuery: req.RawQuery, Body: req.Body}
-	for _, hd := range req.Headers {
-		er.Headers = append(er.Headers, emulate.Header{Name: hd.Name, Value: hd.Value})
+	er := EmulateRequest(*req)
+	// Every authorization check gives its verdict, also on a request whose
+	// body was not kept (those that need it say "not verifiable").
+	verdicts, f := cfg.Verify(er, req.ReceivedAt, !req.TooLarge, h.Keys)
+	req.Verdict, req.Verdicts = emulate.Overall(verdicts), verdictsJSON(verdicts)
+	if req.TooLarge {
+		pl.out = emulate.Outcome{Source: emulate.FromLimit, Action: emulate.ActReply, Status: http.StatusRequestEntityTooLarge}
+		req.Status, req.Outcome = pl.out.Status, pl.out.String()
+		pl.closing = true
+		return pl
 	}
-	if f := cfg.RunChecks(er); f != nil {
+	if f != nil {
 		pl.data = emulate.NewData(er, cfg.Vars, 0)
 		pl.reply, pl.render = f.Refusal(), true
 		pl.out = emulate.Outcome{Source: emulate.FromCheck, Check: f.Describe(), Action: emulate.ActRefused, Status: pl.reply.Status}
@@ -191,6 +196,24 @@ func (h *Handler) plan(req *store.Request, cfgText string) *plan {
 		return pl.out.Status, pl.out.String()
 	}
 	return pl
+}
+
+// EmulateRequest is what checks and templates see of a stored request.
+func EmulateRequest(r store.Request) emulate.Request {
+	er := emulate.Request{Method: r.Method, Path: r.Path, RawQuery: r.RawQuery, Body: r.Body}
+	for _, hd := range r.Headers {
+		er.Headers = append(er.Headers, emulate.Header{Name: hd.Name, Value: hd.Value})
+	}
+	return er
+}
+
+// verdictsJSON is the stored form of verdicts, "" without any.
+func verdictsJSON(vs []auth.Verdict) string {
+	if len(vs) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(vs)
+	return string(b)
 }
 
 // carryOut answers the request as planned and reports whether the outcome
