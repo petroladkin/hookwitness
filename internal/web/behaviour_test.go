@@ -71,11 +71,17 @@ func TestBehaviourEdits(t *testing.T) {
 		t.Fatalf("vars %+v", c.Vars)
 	}
 
-	page := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour", nil).Body.String()
-	for _, want := range []string{"12.5% → drop the connection", "first 2 → 503", "header Authorization matches /^Bearer /",
-		"TOKEN=tok_test", "X-A: 2", "{{.JSON", "5 min"} {
-		if !strings.Contains(page, strings.ReplaceAll(want, `"`, "&#34;")) && !strings.Contains(page, want) {
-			t.Errorf("behaviour page lacks %q", want)
+	for tab, wants := range map[string][]string{
+		"rules":   {"12.5% → drop the connection", "first 2 → 503", "{{.JSON", "5 min"},
+		"checks":  {"header Authorization matches /^Bearer /"},
+		"default": {"X-A: 2"},
+		"vars":    {"TOKEN=tok_test"},
+	} {
+		page := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab="+tab, nil).Body.String()
+		for _, want := range wants {
+			if !strings.Contains(page, strings.ReplaceAll(want, `"`, "&#34;")) && !strings.Contains(page, want) {
+				t.Errorf("behaviour tab %s lacks %q", tab, want)
+			}
 		}
 	}
 
@@ -214,5 +220,56 @@ func TestStaleEditRefused(t *testing.T) {
 	// Reset needs no version: it changes no configuration.
 	if rec := e.do("POST", "/admin/e/"+id(ep.ID)+"/behaviour", url.Values{"op": {"counter-reset"}}); rec.Code != http.StatusSeeOther {
 		t.Fatalf("reset without a version: %d", rec.Code)
+	}
+}
+
+// TestBehaviourTabs: one part per tab, rules by default; a saved edit lands
+// on its tab and says so; a refused one shows on the tab of its form.
+func TestBehaviourTabs(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/t")
+	base := "/admin/e/" + id(ep.ID) + "/behaviour"
+
+	page := e.do("GET", base, nil).Body.String()
+	if !strings.Contains(page, `href="`+base+`?tab=rules" aria-current="page"`) || !strings.Contains(page, "Reset counter") ||
+		strings.Contains(page, "Save default reply") || strings.Contains(page, "Save variables") {
+		t.Fatal("the page opens on the rules tab alone")
+	}
+	if page := e.do("GET", base+"?tab=bogus", nil).Body.String(); !strings.Contains(page, `?tab=rules" aria-current="page"`) {
+		t.Fatal("an unknown tab falls back to rules")
+	}
+
+	for _, c := range []struct {
+		form url.Values
+		to   string
+	}{
+		{url.Values{"op": {"rule-add"}}, "?tab=rules&saved=rule-0#rule-0"},
+		{url.Values{"op": {"rule-save"}, "i": {"0"}, "when": {"every"}, "n": {"3"}, "do": {"timeout"}}, "?tab=rules&saved=rule-0#rule-0"},
+		{url.Values{"op": {"check-add"}}, "?tab=checks&saved=check-0#check-0"},
+		{url.Values{"op": {"default"}, "status": {"204"}}, "?tab=default&saved=default#default"},
+		{url.Values{"op": {"vars"}, "vars": {"A=1"}}, "?tab=vars&saved=vars#vars"},
+		{url.Values{"op": {"counter-reset"}}, "?tab=rules&saved=counter#counter"},
+		{url.Values{"op": {"rule-del"}, "i": {"0"}}, "?tab=rules&saved=rules#rules"},
+	} {
+		rec := e.edit(ep.ID, c.form)
+		if loc := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || loc != base+c.to {
+			t.Errorf("%v: %d to %q, want %q", c.form, rec.Code, loc, base+c.to)
+		}
+	}
+
+	e.edit(ep.ID, url.Values{"op": {"rule-add"}})
+	page = e.do("GET", base+"?tab=rules&saved=rule-0", nil).Body.String()
+	if !strings.Contains(page, "Rule 1 saved. It applies to the next request.") || !strings.Contains(page, `class="card saved"`) {
+		t.Error("a saved rule is not confirmed")
+	}
+
+	rec := e.edit(ep.ID, url.Values{"op": {"vars"}, "vars": {"broken"}})
+	if body := rec.Body.String(); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(body, `?tab=vars" aria-current="page"`) ||
+		!strings.Contains(body, "Not saved: ") || strings.Contains(body, "saved. It applies") {
+		t.Errorf("a refused edit shows on its tab: %d", rec.Code)
+	}
+	rec = e.edit(ep.ID, url.Values{"op": {"check-del"}, "i": {"0"}, "v": {"stale"}})
+	if body := rec.Body.String(); rec.Code != http.StatusConflict || !strings.Contains(body, `?tab=checks" aria-current="page"`) {
+		t.Errorf("a stale check edit shows on the checks tab: %d", rec.Code)
 	}
 }

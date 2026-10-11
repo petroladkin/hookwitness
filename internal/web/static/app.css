@@ -198,10 +198,29 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
 }
 /* behaviour page */
 .crumb{font:400 13px/1 var(--f-data);margin:4px 0 0}
-.part{margin-top:30px}
-.part h2{margin-top:0}
+.part{margin-top:18px}
+.part > .note{margin:0 0 14px;max-width:72ch}
+/* Tabs: index tabs on the recorder's paper; the open one joins the sheet. */
+.tabs{display:flex;gap:2px;margin-top:22px;border-bottom:2px solid var(--grid-major);overflow-x:auto;scrollbar-width:none;max-width:820px}
+.tabs a{flex:none;display:flex;align-items:baseline;gap:8px;padding:10px 14px 8px;font:600 11px/1 var(--f-data);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-decoration:none;border:1px solid transparent;border-bottom:0;margin-bottom:-2px}
+.tabs a:hover{color:var(--ink)}
+.tabs a[aria-current="page"]{color:var(--ink);background:var(--paper-2);border-color:var(--grid-major);border-bottom:2px solid var(--paper-2)}
+.tabs small{font:400 10px/1 var(--f-data);color:var(--muted);letter-spacing:0}
+.counter{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;margin-top:18px;max-width:820px}
+.counter .note{margin:0;flex:1 1 30ch}
+.banner.saved{border-color:var(--ink);color:var(--ink);margin-top:16px}
+.card.saved{border-left-color:var(--ink)}
+.card-head .done{margin-left:auto;font:600 10px/1 var(--f-data);letter-spacing:.08em;text-transform:uppercase;color:var(--ink)}
+/* Show only the fields the chosen options use. */
+.card:has(select[name=when] option[value=random]:checked) .for-n,
+.card:has(select[name=when] option:not([value=random]):checked) .for-p{display:none}
+.grid3.when{grid-template-columns:repeat(2,minmax(0,1fr))}
+.card:has(select[name=do] option:not([value=reply]):checked) .reply-fields,
+.card:has(input[name=own_error]:not(:checked)) .reply-fields{display:none}
+.card:has(select[name=do] option[value=reply]:checked) .for-hold{display:none}
+.reply-fields{display:flex;flex-direction:column;gap:8px}
 .big{font:400 28px/1 var(--f-stamp);color:var(--ink);margin-right:6px;vertical-align:-3px}
-.banner{border:1px dashed var(--alarm);padding:10px 14px;max-width:72ch}
+.banner{border:1px dashed var(--alarm);padding:10px 14px;max-width:72ch;margin-top:16px}
 .card{display:flex;flex-direction:column;gap:8px;border-left:2px solid var(--grid-major);background:var(--paper-2);padding:14px 16px;margin-bottom:12px;max-width:820px}
 .card.has-error{border-left-color:var(--alarm)}
 .card-head{display:flex;gap:12px;align-items:baseline}
@@ -217,7 +236,7 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
 .btn:disabled{opacity:.4;cursor:default}
 .btn:disabled:hover{background:transparent;color:var(--muted)}
 form.inline{display:inline-block}
-details.help{margin-top:30px;max-width:820px}
+details.help{margin-top:24px;max-width:820px}
 details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:.08em;text-transform:uppercase;color:var(--ink)}
 
 /* Phones: each endpoint becomes a block instead of a table row. */
@@ -232,7 +251,7 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
   .eps .num::after{content:" kept"}
   .eps .when{grid-row:3;grid-column:1}
   .eps .acts{grid-column:1 / -1;justify-content:flex-start;flex-wrap:wrap}
-  .grid3{grid-template-columns:minmax(0,1fr)}
+  .grid3,.grid3.when{grid-template-columns:minmax(0,1fr)}
 }
 @media (prefers-reduced-motion:reduce){
   .rec[data-state="live"] i{animation:none}

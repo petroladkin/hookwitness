@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +27,32 @@ type behaviourView struct {
 	Error   string // the last edit was refused: why
 	Section string // the section the error belongs to
 	Version string // of the stored configuration; every form sends it back
+	Tab     string // the tab shown: checks, rules, default or vars
+	Saved   string // the section the last edit saved
+}
+
+// behaviourTabs in the order a request meets them.
+var behaviourTabs = []string{"checks", "rules", "default", "vars"}
+
+// tabOf is the tab that holds a section ("rule-2", "checks", ...); rules
+// when unknown.
+func tabOf(section string) string {
+	switch {
+	case strings.HasPrefix(section, "check"):
+		return "checks"
+	case section == "default", section == "vars":
+		return section
+	}
+	return "rules"
+}
+
+// opSection is the section a form's edit belongs to, for a refusal made
+// before the edit is applied.
+func opSection(op string) string {
+	if strings.HasPrefix(op, "check") {
+		return "checks"
+	}
+	return op
 }
 
 // configVersion identifies a stored configuration, so an edit made on a page
@@ -54,10 +82,20 @@ func (h *Handler) behaviourPage(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "behaviour", err)
 		return
 	}
-	h.showBehaviour(w, r, http.StatusOK, ep, cfg, "", "")
+	tab := r.URL.Query().Get("tab")
+	if !slices.Contains(behaviourTabs, tab) {
+		tab = "rules"
+	}
+	h.showBehaviour(w, r, http.StatusOK, ep, cfg, tab, r.URL.Query().Get("saved"), "")
 }
 
-func (h *Handler) showBehaviour(w http.ResponseWriter, r *http.Request, status int, ep store.Endpoint, cfg emulate.Config, section, msg string) {
+// showBehaviour renders the page on a tab; section is the one just saved, or
+// with msg the one whose edit was refused.
+func (h *Handler) showBehaviour(w http.ResponseWriter, r *http.Request, status int, ep store.Endpoint, cfg emulate.Config, tab, section, msg string) {
+	saved := ""
+	if msg == "" {
+		saved, section = section, ""
+	}
 	nav, err := h.nav(r, ep.ID, false)
 	if err != nil {
 		h.fail(w, "behaviour", err)
@@ -66,6 +104,7 @@ func (h *Handler) showBehaviour(w http.ResponseWriter, r *http.Request, status i
 	h.render(w, r, status, behaviourPage(nav, behaviourView{
 		ID: ep.ID, Path: ep.Path, Base: h.regPath(ep.ID), Counter: ep.Counter,
 		Config: cfg, MaxWait: h.maxWait, Error: msg, Section: section, Version: configVersion(ep.Config),
+		Tab: tab, Saved: saved,
 	}))
 }
 
@@ -96,7 +135,7 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 
 	op := r.PostFormValue("op")
 	if op != "counter-reset" && r.PostFormValue("v") != configVersion(ep.Config) {
-		h.showBehaviour(w, r, http.StatusConflict, ep, cfg, "",
+		h.showBehaviour(w, r, http.StatusConflict, ep, cfg, tabOf(opSection(op)), "",
 			"the behaviour was changed elsewhere (another tab or client) after this page was loaded, so nothing was saved; "+
 				"this is the current version, make the change again")
 		return
@@ -106,7 +145,7 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 			h.fail(w, "reset counter", err)
 			return
 		}
-		http.Redirect(w, r, h.regPath(id)+"/behaviour#counter", http.StatusSeeOther)
+		http.Redirect(w, r, savedURL(h.regPath(id), "counter"), http.StatusSeeOther)
 		return
 	}
 	section, err := applyEdit(&cfg, op, r)
@@ -114,7 +153,7 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 		err = cfg.Validate(h.maxWait)
 	}
 	if err != nil {
-		h.showBehaviour(w, r, http.StatusUnprocessableEntity, ep, cfg, section, err.Error())
+		h.showBehaviour(w, r, http.StatusUnprocessableEntity, ep, cfg, tabOf(section), section, err.Error())
 		return
 	}
 	if err := h.store.SetConfig(ctx, id, cfg.String()); err != nil {
@@ -122,7 +161,12 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("endpoint behaviour changed", "path", ep.Path, "op", op)
-	http.Redirect(w, r, h.regPath(id)+"/behaviour#"+section, http.StatusSeeOther)
+	http.Redirect(w, r, savedURL(h.regPath(id), section), http.StatusSeeOther)
+}
+
+// savedURL shows the tab of a saved section, says so, and scrolls to it.
+func savedURL(base, section string) string {
+	return base + "/behaviour?tab=" + tabOf(section) + "&saved=" + url.QueryEscape(section) + "#" + section
 }
 
 // applyEdit changes cfg as the form asks; it returns the section to show.
@@ -258,6 +302,58 @@ func formRule(r *http.Request) (emulate.Rule, error) {
 }
 
 // Helpers for the templates.
+
+func tabTitle(tab string) string {
+	switch tab {
+	case "checks":
+		return "Checks"
+	case "default":
+		return "Default reply"
+	case "vars":
+		return "Variables"
+	}
+	return "Rules"
+}
+
+// tabCount is how many items a tab holds, "" for tabs that hold one thing.
+func tabCount(c emulate.Config, tab string) string {
+	switch tab {
+	case "checks":
+		return strconv.Itoa(len(c.Checks))
+	case "rules":
+		return strconv.Itoa(len(c.Rules))
+	case "vars":
+		return strconv.Itoa(len(c.Vars))
+	}
+	return ""
+}
+
+func tabCurrent(on bool) string {
+	if on {
+		return "page"
+	}
+	return "false"
+}
+
+// savedText confirms an edit that went through.
+func savedText(section string) string {
+	switch {
+	case section == "counter":
+		return "Counter reset: the next request is number 1."
+	case section == "default":
+		return "Default reply saved. It applies to the next request."
+	case section == "vars":
+		return "Variables saved."
+	case strings.HasPrefix(section, "rule-"), strings.HasPrefix(section, "check-"):
+		kind, n, _ := strings.Cut(section, "-")
+		i, err := strconv.Atoi(n)
+		if err != nil {
+			break
+		}
+		return strings.ToUpper(kind[:1]) + kind[1:] + " " + strconv.Itoa(i+1) + " saved. It applies to the next request."
+	}
+	return "Saved. It applies to the next request."
+}
 
 func i64(n int64) string { return strconv.FormatInt(n, 10) }
 

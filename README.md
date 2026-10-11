@@ -46,7 +46,8 @@ to the retention limit. The same body delivered again is marked as a retry.
 ## Response emulation
 
 Senders have to cope with receivers that are slow, time out, crash or fail now
-and then. Each endpoint's **Behaviour** page sets how it answers:
+and then. Each endpoint's **Behaviour** page sets how it answers, one tab per
+part (checks, rules, default reply, variables):
 
 - **Checks** run first. A required header (present, equal to a value, or
   matching a regular expression) refuses a request that lacks it, with a `400`
