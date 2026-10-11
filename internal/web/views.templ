@@ -157,7 +157,7 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 	@layout(nav, title(reg)) {
 		<section class="strip" aria-label="Arrivals over the last two minutes">
 			<canvas id="trace" aria-hidden="true"></canvas>
-			<div class="legend"><b>Last 2 min</b> · height = body size · red: not 2xx · dashed: timeout · ×: dropped · same body bracketed</div>
+			<div class="legend"><b>Last 2 min</b> · height = body size · red: not 2xx · dashed: timeout · ×: dropped · red bar under the line: failed authorization · same body bracketed</div>
 		</section>
 		<main class="desk">
 			<section class="register" aria-label="Caught requests">
@@ -173,6 +173,20 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 						<a class="btn" href={ templ.SafeURL(reg.Base + "/behaviour") }>Behaviour</a>
 					}
 				</div>
+				if reg.Verdicts.On {
+					<div class="verdict-counts">
+						<span>Authorization</span>
+						<b class="v-pass">{ strconv.Itoa(reg.Verdicts.Pass) } pass</b>
+						<b class="v-fail">{ strconv.Itoa(reg.Verdicts.Fail) } fail</b>
+						<b class="v-nv">{ strconv.Itoa(reg.Verdicts.NV) } n/v</b>
+						<form method="post" action={ templ.SafeURL(reg.Base + "/recheck") } data-confirm={ "Re-check the " + strconv.Itoa(reg.Count) + " kept requests with the current checks and secrets? Their replies stay as sent." }>
+							<button class="btn quiet" type="submit">Re-check { strconv.Itoa(reg.Count) }</button>
+						</form>
+					</div>
+					if reg.Verdicts.Rechecked != "" {
+						<p class="saved banner" role="status">Re-checked { reg.Verdicts.Rechecked } requests with the current checks and secrets.</p>
+					}
+				}
 				<ol
 					class="reg-list"
 					id="register"
@@ -244,10 +258,18 @@ templ row(r rowView) {
 		data-size={ strconv.FormatInt(r.Size, 10) }
 		data-group={ r.Group }
 		data-mark={ r.mark() }
+		if r.Verdict != "" {
+			data-verdict={ r.Verdict }
+		}
 	>
 		<a href={ templ.SafeURL(r.Href) } hx-get={ r.Href } hx-target="#exhibit" hx-push-url="true" hx-swap="innerHTML">
 			<span class="no">{ id(r.No) }</span>
-			<span class="m">{ r.Method } <em>{ size(r.Size) }</em></span>
+			<span class="m">
+				{ r.Method } <em>{ size(r.Size) }</em>
+				if r.Verdict != "" {
+					<span class={ "tag", "verdict-" + verdictClass(r.Verdict) }>auth { r.Verdict }</span>
+				}
+			</span>
 			<span class="t">{ clock(r.At) }</span>
 			<span class="ev">
 				if r.TooLarge {
@@ -339,6 +361,7 @@ templ exhibit(x exhibitView) {
 				<pre class="body hex">{ x.Body.Hex }</pre>
 		}
 	}
+	@verdicts(x)
 	@answer(x)
 	<h2>Headers · { strconv.Itoa(len(x.Headers)) }</h2>
 	<div class="scroll">
@@ -377,6 +400,30 @@ templ notFoundPage(nav navView, msg string) {
 }
 
 // answer is what Hookwitness did with the request.
+templ verdicts(x exhibitView) {
+	if len(x.Verdicts) > 0 {
+		<h2>Authorization</h2>
+		<div class="verdicts">
+			for _, v := range x.Verdicts {
+				<div class={ "verdict", "verdict-" + verdictClass(string(v.Result)) }>
+					<div class="vstamp">{ v.Label }: { resultLabel(v.Result) }</div>
+					<p class="note">{ v.Reason }<span class="when">· check { strconv.Itoa(v.Check) } · checked { fullTime(v.At) }</span></p>
+					if v.Expected != "" || v.Received != "" {
+						<div class="scroll">
+							<table class="kv">
+								<tbody>
+									<tr><th>expected</th><td>{ v.Expected }</td></tr>
+									<tr><th>received</th><td>{ v.Received }</td></tr>
+								</tbody>
+							</table>
+						</div>
+					}
+				</div>
+			}
+		</div>
+	}
+}
+
 templ answer(x exhibitView) {
 	if x.Outcome.Source != "" {
 		<h2>Answer</h2>

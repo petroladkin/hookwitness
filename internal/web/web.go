@@ -94,6 +94,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("GET "+p+"/e/{reg}/events", h.events)
 	mux.HandleFunc("POST "+p+"/e/{reg}/clear", h.clear)
 	mux.HandleFunc("POST "+p+"/e/{reg}/delete", h.deleteEndpoint)
+	mux.HandleFunc("POST "+p+"/e/{reg}/recheck", h.recheck)
 	mux.HandleFunc("GET "+p+"/e/{reg}/behaviour", h.behaviourPage)
 	mux.HandleFunc("POST "+p+"/e/{reg}/behaviour", h.editBehaviour)
 	mux.HandleFunc("GET "+p+"/r/{id}/body", h.downloadBody)
@@ -386,7 +387,15 @@ func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "register", err)
 		return
 	}
+	var verdicts verdictsView
+	if reg != store.Unmatched {
+		if verdicts, err = h.verdictsView(r, ep); err != nil {
+			h.fail(w, "register", err)
+			return
+		}
+	}
 	h.render(w, r, http.StatusOK, registerPage(nav, registerView{
+		Verdicts: verdicts,
 		ID:       reg,
 		Path:     ep.Path,
 		Count:    ep.Count,
@@ -449,6 +458,7 @@ func (h *Handler) row(ctx context.Context, req store.Request, fresh bool) (rowVi
 		Href:     h.regPath(req.EndpointID) + "/r/" + strconv.FormatInt(req.ID, 10),
 		Fresh:    fresh,
 		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
+		Verdict:  req.Verdict,
 	}
 	if len(req.BodySHA256) > 0 {
 		v.Group = hex.EncodeToString(req.BodySHA256[:6])
@@ -521,6 +531,7 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		Unmatch:  req.EndpointID == store.Unmatched,
 		Limit:    h.limit,
 		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
+		Verdicts: parseVerdicts(req.Verdicts),
 	}
 	return v, nil
 }

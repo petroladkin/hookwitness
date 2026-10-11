@@ -134,6 +134,7 @@
         at: Number(li.dataset.at),
         size: Number(li.dataset.size),
         mark: li.dataset.mark || "ok",
+        verdict: li.dataset.verdict || "",
         group: li.dataset.group || "",
         selected: li.getAttribute("aria-current") === "true",
       });
@@ -219,6 +220,11 @@
       const hgt = Math.max(10, Math.min(base - top, (Math.log2(Math.max(size, 64)) - 6) * 9));
       const col = css(m.mark === "ok" ? "--ink" : "--alarm");
       const tip = base - hgt;
+      if (m.verdict === "fail") {
+        // Failed authorization: a red bar under the line, whatever the reply.
+        ctx.fillStyle = css("--alarm");
+        ctx.fillRect(mx - 4, base + 3, 8, 3);
+      }
       ctx.strokeStyle = col;
       ctx.fillStyle = col;
       ctx.lineWidth = m.selected ? 3 : 2;

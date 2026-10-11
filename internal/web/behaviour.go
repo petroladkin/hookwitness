@@ -116,7 +116,7 @@ func openEditor(cfg emulate.Config, which string) *editor {
 // What a new rule or check starts as.
 var (
 	newRule  = emulate.Rule{When: emulate.Condition{Kind: emulate.WhenEvery, N: 2}, Do: emulate.ActReply, Reply: emulate.Reply{Status: 500}}
-	newCheck = emulate.Check{Header: "X-Required", Match: emulate.MatchPresent}
+	newCheck = emulate.Check{Match: emulate.MatchPresent}
 )
 
 // configVersion identifies a stored configuration, so an edit made on a page
