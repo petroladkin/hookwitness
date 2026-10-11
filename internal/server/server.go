@@ -89,8 +89,11 @@ func Serve(ctx context.Context, ln net.Listener, h http.Handler, log *slog.Logge
 	srv := &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
-		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
-		ConnContext:       wire.ConnContext,
+		// No ReadTimeout or WriteTimeout: live feeds stay open for hours.
+		// The catcher bounds body reads itself.
+		IdleTimeout: 2 * time.Minute,
+		ErrorLog:    slog.NewLogLogger(log.Handler(), slog.LevelWarn),
+		ConnContext: wire.ConnContext,
 	}
 	for _, f := range onShutdown {
 		srv.RegisterOnShutdown(f)

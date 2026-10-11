@@ -22,7 +22,13 @@ type Handler struct {
 	Log       *slog.Logger
 	MaxBody   int64 // larger bodies are answered 413 and not kept
 	Retention int   // requests kept per register
+	// BodyTimeout bounds reading a request's body; a sender that trickles it
+	// slower is cut off and nothing is kept. Zero means DefaultBodyTimeout.
+	BodyTimeout time.Duration
 }
+
+// DefaultBodyTimeout is enough for 10 MiB over a slow link.
+const DefaultBodyTimeout = 60 * time.Second
 
 // Catch answers and records r. headers are its header lines as received
 // (wire.Take); ok false falls back to the order net/http keeps.
@@ -50,7 +56,7 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 		RemoteAddr: r.RemoteAddr,
 		Headers:    storeHeaders(r, headers, ok),
 	}
-	if !h.readBody(r, req) {
+	if !h.readBody(w, r, req) {
 		h.Log.Warn("catch: body could not be read; request not kept", "method", r.Method, "path", p, "remote", r.RemoteAddr)
 		http.Error(w, "could not read the request body", http.StatusBadRequest)
 		return
@@ -90,15 +96,25 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 
 // readBody fills req's body fields; false means the body could not be read
 // (the sender went away or stalled).
-func (h *Handler) readBody(r *http.Request, req *store.Request) bool {
+func (h *Handler) readBody(w http.ResponseWriter, r *http.Request, req *store.Request) bool {
 	if r.ContentLength > h.MaxBody {
 		req.TooLarge, req.Size = true, r.ContentLength
 		return true
 	}
+	timeout := h.BodyTimeout
+	if timeout == 0 {
+		timeout = DefaultBodyTimeout
+	}
+	rc := http.NewResponseController(w)
+	// Not every ResponseWriter supports deadlines (test recorders do not).
+	_ = rc.SetReadDeadline(time.Now().Add(timeout))
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.MaxBody+1))
 	if err != nil {
+		// Keep the deadline: the server must not wait for the rest either.
+		w.Header().Set("Connection", "close")
 		return false
 	}
+	_ = rc.SetReadDeadline(time.Time{})
 	if int64(len(body)) > h.MaxBody {
 		req.TooLarge, req.Size = true, r.ContentLength // -1 when not declared
 		return true

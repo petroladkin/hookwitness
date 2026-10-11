@@ -56,6 +56,10 @@ func TestRoutesOnTheRawPath(t *testing.T) {
 
 // serveReal runs the real stack (store, catcher) on a loopback listener.
 func serveReal(t *testing.T) (addr string, st *store.Store) {
+	return serveRealWith(t, 0)
+}
+
+func serveRealWith(t *testing.T, bodyTimeout time.Duration) (addr string, st *store.Store) {
 	t.Helper()
 	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "hw.db"))
 	if err != nil {
@@ -67,7 +71,7 @@ func serveReal(t *testing.T) (addr string, st *store.Store) {
 		t.Fatal(err)
 	}
 	h := New(Options{DB: st, Log: quiet, AdminPrefix: "/admin",
-		Catch: &catch.Handler{Store: st, Live: live.New(), Log: quiet, MaxBody: 1 << 20, Retention: 1000}})
+		Catch: &catch.Handler{Store: st, Live: live.New(), Log: quiet, MaxBody: 1 << 20, Retention: 1000, BodyTimeout: bodyTimeout}})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- Serve(ctx, ln, h, quiet) }()
@@ -175,5 +179,33 @@ func TestOnShutdownRuns(t *testing.T) {
 	case <-called:
 	case <-time.After(time.Second):
 		t.Fatal("onShutdown function not called")
+	}
+}
+
+// TestTrickledBodyIsCutOff: a sender that declares a body and never finishes
+// it does not hold the request open, and nothing is kept as evidence.
+func TestTrickledBodyIsCutOff(t *testing.T) {
+	addr, st := serveRealWith(t, 300*time.Millisecond)
+	ep, _ := st.CreateEndpoint(context.Background(), "/slow")
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	io.WriteString(c, "POST /slow HTTP/1.1\r\nHost: a\r\nContent-Length: 1000\r\n\r\nonly a few bytes")
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	start := time.Now()
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	if err == nil {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status %d, want 400 or a closed connection", resp.StatusCode)
+		}
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("connection held for %v", d)
+	}
+	if e, _ := st.Endpoint(context.Background(), ep.ID); e.Count != 0 {
+		t.Fatal("an incomplete body was kept")
 	}
 }
