@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/petroladkin/hookwitness/internal/emulate"
+	"github.com/petroladkin/hookwitness/internal/secret"
+	"github.com/petroladkin/hookwitness/internal/store"
 )
 
 func noenv(string) string { return "" }
@@ -132,5 +137,33 @@ func TestServeLifecycle(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), `"msg":"stopped"`) {
 		t.Fatalf("no stop line; log: %s", log.String())
+	}
+}
+
+func TestWarnsAboutUnreadableSecrets(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(dir, "hw.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a, _ := secret.Load("", filepath.Join(dir, "a.key"))
+	b, _ := secret.Load("", filepath.Join(dir, "b.key"))
+	ep, _ := st.CreateEndpoint(ctx, "/gh")
+	cfg := emulate.Config{Default: emulate.Reply{Status: 200}, Secrets: []emulate.Secret{
+		{Name: "GH", Kind: emulate.SecretKey, Sealed: a.Seal("gh_test"), Fingerprint: "x"},
+		{Name: "TOK", Kind: emulate.SecretToken, Hash: a.HashToken("tok_test"), Fingerprint: "y"},
+	}}
+	st.SetConfig(ctx, ep.ID, cfg.String())
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	warnUnreadableSecrets(ctx, st, a, log)
+	if logs.Len() != 0 {
+		t.Fatalf("the right key warned: %s", logs.String())
+	}
+	warnUnreadableSecrets(ctx, st, b, log)
+	if !strings.Contains(logs.String(), "secrets cannot be decrypted") || !strings.Contains(logs.String(), "path=/gh secrets=GH") {
+		t.Fatalf("no warning: %s", logs.String())
 	}
 }

@@ -7,11 +7,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"io"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/petroladkin/hookwitness/internal/catch"
@@ -95,6 +97,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	if getenv("HOOKWITNESS_SECRET_KEY") == "" {
 		keySource = cfg.DBPath + ".key"
 	}
+	warnUnreadableSecrets(ctx, st, keys, log)
 
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
@@ -128,6 +131,35 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	}
 	log.Info("stopped")
 	return 0
+}
+
+// warnUnreadableSecrets logs the endpoints whose signing keys this key cannot
+// open (the database came without its key file, or the key changed): their
+// checks will say "not verifiable" until the secrets are replaced.
+func warnUnreadableSecrets(ctx context.Context, st *store.Store, keys *secret.Key, log *slog.Logger) {
+	eps, err := st.Endpoints(ctx)
+	if err != nil {
+		return
+	}
+	for _, e := range eps {
+		cfg, err := emulate.Parse(e.Config)
+		if err != nil {
+			continue
+		}
+		var bad []string
+		for _, s := range cfg.Secrets {
+			if s.Kind != emulate.SecretKey {
+				continue
+			}
+			if _, err := keys.Open(s.Sealed); err != nil {
+				bad = append(bad, s.Name)
+			}
+		}
+		if len(bad) > 0 {
+			log.Warn("secrets cannot be decrypted with this secret key; replace them or use the key they were saved with",
+				"path", e.Path, "secrets", strings.Join(bad, ","))
+		}
+	}
 }
 
 func newLogger(format string, w io.Writer) *slog.Logger {
