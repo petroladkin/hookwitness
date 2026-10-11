@@ -27,6 +27,7 @@ import (
 
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
+	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -49,6 +50,7 @@ type Handler struct {
 	keep    int   // retention per register, so the page can drop pruned rows
 	maxWait time.Duration
 	hosts   map[string]bool
+	keys    *secret.Key
 	mux     http.Handler
 	assets  map[string]string // asset path -> content hash for cache busting
 
@@ -63,11 +65,12 @@ type Options struct {
 	Retention int           // requests kept per register
 	MaxWait   time.Duration // longest delay an endpoint may configure
 	Hosts     []string      // host names the UI answers to besides IP addresses and localhost
+	Keys      *secret.Key   // seals and hashes endpoint secrets; verifies on re-check
 }
 
 // New returns the UI.
 func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Handler {
-	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention, maxWait: o.MaxWait,
+	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention, maxWait: o.MaxWait, keys: o.Keys,
 		hosts: map[string]bool{}, stop: make(chan struct{})}
 	if h.maxWait == 0 {
 		h.maxWait = 5 * time.Minute

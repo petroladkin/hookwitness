@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petroladkin/hookwitness/internal/auth"
 	"github.com/petroladkin/hookwitness/internal/emulate"
+	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -34,16 +36,17 @@ type behaviourView struct {
 
 // editor is the dialog that creates or edits one item.
 type editor struct {
-	Kind  string // rule, check, var or default
-	I     string // the item's index, or "new"
-	Rule  emulate.Rule
-	Check emulate.Check
-	Var   emulate.Var
-	Reply emulate.Reply // the default reply
+	Kind   string // rule, check, var or default
+	I      string // the item's index, or "new"
+	Rule   emulate.Rule
+	Check  emulate.Check
+	Var    emulate.Var
+	Secret emulate.Secret // never with a value: secrets are write-only
+	Reply  emulate.Reply  // the default reply
 }
 
 // behaviourTabs in the order a request meets them.
-var behaviourTabs = []string{"checks", "rules", "default", "vars"}
+var behaviourTabs = []string{"checks", "rules", "default", "vars", "secrets"}
 
 // tabOf is the tab that holds a section ("rule-2", "checks", "var-new",
 // ...); rules when unknown.
@@ -53,6 +56,8 @@ func tabOf(section string) string {
 		return "checks"
 	case strings.HasPrefix(section, "var"):
 		return "vars"
+	case strings.HasPrefix(section, "secret"):
+		return "secrets"
 	case section == "default":
 		return "default"
 	}
@@ -93,6 +98,14 @@ func openEditor(cfg emulate.Config, which string) *editor {
 			return nil
 		} else if i != "new" {
 			e.Var = cfg.Vars[n]
+		}
+	case "secret":
+		if i == "new" {
+			e.Secret = emulate.Secret{Kind: emulate.SecretKey}
+		} else if n < len(cfg.Secrets) {
+			e.Secret = cfg.Secrets[n]
+		} else {
+			return nil
 		}
 	default:
 		return nil
@@ -212,7 +225,7 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg, _ := emulate.Parse(ep.Config) // a copy to edit
-	section, err := applyEdit(&cfg, op, r)
+	section, err := applyEdit(&cfg, op, r, h.keys)
 	if err == nil {
 		err = cfg.Validate(h.maxWait)
 	}
@@ -242,7 +255,7 @@ func savedURL(base, section string) string {
 
 // applyEdit changes cfg as the form asks; it returns the section edited
 // ("rule-2"; the list, "rules", after a delete).
-func applyEdit(cfg *emulate.Config, op string, r *http.Request) (string, error) {
+func applyEdit(cfg *emulate.Config, op string, r *http.Request, keys *secret.Key) (string, error) {
 	kind, act, _ := strings.Cut(op, "-")
 	// at is the item the form names: an index, or "new" (one past the end)
 	// where new is allowed.
@@ -300,11 +313,7 @@ func applyEdit(cfg *emulate.Config, op string, r *http.Request) (string, error) 
 			cfg.Checks = slices.Delete(cfg.Checks, i, i+1)
 			return "checks", nil
 		}
-		ch := emulate.Check{
-			Header: strings.TrimSpace(r.PostFormValue("header")),
-			Match:  r.PostFormValue("match"),
-			Value:  r.PostFormValue("value"),
-		}
+		ch, err := formCheck(r)
 		if r.PostFormValue("own_error") == "on" {
 			var reply emulate.Reply
 			reply, err = formReply(r, "error_")
@@ -316,6 +325,30 @@ func applyEdit(cfg *emulate.Config, op string, r *http.Request) (string, error) 
 			cfg.Checks[i] = ch
 		}
 		return fmt.Sprintf("check-%d", i), err
+	case "secret-save", "secret-del":
+		i, err := at(len(cfg.Secrets), act == "save")
+		if err != nil {
+			return "secrets", err
+		}
+		if act == "del" {
+			if users := cfg.SecretUsers(cfg.Secrets[i].Name); len(users) > 0 {
+				return "secrets", fmt.Errorf("%s is used by %s; change or delete those checks first", cfg.Secrets[i].Name, strings.Join(users, ", "))
+			}
+			cfg.Secrets = slices.Delete(cfg.Secrets, i, i+1)
+			return "secrets", nil
+		}
+		s, err := formSecret(r, keys)
+		if i < len(cfg.Secrets) {
+			// Replacing keeps the name and the kind: checks refer to them.
+			s.Name, s.Kind = cfg.Secrets[i].Name, cfg.Secrets[i].Kind
+			if err == nil {
+				s, err = sealSecret(s.Name, s.Kind, r.PostFormValue("value"), keys)
+			}
+			cfg.Secrets[i] = s
+		} else {
+			cfg.Secrets = append(cfg.Secrets, s)
+		}
+		return fmt.Sprintf("secret-%d", i), err
 	case "var-save", "var-del":
 		i, err := at(len(cfg.Vars), act == "save")
 		if err != nil {
@@ -334,6 +367,68 @@ func applyEdit(cfg *emulate.Config, op string, r *http.Request) (string, error) 
 		return fmt.Sprintf("var-%d", i), nil
 	}
 	return "", fmt.Errorf("unknown edit %q", op)
+}
+
+// formCheck reads a check editor: the fields its kind uses.
+func formCheck(r *http.Request) (emulate.Check, error) {
+	v := func(name string) string { return strings.TrimSpace(r.PostFormValue(name)) }
+	ch := emulate.Check{Kind: v("kind")}
+	if ch.Kind == emulate.KindHeader {
+		ch.Kind = "" // stored as before authorization checks
+	}
+	if !ch.IsAuth() {
+		ch.Header, ch.Match, ch.Value = v("header"), r.PostFormValue("match"), r.PostFormValue("value")
+		return ch, nil
+	}
+	ch.Enforce = r.PostFormValue("enforce") == "on"
+	ch.Secret = v("secret")
+	var err error
+	switch ch.Kind {
+	case emulate.KindHMAC:
+		ch.Header, ch.Algo, ch.Encoding = v("header"), v("algo"), v("encoding")
+		ch.Prefix, ch.Content = r.PostFormValue("prefix"), r.PostFormValue("content")
+	case emulate.KindBasic:
+		ch.User = v("user")
+	case emulate.KindStripe, emulate.KindStandard:
+		ch.IgnoreTimestamp = r.PostFormValue("ignore_timestamp") == "on"
+		if s := v("tolerance_s"); s != "" {
+			ch.ToleranceS, err = strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				err = errors.New("the tolerance must be a whole number of seconds")
+			}
+		}
+	}
+	return ch, err
+}
+
+// formSecret reads a new secret and seals or hashes its value at once; the
+// plain value goes no further than this request.
+func formSecret(r *http.Request, keys *secret.Key) (emulate.Secret, error) {
+	name := strings.TrimSpace(r.PostFormValue("name"))
+	kind := r.PostFormValue("secret_kind")
+	return sealSecret(name, kind, r.PostFormValue("value"), keys)
+}
+
+func sealSecret(name, kind, value string, keys *secret.Key) (emulate.Secret, error) {
+	s := emulate.Secret{Name: name, Kind: kind}
+	switch {
+	case keys == nil:
+		return s, errors.New("no secret key is loaded")
+	case value == "":
+		return s, errors.New("enter the value")
+	case strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n"):
+		return s, errors.New("the value has spaces or line breaks at its ends; paste it exactly")
+	}
+	s.Fingerprint = keys.Fingerprint(value)
+	switch kind {
+	case emulate.SecretKey:
+		s.Sealed = keys.Seal(value)
+		_, err := auth.StandardKey(value)
+		s.Standard = err == nil && strings.HasPrefix(value, "whsec_")
+	case emulate.SecretToken:
+		s.Hash = keys.HashToken(value)
+	}
+	return s, nil
 }
 
 func formReply(r *http.Request, prefix string) (emulate.Reply, error) {
@@ -408,6 +503,8 @@ func tabTitle(tab string) string {
 		return "Default"
 	case "vars":
 		return "Variables"
+	case "secrets":
+		return "Secrets"
 	}
 	return "Rules"
 }
@@ -421,6 +518,8 @@ func tabCount(c emulate.Config, tab string) string {
 		return strconv.Itoa(len(c.Rules))
 	case "vars":
 		return strconv.Itoa(len(c.Vars))
+	case "secrets":
+		return strconv.Itoa(len(c.Secrets))
 	}
 	return ""
 }
@@ -434,6 +533,11 @@ func editorTitle(e *editor) string {
 			return "New variable"
 		}
 		return "Variable " + e.Var.Name
+	case "secret":
+		if e.I == "new" {
+			return "New secret"
+		}
+		return "Replace " + e.Secret.Name
 	}
 	if e.I == "new" {
 		return "New " + e.Kind
@@ -448,6 +552,8 @@ func editorSave(e *editor) string {
 		return "Save default reply"
 	case "var":
 		return "Save variable"
+	case "secret":
+		return "Save secret"
 	}
 	return "Save " + e.Kind
 }
@@ -461,10 +567,82 @@ func varOrName(name string) string {
 
 // refusalLabel says how a check refuses.
 func refusalLabel(c emulate.Check) string {
-	if c.Error == nil {
-		return "400 naming the header"
+	switch {
+	case c.Error != nil:
+		return strconv.Itoa(c.Error.Status) + " (own reply)"
+	case c.IsAuth():
+		return "401"
 	}
-	return strconv.Itoa(c.Error.Status) + " (own reply)"
+	return "400 naming the header"
+}
+
+// checkSummary describes a check in its list row, after its label.
+func checkSummary(c emulate.Check) string {
+	if !c.IsAuth() {
+		return matchLabel(c) + " · else " + refusalLabel(c)
+	}
+	parts := []string{"secret " + c.Secret}
+	switch c.Kind {
+	case emulate.KindBasic:
+		parts = append(parts, "user "+c.User)
+	case emulate.KindHMAC:
+		parts = append(parts, c.Algo+" "+c.Encoding)
+	case emulate.KindStripe, emulate.KindStandard:
+		if c.IgnoreTimestamp {
+			parts = append(parts, "any timestamp")
+		} else {
+			parts = append(parts, "tolerance "+strconv.FormatInt(tolerance(c), 10)+" s")
+		}
+	}
+	if c.Enforce {
+		parts = append(parts, "enforced · else "+refusalLabel(c))
+	} else {
+		parts = append(parts, "record only")
+	}
+	return strings.Join(parts, " · ")
+}
+
+func tolerance(c emulate.Check) int64 {
+	if c.ToleranceS > 0 {
+		return c.ToleranceS
+	}
+	return auth.DefaultTolerance
+}
+
+// kindTitle names a check kind in the editor's select.
+func kindTitle(k string) string {
+	switch k {
+	case emulate.KindHeader:
+		return "Required header"
+	case emulate.KindStandard:
+		return "Standard Webhooks / Svix signature"
+	case emulate.KindHMAC:
+		return "Generic HMAC signature"
+	}
+	return emulate.Check{Kind: k}.Label()
+}
+
+func checkKind(c emulate.Check) string {
+	if c.Kind == "" {
+		return emulate.KindHeader
+	}
+	return c.Kind
+}
+
+func secretKindTitle(k string) string {
+	if k == emulate.SecretToken {
+		return "token or password"
+	}
+	return "signing key"
+}
+
+// secretUse says which checks use a secret, for its list row.
+func secretUse(c emulate.Config, name string) string {
+	users := c.SecretUsers(name)
+	if len(users) == 0 {
+		return "not used"
+	}
+	return "used by " + strings.Join(users, ", ")
 }
 
 func delayLabel(r emulate.Reply) string {
@@ -493,6 +671,10 @@ func savedText(section string) string {
 		return "Default reply saved. It applies to the next request."
 	case section == "rules", section == "checks", section == "vars":
 		return "Deleted. It applies to the next request."
+	case section == "secrets":
+		return "Deleted."
+	case strings.HasPrefix(section, "secret-"):
+		return "Secret saved. Its value is not shown again."
 	case strings.HasPrefix(section, "rule-"), strings.HasPrefix(section, "check-"), strings.HasPrefix(section, "var-"):
 		kind, n, _ := strings.Cut(section, "-")
 		i, err := strconv.Atoi(n)

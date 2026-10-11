@@ -240,6 +240,14 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
 .card:has(select[name=do] option:not([value=reply]):checked) .reply-fields,
 .card:has(input[name=own_error]:not(:checked)) .reply-fields{display:none}
 .card:has(select[name=do] option[value=reply]:checked) .for-hold{display:none}
+/* The check editor shows only the fields of the chosen kind. */
+.card:has(select[name=kind] option[value=header]:checked) .kinded:not(.k-header),
+.card:has(select[name=kind] option[value=github]:checked) .kinded:not(.k-github),
+.card:has(select[name=kind] option[value=stripe]:checked) .kinded:not(.k-stripe),
+.card:has(select[name=kind] option[value=standard]:checked) .kinded:not(.k-standard),
+.card:has(select[name=kind] option[value=hmac]:checked) .kinded:not(.k-hmac),
+.card:has(select[name=kind] option[value=bearer]:checked) .kinded:not(.k-bearer),
+.card:has(select[name=kind] option[value=basic]:checked) .kinded:not(.k-basic){display:none}
 .reply-fields{display:flex;flex-direction:column;gap:8px}
 .big{font:400 28px/1 var(--f-stamp);color:var(--ink);margin-right:6px;vertical-align:-3px}
 .banner{border:1px dashed var(--alarm);padding:10px 14px;max-width:72ch;margin:0 0 14px}

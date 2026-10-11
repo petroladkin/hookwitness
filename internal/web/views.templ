@@ -430,7 +430,7 @@ templ behaviourPage(nav navView, b behaviourView) {
 			switch b.Tab {
 				case "checks":
 					@toolbar(b, "check-new", "New check") {
-						<p class="note">A request without these headers is refused before any rule, and is not counted.</p>
+						<p class="note">Required headers refuse a request without them. Authorization checks record a verdict on every request and refuse only when enforced. Refused requests are not counted.</p>
 					}
 					@checkList(b)
 				case "default":
@@ -438,6 +438,11 @@ templ behaviourPage(nav navView, b behaviourView) {
 						<p class="note">The answer when no check refuses the request and no rule matches.</p>
 					}
 					@replySummary(b.Config.Default)
+				case "secrets":
+					@toolbar(b, "secret-new", "New secret") {
+						<p class="note">Signing keys and tokens for authorization checks. Write-only: a saved value is never shown again, only its fingerprint. Test and staging secrets only.</p>
+					}
+					@secretList(b)
 				case "vars":
 					@toolbar(b, "var-new", "New variable") {
 						<p class="note">Test values for templates, as <code>{ "{{.Var.NAME}}" }</code>. Stored in plain text: never real secrets.</p>
@@ -514,7 +519,11 @@ templ checkList(b behaviourView) {
 			for i, ch := range b.Config.Checks {
 				<li id={ "check-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "check-"+strconv.Itoa(i)) }>
 					<span class="no">{ strconv.Itoa(i + 1) }</span>
-					<span class="what"><b>{ ch.Header }</b> { matchLabel(ch) } · else { refusalLabel(ch) }</span>
+					if ch.IsAuth() {
+						<span class="what"><b>{ ch.Label() }</b> · { checkSummary(ch) }</span>
+					} else {
+						<span class="what"><b>{ ch.Header }</b> { checkSummary(ch) }</span>
+					}
 					@rowActions(b, "check", i, len(b.Config.Checks), false)
 				</li>
 			}
@@ -532,6 +541,27 @@ templ varList(b behaviourView) {
 					<span class="no">{ strconv.Itoa(i + 1) }</span>
 					<span class="what"><b>{ v.Name }</b> = { v.Value }</span>
 					@rowActions(b, "var", i, len(b.Config.Vars), false)
+				</li>
+			}
+		</ol>
+	}
+}
+
+templ secretList(b behaviourView) {
+	if len(b.Config.Secrets) == 0 {
+		<p class="empty">No secrets. Authorization checks need one: a signing key or a token.</p>
+	} else {
+		<ol class="items">
+			for i, sc := range b.Config.Secrets {
+				<li id={ "secret-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "secret-"+strconv.Itoa(i)) }>
+					<span class="no">{ strconv.Itoa(i + 1) }</span>
+					<span class="what"><b>{ sc.Name }</b> · { secretKindTitle(sc.Kind) } · fingerprint <code>{ sc.Fingerprint }</code> · { secretUse(b.Config, sc.Name) }</span>
+					<form class="acts" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+						<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
+						<input type="hidden" name="v" value={ b.Version }/>
+						<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=secrets&edit=secret-" + strconv.Itoa(i)) }>Replace</a>
+						<button class="btn quiet" type="submit" name="op" value="secret-del" data-confirm={ "Delete secret " + sc.Name + "?" }>Delete</button>
+					</form>
 				</li>
 			}
 		</ol>
@@ -585,6 +615,10 @@ templ editorDialog(b behaviourView, e *editor) {
 					<input type="hidden" name="op" value="check-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
 					@checkFields(b, e.Check)
+				case "secret":
+					<input type="hidden" name="op" value="secret-save"/>
+					<input type="hidden" name="i" value={ e.I }/>
+					@secretFields(e)
 				case "var":
 					<input type="hidden" name="op" value="var-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
@@ -601,7 +635,7 @@ templ editorDialog(b behaviourView, e *editor) {
 				<button class="btn solid" type="submit">{ editorSave(e) }</button>
 				<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + b.Tab) }>Cancel</a>
 			</div>
-			if e.Kind != "var" {
+			if e.Kind != "var" && e.Kind != "secret" {
 				@templateRef()
 			}
 		</form>
@@ -657,8 +691,17 @@ templ ruleFields(b behaviourView, rule emulate.Rule) {
 }
 
 templ checkFields(b behaviourView, ch emulate.Check) {
-	<div class="grid3">
-		<label>Header <input name="header" value={ ch.Header } required spellcheck="false" autocomplete="off" autofocus/></label>
+	<label>
+		Kind
+		<select name="kind" autofocus>
+			<option value="header" selected?={ checkKind(ch) == "header" }>{ kindTitle("header") }</option>
+			for _, k := range emulate.AuthKinds {
+				<option value={ k } selected?={ checkKind(ch) == k }>{ kindTitle(k) }</option>
+			}
+		</select>
+	</label>
+	<label class="kinded k-header k-hmac">Header <input name="header" value={ ch.Header } spellcheck="false" autocomplete="off" placeholder="X-Signature"/></label>
+	<div class="grid2 kinded k-header">
 		<label>
 			Must
 			<select name="match">
@@ -669,8 +712,62 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 		</label>
 		<label>Value <input name="value" value={ ch.Value } spellcheck="false" autocomplete="off"/></label>
 	</div>
-	<label class="check"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header)</label>
+	<div class="grid2 kinded k-github k-stripe k-standard k-hmac k-bearer k-basic">
+		<label>
+			Secret
+			<select name="secret">
+				<option value="">choose…</option>
+				for _, sc := range b.Config.Secrets {
+					<option value={ sc.Name } selected?={ ch.Secret == sc.Name }>{ sc.Name } ({ secretKindTitle(sc.Kind) })</option>
+				}
+			</select>
+		</label>
+		<label class="kinded k-basic">User <input name="user" value={ ch.User } spellcheck="false" autocomplete="off"/></label>
+		<label class="kinded k-stripe k-standard">Tolerance, s <input type="number" name="tolerance_s" value={ blank(ch.ToleranceS) } min="1" max="86400" placeholder="300"/></label>
+	</div>
+	<div class="grid3 kinded k-hmac">
+		<label>
+			Algorithm
+			<select name="algo">
+				for _, a := range []string{"sha256", "sha1", "sha512"} {
+					<option value={ a } selected?={ ch.Algo == a }>{ a }</option>
+				}
+			</select>
+		</label>
+		<label>
+			Encoding
+			<select name="encoding">
+				<option value="hex" selected?={ ch.Encoding != "base64" }>hex</option>
+				<option value="base64" selected?={ ch.Encoding == "base64" }>base64</option>
+			</select>
+		</label>
+		<label>Prefix <input name="prefix" value={ ch.Prefix } spellcheck="false" autocomplete="off" placeholder="sha256="/></label>
+	</div>
+	<label class="kinded k-hmac" for="check-content">Signed content: a template, empty means the raw body</label>
+	<textarea class="kinded k-hmac" id="check-content" name="content" rows="2" spellcheck="false" placeholder="{{.Body}}">{ ch.Content }</textarea>
+	<label class="check kinded k-stripe k-standard"><input type="checkbox" name="ignore_timestamp" checked?={ ch.IgnoreTimestamp }/> Accept any timestamp (replayed captures)</label>
+	<label class="check kinded k-github k-stripe k-standard k-hmac k-bearer k-basic"><input type="checkbox" name="enforce" checked?={ ch.Enforce }/> Enforce: refuse a failing request (otherwise record the verdict only)</label>
+	<label class="check"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header, or 401)</label>
 	<div class="reply-fields">
 		@replyFields(b, "check", "error_", errorOrStandard(ch))
 	</div>
+}
+
+templ secretFields(e *editor) {
+	if e.I == "new" {
+		<div class="grid2">
+			<label>Name <input name="name" value={ e.Secret.Name } required spellcheck="false" autocomplete="off" autofocus placeholder="WEBHOOK_SECRET"/></label>
+			<label>
+				Kind
+				<select name="secret_kind">
+					<option value="key" selected?={ e.Secret.Kind != "token" }>signing key (GitHub, Stripe, Standard Webhooks, HMAC)</option>
+					<option value="token" selected?={ e.Secret.Kind == "token" }>token or password (bearer, basic)</option>
+				</select>
+			</label>
+		</div>
+	} else {
+		<p class="note"><b>{ e.Secret.Name }</b> · { secretKindTitle(e.Secret.Kind) } · now <code>{ e.Secret.Fingerprint }</code>. The new value replaces it; the checks that use it keep working with the new one.</p>
+	}
+	<label>Value <input type="password" name="value" value="" required autocomplete="new-password" spellcheck="false"/></label>
+	<p class="help">Stored sealed (signing keys) or as a salted hash (tokens and passwords) and never shown again. Use test and staging secrets only: whoever can open this page can use them to sign requests.</p>
 }
