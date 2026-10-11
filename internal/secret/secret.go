@@ -146,6 +146,10 @@ func (k *Key) Fingerprint(value string) string {
 	return hex.EncodeToString(m.Sum(nil))[:8]
 }
 
+// Check is a value that identifies the key without revealing it, stored
+// with the database to notice a different key at startup.
+func (k *Key) Check() string { return k.Fingerprint("hookwitness key check") }
+
 // keyed is the value bound to this key before hashing: without the key a
 // stored hash cannot even be guessed at.
 func (k *Key) keyed(value string) string {

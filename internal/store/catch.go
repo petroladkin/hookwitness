@@ -201,6 +201,22 @@ func (s *Store) UpdateOutcome(ctx context.Context, id int64, status int, outcome
 	return err
 }
 
+// KeyCheck records the check value of the secret key the first time and
+// reports whether a later key gives the same one; a database used with
+// another key cannot open its secrets.
+func (s *Store) KeyCheck(ctx context.Context, check string) (same bool, err error) {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO settings (key, value) VALUES ('secret.key_check', ?)`, check); err != nil {
+		return false, err
+	}
+	var stored string
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'secret.key_check'`).Scan(&stored); err != nil {
+		return false, err
+	}
+	return stored == check, nil
+}
+
 // SetVerdicts replaces a stored request's verdicts (a re-check); the status
 // and outcome, what the sender saw, stay as they are.
 func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts string) error {

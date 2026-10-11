@@ -97,6 +97,10 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	if getenv("HOOKWITNESS_SECRET_KEY") == "" {
 		keySource = cfg.DBPath + ".key"
 	}
+	if same, err := st.KeyCheck(ctx, keys.Check()); err == nil && !same {
+		log.Warn("this secret key is not the one this database was used with: sealed signing keys cannot be opened and stored tokens never match; "+
+			"start with the original key (HOOKWITNESS_SECRET_KEY or the .key file next to the database), or replace the secrets", "secret_key", keySource)
+	}
 	warnUnreadableSecrets(ctx, st, keys, log)
 
 	ln, err := net.Listen("tcp", cfg.Addr)

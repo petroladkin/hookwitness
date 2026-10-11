@@ -167,3 +167,24 @@ func TestWarnsAboutUnreadableSecrets(t *testing.T) {
 		t.Fatalf("no warning: %s", logs.String())
 	}
 }
+
+func TestKeyCheck(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(dir, "hw.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a, _ := secret.Load("", filepath.Join(dir, "a.key"))
+	b, _ := secret.Load("", filepath.Join(dir, "b.key"))
+	if same, err := st.KeyCheck(ctx, a.Check()); !same || err != nil {
+		t.Fatalf("first key: %v %v", same, err)
+	}
+	if same, _ := st.KeyCheck(ctx, a.Check()); !same {
+		t.Fatal("the same key again")
+	}
+	if same, _ := st.KeyCheck(ctx, b.Check()); same {
+		t.Fatal("another key passed the check")
+	}
+}
