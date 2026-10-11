@@ -16,44 +16,95 @@ import (
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
-// behaviourView is an endpoint's behaviour page.
+// behaviourView is an endpoint's behaviour page: one tab of lists, and the
+// editor dialog when one is open.
 type behaviourView struct {
 	ID      int64
 	Path    string
 	Base    string // the endpoint's register URL
 	Counter int64
-	Config  emulate.Config
+	Config  emulate.Config // as stored
 	MaxWait time.Duration
-	Error   string // the last edit was refused: why
-	Section string // the section the error belongs to
 	Version string // of the stored configuration; every form sends it back
-	Tab     string // the tab shown: checks, rules, default or vars
-	Saved   string // the section the last edit saved
+	Tab     string // checks, rules, default or vars
+	Saved   string // the section the last edit saved ("rule-2", "counter", ...)
+	Error   string // the last edit was refused: why
+	Editor  *editor
+}
+
+// editor is the dialog that creates or edits one item.
+type editor struct {
+	Kind  string // rule, check, var or default
+	I     string // the item's index, or "new"
+	Rule  emulate.Rule
+	Check emulate.Check
+	Var   emulate.Var
+	Reply emulate.Reply // the default reply
 }
 
 // behaviourTabs in the order a request meets them.
 var behaviourTabs = []string{"checks", "rules", "default", "vars"}
 
-// tabOf is the tab that holds a section ("rule-2", "checks", ...); rules
-// when unknown.
+// tabOf is the tab that holds a section ("rule-2", "checks", "var-new",
+// ...); rules when unknown.
 func tabOf(section string) string {
 	switch {
 	case strings.HasPrefix(section, "check"):
 		return "checks"
-	case section == "default", section == "vars":
-		return section
+	case strings.HasPrefix(section, "var"):
+		return "vars"
+	case section == "default":
+		return "default"
 	}
 	return "rules"
 }
 
-// opSection is the section a form's edit belongs to, for a refusal made
-// before the edit is applied.
-func opSection(op string) string {
-	if strings.HasPrefix(op, "check") {
-		return "checks"
+// openEditor is the editor a URL names ("rule-2", "rule-new", "default"),
+// or nil.
+func openEditor(cfg emulate.Config, which string) *editor {
+	if which == "default" {
+		return &editor{Kind: "default", Reply: cfg.Default}
 	}
-	return op
+	kind, i, _ := strings.Cut(which, "-")
+	e := &editor{Kind: kind, I: i}
+	n, err := strconv.Atoi(i)
+	if i != "new" && (err != nil || n < 0) {
+		return nil
+	}
+	switch kind {
+	case "rule":
+		if i == "new" {
+			e.Rule = newRule
+		} else if n < len(cfg.Rules) {
+			e.Rule = cfg.Rules[n]
+		} else {
+			return nil
+		}
+	case "check":
+		if i == "new" {
+			e.Check = newCheck
+		} else if n < len(cfg.Checks) {
+			e.Check = cfg.Checks[n]
+		} else {
+			return nil
+		}
+	case "var":
+		if i != "new" && n >= len(cfg.Vars) {
+			return nil
+		} else if i != "new" {
+			e.Var = cfg.Vars[n]
+		}
+	default:
+		return nil
+	}
+	return e
 }
+
+// What a new rule or check starts as.
+var (
+	newRule  = emulate.Rule{When: emulate.Condition{Kind: emulate.WhenEvery, N: 2}, Do: emulate.ActReply, Reply: emulate.Reply{Status: 500}}
+	newCheck = emulate.Check{Header: "X-Required", Match: emulate.MatchPresent}
+)
 
 // configVersion identifies a stored configuration, so an edit made on a page
 // loaded before another change is refused instead of hitting the wrong rule.
@@ -82,35 +133,43 @@ func (h *Handler) behaviourPage(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "behaviour", err)
 		return
 	}
-	tab := r.URL.Query().Get("tab")
-	if !slices.Contains(behaviourTabs, tab) {
-		tab = "rules"
+	q := r.URL.Query()
+	v := h.behaviourView(ep, cfg)
+	if q.Has("edit") {
+		v.Editor = openEditor(cfg, q.Get("edit"))
 	}
-	h.showBehaviour(w, r, http.StatusOK, ep, cfg, tab, r.URL.Query().Get("saved"), "")
+	v.Tab = q.Get("tab")
+	if !slices.Contains(behaviourTabs, v.Tab) {
+		v.Tab = "rules"
+		if v.Editor != nil {
+			v.Tab = tabOf(q.Get("edit"))
+		}
+	}
+	if v.Editor == nil {
+		v.Saved = q.Get("saved")
+	}
+	h.showBehaviour(w, r, http.StatusOK, v)
 }
 
-// showBehaviour renders the page on a tab; section is the one just saved, or
-// with msg the one whose edit was refused.
-func (h *Handler) showBehaviour(w http.ResponseWriter, r *http.Request, status int, ep store.Endpoint, cfg emulate.Config, tab, section, msg string) {
-	saved := ""
-	if msg == "" {
-		saved, section = section, ""
-	}
-	nav, err := h.nav(r, ep.ID, false)
+func (h *Handler) showBehaviour(w http.ResponseWriter, r *http.Request, status int, v behaviourView) {
+	nav, err := h.nav(r, v.ID, false)
 	if err != nil {
 		h.fail(w, "behaviour", err)
 		return
 	}
-	h.render(w, r, status, behaviourPage(nav, behaviourView{
+	h.render(w, r, status, behaviourPage(nav, v))
+}
+
+func (h *Handler) behaviourView(ep store.Endpoint, cfg emulate.Config) behaviourView {
+	return behaviourView{
 		ID: ep.ID, Path: ep.Path, Base: h.regPath(ep.ID), Counter: ep.Counter,
-		Config: cfg, MaxWait: h.maxWait, Error: msg, Section: section, Version: configVersion(ep.Config),
-		Tab: tab, Saved: saved,
-	}))
+		Config: cfg, MaxWait: h.maxWait, Version: configVersion(ep.Config),
+	}
 }
 
 // editBehaviour applies one edit (the form's "op") to the endpoint's
 // behaviour, validates the whole and saves it. A refused edit shows the page
-// again with what was typed and why it was refused.
+// again, with the editor open on what was typed and why it was refused.
 func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 	id, ok := regID(r)
 	if !ok || id == store.Unmatched {
@@ -127,17 +186,21 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "behaviour", err)
 		return
 	}
-	cfg, err := emulate.Parse(ep.Config)
+	stored, err := emulate.Parse(ep.Config)
 	if err != nil {
 		h.fail(w, "behaviour", err)
 		return
 	}
+	refuse := func(status int, section, msg string, ed *editor) {
+		v := h.behaviourView(ep, stored)
+		v.Tab, v.Error, v.Editor = tabOf(section), msg, ed
+		h.showBehaviour(w, r, status, v)
+	}
 
 	op := r.PostFormValue("op")
 	if op != "counter-reset" && r.PostFormValue("v") != configVersion(ep.Config) {
-		h.showBehaviour(w, r, http.StatusConflict, ep, cfg, tabOf(opSection(op)), "",
-			"the behaviour was changed elsewhere (another tab or client) after this page was loaded, so nothing was saved; "+
-				"this is the current version, make the change again")
+		refuse(http.StatusConflict, op, "the behaviour was changed elsewhere (another tab or client) after this page was loaded, so nothing was saved; "+
+			"this is the current version, make the change again", nil)
 		return
 	}
 	if op == "counter-reset" {
@@ -148,12 +211,20 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, savedURL(h.regPath(id), "counter"), http.StatusSeeOther)
 		return
 	}
+	cfg, _ := emulate.Parse(ep.Config) // a copy to edit
 	section, err := applyEdit(&cfg, op, r)
 	if err == nil {
 		err = cfg.Validate(h.maxWait)
 	}
 	if err != nil {
-		h.showBehaviour(w, r, http.StatusUnprocessableEntity, ep, cfg, tabOf(section), section, err.Error())
+		var ed *editor
+		if strings.HasSuffix(op, "-save") || op == "default" {
+			// Reopen the editor on what was typed (applied to the copy).
+			if ed = openEditor(cfg, section); ed != nil && ed.Kind != "default" {
+				ed.I = r.PostFormValue("i")
+			}
+		}
+		refuse(http.StatusUnprocessableEntity, section, err.Error(), ed)
 		return
 	}
 	if err := h.store.SetConfig(ctx, id, cfg.String()); err != nil {
@@ -164,56 +235,69 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, savedURL(h.regPath(id), section), http.StatusSeeOther)
 }
 
-// savedURL shows the tab of a saved section, says so, and scrolls to it.
+// savedURL shows the tab of a saved section and says so.
 func savedURL(base, section string) string {
-	return base + "/behaviour?tab=" + tabOf(section) + "&saved=" + url.QueryEscape(section) + "#" + section
+	return base + "/behaviour?tab=" + tabOf(section) + "&saved=" + url.QueryEscape(section)
 }
 
-// applyEdit changes cfg as the form asks; it returns the section to show.
+// applyEdit changes cfg as the form asks; it returns the section edited
+// ("rule-2"; the list, "rules", after a delete).
 func applyEdit(cfg *emulate.Config, op string, r *http.Request) (string, error) {
-	i, iErr := strconv.Atoi(r.PostFormValue("i"))
-	inRange := func(n int) bool { return iErr == nil && i >= 0 && i < n }
+	kind, act, _ := strings.Cut(op, "-")
+	// at is the item the form names: an index, or "new" (one past the end)
+	// where new is allowed.
+	at := func(n int, newOK bool) (int, error) {
+		s := r.PostFormValue("i")
+		if s == "new" && newOK {
+			return n, nil
+		}
+		i, err := strconv.Atoi(s)
+		if err != nil || i < 0 || i >= n {
+			return 0, fmt.Errorf("that %s no longer exists; reload the page", kind)
+		}
+		return i, nil
+	}
 	switch op {
 	case "default":
 		reply, err := formReply(r, "")
 		cfg.Default = reply
 		return "default", err
-	case "rule-add":
-		cfg.Rules = append(cfg.Rules, emulate.Rule{
-			When: emulate.Condition{Kind: emulate.WhenEvery, N: 2}, Do: emulate.ActReply, Reply: emulate.Reply{Status: 500}})
-		return fmt.Sprintf("rule-%d", len(cfg.Rules)-1), nil
 	case "rule-save", "rule-up", "rule-down", "rule-del":
-		if !inRange(len(cfg.Rules)) {
-			return "rules", errors.New("that rule no longer exists; reload the page")
+		i, err := at(len(cfg.Rules), act == "save")
+		if err != nil {
+			return "rules", err
 		}
-		switch op {
-		case "rule-save":
+		switch act {
+		case "save":
 			rule, err := formRule(r)
-			cfg.Rules[i] = rule
+			if i == len(cfg.Rules) {
+				cfg.Rules = append(cfg.Rules, rule)
+			} else {
+				cfg.Rules[i] = rule
+			}
 			return fmt.Sprintf("rule-%d", i), err
-		case "rule-up":
+		case "up":
 			if i > 0 {
 				cfg.Rules[i-1], cfg.Rules[i] = cfg.Rules[i], cfg.Rules[i-1]
 				return fmt.Sprintf("rule-%d", i-1), nil
 			}
-		case "rule-down":
+			return fmt.Sprintf("rule-%d", i), nil
+		case "down":
 			if i < len(cfg.Rules)-1 {
 				cfg.Rules[i+1], cfg.Rules[i] = cfg.Rules[i], cfg.Rules[i+1]
 				return fmt.Sprintf("rule-%d", i+1), nil
 			}
-		case "rule-del":
-			cfg.Rules = append(cfg.Rules[:i], cfg.Rules[i+1:]...)
+			return fmt.Sprintf("rule-%d", i), nil
 		}
+		cfg.Rules = slices.Delete(cfg.Rules, i, i+1)
 		return "rules", nil
-	case "check-add":
-		cfg.Checks = append(cfg.Checks, emulate.Check{Header: "X-Required", Match: emulate.MatchPresent})
-		return fmt.Sprintf("check-%d", len(cfg.Checks)-1), nil
 	case "check-save", "check-del":
-		if !inRange(len(cfg.Checks)) {
-			return "checks", errors.New("that check no longer exists; reload the page")
+		i, err := at(len(cfg.Checks), act == "save")
+		if err != nil {
+			return "checks", err
 		}
-		if op == "check-del" {
-			cfg.Checks = append(cfg.Checks[:i], cfg.Checks[i+1:]...)
+		if act == "del" {
+			cfg.Checks = slices.Delete(cfg.Checks, i, i+1)
 			return "checks", nil
 		}
 		ch := emulate.Check{
@@ -221,20 +305,33 @@ func applyEdit(cfg *emulate.Config, op string, r *http.Request) (string, error) 
 			Match:  r.PostFormValue("match"),
 			Value:  r.PostFormValue("value"),
 		}
-		var err error
 		if r.PostFormValue("own_error") == "on" {
 			var reply emulate.Reply
 			reply, err = formReply(r, "error_")
 			ch.Error = &reply
 		}
-		cfg.Checks[i] = ch
-		return fmt.Sprintf("check-%d", i), err
-	case "vars":
-		vars, err := emulate.ParseVars(r.PostFormValue("vars"))
-		if err == nil {
-			cfg.Vars = vars
+		if i == len(cfg.Checks) {
+			cfg.Checks = append(cfg.Checks, ch)
+		} else {
+			cfg.Checks[i] = ch
 		}
-		return "vars", err
+		return fmt.Sprintf("check-%d", i), err
+	case "var-save", "var-del":
+		i, err := at(len(cfg.Vars), act == "save")
+		if err != nil {
+			return "vars", err
+		}
+		if act == "del" {
+			cfg.Vars = slices.Delete(cfg.Vars, i, i+1)
+			return "vars", nil
+		}
+		v := emulate.Var{Name: strings.TrimSpace(r.PostFormValue("name")), Value: r.PostFormValue("value")}
+		if i == len(cfg.Vars) {
+			cfg.Vars = append(cfg.Vars, v)
+		} else {
+			cfg.Vars[i] = v
+		}
+		return fmt.Sprintf("var-%d", i), nil
 	}
 	return "", fmt.Errorf("unknown edit %q", op)
 }
@@ -328,6 +425,58 @@ func tabCount(c emulate.Config, tab string) string {
 	return ""
 }
 
+func editorTitle(e *editor) string {
+	switch e.Kind {
+	case "default":
+		return "Default reply"
+	case "var":
+		if e.I == "new" {
+			return "New variable"
+		}
+		return "Variable " + e.Var.Name
+	}
+	if e.I == "new" {
+		return "New " + e.Kind
+	}
+	n, _ := strconv.Atoi(e.I)
+	return strings.ToUpper(e.Kind[:1]) + e.Kind[1:] + " " + strconv.Itoa(n+1)
+}
+
+func editorSave(e *editor) string {
+	switch e.Kind {
+	case "default":
+		return "Save default reply"
+	case "var":
+		return "Save variable"
+	}
+	return "Save " + e.Kind
+}
+
+func varOrName(name string) string {
+	if name == "" {
+		return "NAME"
+	}
+	return name
+}
+
+// refusalLabel says how a check refuses.
+func refusalLabel(c emulate.Check) string {
+	if c.Error == nil {
+		return "400 naming the header"
+	}
+	return strconv.Itoa(c.Error.Status) + " (own reply)"
+}
+
+func delayLabel(r emulate.Reply) string {
+	switch {
+	case r.DelayMs == 0 && r.JitterMs == 0:
+		return "none"
+	case r.JitterMs == 0:
+		return duration(r.DelayMs)
+	}
+	return duration(r.DelayMs) + " + up to " + duration(r.JitterMs) + " at random"
+}
+
 func tabCurrent(on bool) string {
 	if on {
 		return "page"
@@ -342,13 +491,16 @@ func savedText(section string) string {
 		return "Counter reset: the next request is number 1."
 	case section == "default":
 		return "Default reply saved. It applies to the next request."
-	case section == "vars":
-		return "Variables saved."
-	case strings.HasPrefix(section, "rule-"), strings.HasPrefix(section, "check-"):
+	case section == "rules", section == "checks", section == "vars":
+		return "Deleted. It applies to the next request."
+	case strings.HasPrefix(section, "rule-"), strings.HasPrefix(section, "check-"), strings.HasPrefix(section, "var-"):
 		kind, n, _ := strings.Cut(section, "-")
 		i, err := strconv.Atoi(n)
 		if err != nil {
 			break
+		}
+		if kind == "var" {
+			kind = "variable"
 		}
 		return strings.ToUpper(kind[:1]) + kind[1:] + " " + strconv.Itoa(i+1) + " saved. It applies to the next request."
 	}

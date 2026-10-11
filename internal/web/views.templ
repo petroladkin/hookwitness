@@ -62,7 +62,7 @@ templ masthead(nav navView) {
 	</header>
 }
 
-templ endpointsPage(nav navView, formPath, formErr string) {
+templ endpointsPage(nav navView, creating bool, formPath, formErr string) {
 	@layout(nav, "Endpoints") {
 		<main class="sheet">
 			<h1 class="title">Endpoints</h1>
@@ -70,33 +70,17 @@ templ endpointsPage(nav navView, formPath, formErr string) {
 				An endpoint is an exact path on this server. Point a sender at it and every request that arrives is
 				kept as evidence. Requests to any other path are answered 404 and kept under Unmatched.
 			</p>
-			<form class="create" method="post" action={ templ.SafeURL(nav.Prefix + "/endpoints") }>
-				<label for="path">New endpoint path</label>
-				<div class="field">
-					<input
-						id="path"
-						name="path"
-						value={ formPath }
-						placeholder="/stripe/webhooks"
-						autocomplete="off"
-						spellcheck="false"
-						aria-describedby="path-help"
-						if formErr != "" {
-							aria-invalid="true"
-						}
-					/>
-					<button class="btn solid" type="submit">Create endpoint</button>
+			<div class="toolbar">
+				<div class="toolbar-note">
+					<p class="note">
+						<a href={ templ.SafeURL(nav.registerURL(store.Unmatched)) }>Unmatched requests</a>
+						· { strconv.Itoa(nav.Unmatched) } kept
+					</p>
 				</div>
-				<p id="path-help" class="help">
-					Leave it empty for a random path. Letters, digits and <code>. _ ~ -</code> between slashes;
-					a trailing slash is part of the path.
-				</p>
-				if formErr != "" {
-					<p class="error" role="alert">{ formErr }</p>
-				}
-			</form>
+				<a class="btn solid" href={ templ.SafeURL(nav.Prefix + "/?edit=new") }>New endpoint</a>
+			</div>
 			if len(nav.Endpoints) == 0 {
-				<p class="empty">No endpoints yet. Create one above, then send it a request.</p>
+				<p class="empty">No endpoints yet. Create one with New endpoint, then send it a request.</p>
 			} else {
 				<div class="scroll">
 					<table class="eps">
@@ -123,10 +107,41 @@ templ endpointsPage(nav navView, formPath, formErr string) {
 					</table>
 				</div>
 			}
-			<p class="unmatched-line">
-				<a href={ templ.SafeURL(nav.registerURL(store.Unmatched)) }>Unmatched requests</a>
-				· { strconv.Itoa(nav.Unmatched) } kept
-			</p>
+			if creating {
+				<dialog class="modal" data-modal data-close={ nav.Prefix + "/" } open aria-labelledby="dialog-title">
+					<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/endpoints") }>
+						<div class="modal-head">
+							<h2 id="dialog-title">New endpoint</h2>
+							<a class="close" href={ templ.SafeURL(nav.Prefix + "/") } aria-label="Close">×</a>
+						</div>
+						if formErr != "" {
+							<p class="error banner" role="alert">Not created: { formErr }</p>
+						}
+						<label for="path">Path</label>
+						<input
+							id="path"
+							name="path"
+							value={ formPath }
+							placeholder="/stripe/webhooks"
+							autocomplete="off"
+							spellcheck="false"
+							autofocus
+							aria-describedby="path-help"
+							if formErr != "" {
+								aria-invalid="true"
+							}
+						/>
+						<p id="path-help" class="help">
+							Leave it empty for a random path. Letters, digits and <code>. _ ~ -</code> between slashes;
+							a trailing slash is part of the path.
+						</p>
+						<div class="acts">
+							<button class="btn solid" type="submit">Create endpoint</button>
+							<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/") }>Cancel</a>
+						</div>
+					</form>
+				</dialog>
+			}
 		</main>
 	}
 }
@@ -412,71 +427,185 @@ templ behaviourPage(nav navView, b behaviourView) {
 					</a>
 				}
 			</nav>
-			if b.Error != "" {
-				<p class="error banner" role="alert">Not saved: { b.Error }</p>
-			} else if b.Saved != "" {
-				<p class="saved banner" role="status">{ savedText(b.Saved) }</p>
-			}
 			switch b.Tab {
 				case "checks":
-					<section id="checks" class="part">
-						<p class="note">
-							Each request must carry these headers, or it is refused before any rule: 400 naming the
-							header, or a reply of your own. Refused requests do not count.
-						</p>
-						for i, ch := range b.Config.Checks {
-							@checkForm(b, i, ch)
-						}
-						@opButton(b, "check-add", 0, "Add a required header")
-					</section>
-					@templateRef()
+					@toolbar(b, "check-new", "New check") {
+						<p class="note">A request without these headers is refused before any rule, and is not counted.</p>
+					}
+					@checkList(b)
 				case "default":
-					<section id="default" class="part">
+					@toolbar(b, "default", "Edit default reply") {
 						<p class="note">The answer when no check refuses the request and no rule matches.</p>
-						<form class={ "card", templ.KV("saved", b.Saved == "default") } method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
-							<input type="hidden" name="op" value="default"/>
-							<input type="hidden" name="v" value={ b.Version }/>
-							@replyFields(b, "default", "", b.Config.Default)
-							<div class="acts"><button class="btn solid" type="submit">Save default reply</button></div>
-						</form>
-					</section>
-					@templateRef()
+					}
+					@replySummary(b.Config.Default)
 				case "vars":
-					<section id="vars" class="part">
-						<form class={ "card", templ.KV("saved", b.Saved == "vars") } method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
-							<input type="hidden" name="op" value="vars"/>
-							<input type="hidden" name="v" value={ b.Version }/>
-							<label for="vars-text">One per line, <code>NAME=value</code>; use as <code>{ "{{.Var.NAME}}" }</code>. Shown and stored in plain text: use test tokens, never real secrets.</label>
-							<textarea id="vars-text" name="vars" rows="6" spellcheck="false">{ emulate.FormatVars(b.Config.Vars) }</textarea>
-							<div class="acts"><button class="btn solid" type="submit">Save variables</button></div>
-						</form>
-					</section>
+					@toolbar(b, "var-new", "New variable") {
+						<p class="note">Test values for templates, as <code>{ "{{.Var.NAME}}" }</code>. Stored in plain text: never real secrets.</p>
+					}
+					@varList(b)
 				default:
-					<section id="counter" class="counter">
-						<p class="note">
-							<b class="big">{ i64(b.Counter) }</b> requests passed the checks since the last reset. Rules count these:
-							“first 2” means the first two after a reset.
-						</p>
-						<form method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+					@toolbar(b, "rule-new", "New rule") {
+						<form class="counter" id="counter" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
 							<input type="hidden" name="op" value="counter-reset"/>
+							<span class="note"><b class="big">{ i64(b.Counter) }</b> counted since the reset</span>
 							<button class="btn quiet" type="submit">Reset counter</button>
 						</form>
-					</section>
-					<section id="rules" class="part">
-						if len(b.Config.Rules) == 0 {
-							<p class="note">No rules: every request gets the default reply.</p>
-						} else {
-							<p class="note">The first rule whose condition holds decides; the rest are skipped.</p>
-						}
-						for i, rule := range b.Config.Rules {
-							@ruleForm(b, i, rule)
-						}
-						@opButton(b, "rule-add", 0, "Add a rule")
-					</section>
-					@templateRef()
+					}
+					@ruleList(b)
+			}
+			if b.Editor != nil {
+				@editorDialog(b, b.Editor)
 			}
 		</main>
 	}
+}
+
+// toolbar holds a tab's note and its one main action, always in the same
+// place; the outcome of the last edit goes under it.
+templ toolbar(b behaviourView, edit, label string) {
+	<div class="toolbar">
+		<div class="toolbar-note">
+			{ children... }
+		</div>
+		<a class="btn solid" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + tabOf(edit) + "&edit=" + edit) }>{ label }</a>
+	</div>
+	if b.Error != "" && b.Editor == nil {
+		<p class="error banner" role="alert">Not saved: { b.Error }</p>
+	} else if b.Saved != "" {
+		<p class="saved banner" role="status">{ savedText(b.Saved) }</p>
+	}
+}
+
+templ rowActions(b behaviourView, kind string, i, n int, move bool) {
+	<form class="acts" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+		<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
+		<input type="hidden" name="v" value={ b.Version }/>
+		<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + tabOf(kind) + "&edit=" + kind + "-" + strconv.Itoa(i)) }>Edit</a>
+		if move {
+			<button class="btn quiet" type="submit" name="op" value={ kind + "-up" } disabled?={ i == 0 } aria-label="Move up">↑</button>
+			<button class="btn quiet" type="submit" name="op" value={ kind + "-down" } disabled?={ i == n-1 } aria-label="Move down">↓</button>
+		}
+		<button class="btn quiet" type="submit" name="op" value={ kind + "-del" } data-confirm={ "Delete " + kind + " " + strconv.Itoa(i+1) + "?" }>Delete</button>
+	</form>
+}
+
+templ ruleList(b behaviourView) {
+	if len(b.Config.Rules) == 0 {
+		<p class="empty">No rules: every request gets the default reply.</p>
+	} else {
+		<ol class="items">
+			for i, rule := range b.Config.Rules {
+				<li id={ "rule-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "rule-"+strconv.Itoa(i)) }>
+					<span class="no">{ strconv.Itoa(i + 1) }</span>
+					<span class="what"><b>{ rule.When.Label() }</b> → { ruleAction(rule) }</span>
+					@rowActions(b, "rule", i, len(b.Config.Rules), true)
+				</li>
+			}
+		</ol>
+		<p class="help">The first rule whose condition holds decides; the rest are skipped.</p>
+	}
+}
+
+templ checkList(b behaviourView) {
+	if len(b.Config.Checks) == 0 {
+		<p class="empty">No checks: every request goes on to the rules.</p>
+	} else {
+		<ol class="items">
+			for i, ch := range b.Config.Checks {
+				<li id={ "check-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "check-"+strconv.Itoa(i)) }>
+					<span class="no">{ strconv.Itoa(i + 1) }</span>
+					<span class="what"><b>{ ch.Header }</b> { matchLabel(ch) } · else { refusalLabel(ch) }</span>
+					@rowActions(b, "check", i, len(b.Config.Checks), false)
+				</li>
+			}
+		</ol>
+	}
+}
+
+templ varList(b behaviourView) {
+	if len(b.Config.Vars) == 0 {
+		<p class="empty">No variables.</p>
+	} else {
+		<ol class="items">
+			for i, v := range b.Config.Vars {
+				<li id={ "var-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "var-"+strconv.Itoa(i)) }>
+					<span class="no">{ strconv.Itoa(i + 1) }</span>
+					<span class="what"><b>{ v.Name }</b> = { v.Value }</span>
+					@rowActions(b, "var", i, len(b.Config.Vars), false)
+				</li>
+			}
+		</ol>
+	}
+}
+
+templ replySummary(r emulate.Reply) {
+	<dl class="summary">
+		<dt>Status</dt>
+		<dd>{ strconv.Itoa(r.Status) }</dd>
+		<dt>Delay</dt>
+		<dd>{ delayLabel(r) }</dd>
+		<dt>Headers</dt>
+		<dd>
+			if len(r.Headers) == 0 {
+				none
+			} else {
+				<pre>{ emulate.FormatHeaders(r.Headers) }</pre>
+			}
+		</dd>
+		<dt>Body</dt>
+		<dd>
+			if r.Body == "" {
+				empty
+			} else {
+				<pre>{ r.Body }</pre>
+			}
+		</dd>
+	</dl>
+}
+
+// editorDialog creates or edits one item; it opens over the list and closes
+// back to it.
+templ editorDialog(b behaviourView, e *editor) {
+	<dialog class="modal" data-modal data-close={ b.Base + "/behaviour?tab=" + b.Tab } open aria-labelledby="dialog-title">
+		<form class="card" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+			<div class="modal-head">
+				<h2 id="dialog-title">{ editorTitle(e) }</h2>
+				<a class="close" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + b.Tab) } aria-label="Close">×</a>
+			</div>
+			if b.Error != "" {
+				<p class="error banner" role="alert">Not saved: { b.Error }</p>
+			}
+			<input type="hidden" name="v" value={ b.Version }/>
+			switch e.Kind {
+				case "rule":
+					<input type="hidden" name="op" value="rule-save"/>
+					<input type="hidden" name="i" value={ e.I }/>
+					@ruleFields(b, e.Rule)
+				case "check":
+					<input type="hidden" name="op" value="check-save"/>
+					<input type="hidden" name="i" value={ e.I }/>
+					@checkFields(b, e.Check)
+				case "var":
+					<input type="hidden" name="op" value="var-save"/>
+					<input type="hidden" name="i" value={ e.I }/>
+					<div class="grid2">
+						<label>Name <input name="name" value={ e.Var.Name } required spellcheck="false" autocomplete="off" autofocus placeholder="TOKEN"/></label>
+						<label>Value <input name="value" value={ e.Var.Value } spellcheck="false" autocomplete="off" placeholder="tok_test"/></label>
+					</div>
+					<p class="help">Letters, digits and _, not starting with a digit. Use as <code>{ "{{.Var." + varOrName(e.Var.Name) + "}}" }</code>.</p>
+				default:
+					<input type="hidden" name="op" value="default"/>
+					@replyFields(b, "default", "", e.Reply)
+			}
+			<div class="acts">
+				<button class="btn solid" type="submit">{ editorSave(e) }</button>
+				<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + b.Tab) }>Cancel</a>
+			</div>
+			if e.Kind != "var" {
+				@templateRef()
+			}
+		</form>
+	</dialog>
 }
 
 templ templateRef() {
@@ -485,15 +614,6 @@ templ templateRef() {
 		<p class="note">Header values and bodies are Go templates. They can use the request and the variables:</p>
 		<pre>{ templateHelp }</pre>
 	</details>
-}
-
-templ opButton(b behaviourView, op string, i int, label string) {
-	<form class="inline" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
-		<input type="hidden" name="op" value={ op }/>
-		<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
-		<input type="hidden" name="v" value={ b.Version }/>
-		<button class="btn quiet" type="submit">{ label }</button>
-	</form>
 }
 
 templ replyFields(b behaviourView, id, prefix string, r emulate.Reply) {
@@ -509,79 +629,48 @@ templ replyFields(b behaviourView, id, prefix string, r emulate.Reply) {
 	<p class="help">Delay plus jitter up to { span(b.MaxWait) }. Content-Length, Transfer-Encoding and Connection are set by the server.</p>
 }
 
-templ ruleForm(b behaviourView, i int, rule emulate.Rule) {
-	<form class={ "card", templ.KV("has-error", b.Section == "rule-"+strconv.Itoa(i)), templ.KV("saved", b.Saved == "rule-"+strconv.Itoa(i)) } id={ "rule-" + strconv.Itoa(i) } method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
-		<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
-		<input type="hidden" name="v" value={ b.Version }/>
-		<div class="card-head">
-			<span class="no">{ strconv.Itoa(i + 1) }</span>
-			<span class="label">{ rule.When.Label() } → { ruleAction(rule) }</span>
-			if b.Saved == "rule-"+strconv.Itoa(i) {
-				<span class="done">saved</span>
-			}
-		</div>
-		<div class="grid3 when">
-			<label>
-				When
-				<select name="when">
-					<option value="every" selected?={ rule.When.Kind == "every" }>every Nth request</option>
-					<option value="first" selected?={ rule.When.Kind == "first" }>the first N requests</option>
-					<option value="random" selected?={ rule.When.Kind == "random" }>at random, p%</option>
-				</select>
-			</label>
-			<label class="for-n">N <input type="number" name="n" value={ blank(rule.When.N) } min="1"/></label>
-			<label class="for-p">p, % <input type="number" name="percent" value={ percent(rule.When.Percent) } min="0" max="100" step="any"/></label>
-		</div>
+templ ruleFields(b behaviourView, rule emulate.Rule) {
+	<div class="grid3 when">
 		<label>
-			Do
-			<select name="do">
-				<option value="reply" selected?={ rule.Do == "reply" }>reply as below</option>
-				<option value="timeout" selected?={ rule.Do == "timeout" }>time out: hold, never answer</option>
-				<option value="drop" selected?={ rule.Do == "drop" }>drop: reset the connection</option>
+			When
+			<select name="when" autofocus>
+				<option value="every" selected?={ rule.When.Kind == "every" }>every Nth request</option>
+				<option value="first" selected?={ rule.When.Kind == "first" }>the first N requests</option>
+				<option value="random" selected?={ rule.When.Kind == "random" }>at random, p%</option>
 			</select>
 		</label>
-		<div class="reply-fields">
-			@replyFields(b, "rule-"+strconv.Itoa(i), "", replyOrDefault(rule))
-		</div>
-		<p class="help for-hold">No reply is sent: the request is still recorded. A timeout holds the connection up to { span(b.MaxWait) }.</p>
-		<div class="acts">
-			<button class="btn solid" type="submit" name="op" value="rule-save">Save rule</button>
-			<button class="btn quiet" type="submit" name="op" value="rule-up" disabled?={ i == 0 }>Up</button>
-			<button class="btn quiet" type="submit" name="op" value="rule-down" disabled?={ i == len(b.Config.Rules)-1 }>Down</button>
-			<button class="btn quiet" type="submit" name="op" value="rule-del" formnovalidate>Delete</button>
-		</div>
-	</form>
+		<label class="for-n">N <input type="number" name="n" value={ blank(rule.When.N) } min="1"/></label>
+		<label class="for-p">p, % <input type="number" name="percent" value={ percent(rule.When.Percent) } min="0" max="100" step="any"/></label>
+	</div>
+	<label>
+		Do
+		<select name="do">
+			<option value="reply" selected?={ rule.Do == "reply" }>reply as below</option>
+			<option value="timeout" selected?={ rule.Do == "timeout" }>time out: hold, never answer</option>
+			<option value="drop" selected?={ rule.Do == "drop" }>drop: reset the connection</option>
+		</select>
+	</label>
+	<div class="reply-fields">
+		@replyFields(b, "rule", "", replyOrDefault(rule))
+	</div>
+	<p class="help for-hold">No reply is sent: the request is still recorded. A timeout holds the connection up to { span(b.MaxWait) }.</p>
 }
 
-templ checkForm(b behaviourView, i int, ch emulate.Check) {
-	<form class={ "card", templ.KV("has-error", b.Section == "check-"+strconv.Itoa(i)), templ.KV("saved", b.Saved == "check-"+strconv.Itoa(i)) } id={ "check-" + strconv.Itoa(i) } method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
-		<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
-		<input type="hidden" name="v" value={ b.Version }/>
-		<div class="card-head">
-			<span class="no">{ strconv.Itoa(i + 1) }</span><span class="label">header { ch.Header } { matchLabel(ch) }</span>
-			if b.Saved == "check-"+strconv.Itoa(i) {
-				<span class="done">saved</span>
-			}
-		</div>
-		<div class="grid3">
-			<label>Header <input name="header" value={ ch.Header } required spellcheck="false"/></label>
-			<label>
-				Must
-				<select name="match">
-					<option value="present" selected?={ ch.Match == "present" }>be present</option>
-					<option value="equals" selected?={ ch.Match == "equals" }>equal</option>
-					<option value="regex" selected?={ ch.Match == "regex" }>match the regex</option>
-				</select>
-			</label>
-			<label>Value <input name="value" value={ ch.Value } spellcheck="false"/></label>
-		</div>
-		<label class="check"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header)</label>
-		<div class="reply-fields">
-			@replyFields(b, "check-"+strconv.Itoa(i), "error_", errorOrStandard(ch))
-		</div>
-		<div class="acts">
-			<button class="btn solid" type="submit" name="op" value="check-save">Save check</button>
-			<button class="btn quiet" type="submit" name="op" value="check-del" formnovalidate>Delete</button>
-		</div>
-	</form>
+templ checkFields(b behaviourView, ch emulate.Check) {
+	<div class="grid3">
+		<label>Header <input name="header" value={ ch.Header } required spellcheck="false" autocomplete="off" autofocus/></label>
+		<label>
+			Must
+			<select name="match">
+				<option value="present" selected?={ ch.Match == "present" }>be present</option>
+				<option value="equals" selected?={ ch.Match == "equals" }>equal</option>
+				<option value="regex" selected?={ ch.Match == "regex" }>match the regex</option>
+			</select>
+		</label>
+		<label>Value <input name="value" value={ ch.Value } spellcheck="false" autocomplete="off"/></label>
+	</div>
+	<label class="check"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header)</label>
+	<div class="reply-fields">
+		@replyFields(b, "check", "error_", errorOrStandard(ch))
+	</div>
 }

@@ -101,8 +101,20 @@
     if (el.matches && el.matches("select[data-navigate]") && el.value) location.assign(el.value);
   });
   document.addEventListener("submit", (e) => {
-    const msg = e.target.dataset && e.target.dataset.confirm;
+    const by = e.submitter && e.submitter.dataset.confirm;
+    const msg = by || (e.target.dataset && e.target.dataset.confirm);
     if (msg && !window.confirm(msg)) e.preventDefault();
+  });
+
+  // Editors are dialogs with their own URL: the page renders one open, here
+  // it becomes modal; Escape goes back to the list it was opened from.
+  document.querySelectorAll("dialog[data-modal]").forEach((d) => {
+    d.close();
+    d.showModal();
+    d.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      location.assign(d.dataset.close);
+    });
   });
 
   // The strip: the last two minutes on recorder paper, the pen on the right,

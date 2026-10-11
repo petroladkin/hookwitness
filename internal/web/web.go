@@ -196,16 +196,17 @@ func (h *Handler) nav(r *http.Request, current int64, onRegister bool) (navView,
 }
 
 func (h *Handler) endpointsPage(w http.ResponseWriter, r *http.Request) {
-	h.showEndpoints(w, r, http.StatusOK, "", "")
+	h.showEndpoints(w, r, http.StatusOK, r.URL.Query().Get("edit") == "new", "", "")
 }
 
-func (h *Handler) showEndpoints(w http.ResponseWriter, r *http.Request, status int, formPath, formErr string) {
+// showEndpoints renders the list; creating opens the new-endpoint dialog.
+func (h *Handler) showEndpoints(w http.ResponseWriter, r *http.Request, status int, creating bool, formPath, formErr string) {
 	nav, err := h.nav(r, -1, false)
 	if err != nil {
 		h.fail(w, "endpoints", err)
 		return
 	}
-	h.render(w, r, status, endpointsPage(nav, formPath, formErr))
+	h.render(w, r, status, endpointsPage(nav, creating, formPath, formErr))
 }
 
 // pathSegment is one segment of an endpoint path.
@@ -260,12 +261,12 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		p = randomPath()
 	}
 	if msg := h.checkPath(p); msg != "" {
-		h.showEndpoints(w, r, http.StatusUnprocessableEntity, p, msg)
+		h.showEndpoints(w, r, http.StatusUnprocessableEntity, true, p, msg)
 		return
 	}
 	ep, err := h.store.CreateEndpoint(r.Context(), p)
 	if errors.Is(err, store.ErrDuplicatePath) {
-		h.showEndpoints(w, r, http.StatusUnprocessableEntity, p, p+" is already an endpoint.")
+		h.showEndpoints(w, r, http.StatusUnprocessableEntity, true, p, p+" is already an endpoint.")
 		return
 	}
 	if err != nil {
