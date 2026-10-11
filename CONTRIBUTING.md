@@ -30,7 +30,7 @@ To fix a missing sign-off: `git commit --amend -s`, or
 Enable the repository's git hooks once per clone:
 
 ```sh
-git config core.hooksPath scripts/hooks
+make hooks
 ```
 
 They refuse commits on `dev`/`main` and compiled binaries at the repository
@@ -42,7 +42,7 @@ root.
   `fix:`, `docs:`, `chore:`, `refactor:`, `test:`. The body says why, not
   what.
 - Code, comments, identifiers, commit messages and docs are in English.
-- Tests go with the change.
+- Tests go with the change, and `make check` passes (Go 1.27+).
 
 ## Reporting a problem
 
