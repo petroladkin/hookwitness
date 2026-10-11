@@ -167,6 +167,10 @@ func TestRender(t *testing.T) {
 	if fmt.Sprint(out.Headers) != "[{X-Echo abc} {X-N 42}]" {
 		t.Fatalf("headers %v", out.Headers)
 	}
+	if _, err := (Reply{Body: "{{index .Body 1000}}"}).Render(d); err == nil ||
+		err.Error() != "body: line 1, column 2: <index .Body 1000>: error calling index: index out of range: 1000" {
+		t.Fatalf("execution error: %v", err)
+	}
 	if _, err := (Reply{Body: "{{.Nope}}"}).Render(d); err == nil || !strings.Contains(err.Error(), "body") {
 		t.Fatalf("unknown field: %v", err)
 	}

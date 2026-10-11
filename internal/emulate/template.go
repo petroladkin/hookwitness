@@ -6,10 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
 )
+
+// execError matches the position prefix of a text/template execution error
+// (":1:2: executing \"\" at ").
+var execError = regexp.MustCompile(`^:(\d+):(\d+): executing "" at `)
 
 // maxRendered bounds a rendered body, so a template cannot make the server
 // build an unbounded reply.
@@ -151,7 +156,7 @@ func render(src string, d *Data) (string, error) {
 	}
 	var buf capped
 	if err := t.Execute(&buf, d); err != nil {
-		return "", errors.New(strings.TrimPrefix(err.Error(), "template: "))
+		return "", errors.New(execError.ReplaceAllString(strings.TrimPrefix(err.Error(), "template: "), "line $1, column $2: "))
 	}
 	return buf.String(), nil
 }
