@@ -20,6 +20,10 @@ type Tolerance struct {
 	Ignore  bool  // accept any timestamp (replayed captures)
 }
 
+// plausible bounds a signed unix timestamp: after 1970 and before the year
+// 9999. Outside them the subtraction below could overflow and pass.
+func plausible(ts int64) bool { return ts > 0 && ts < 253402300800 }
+
 // stale says why a signed unix timestamp is too far from the arrival, or "".
 func (t Tolerance) stale(ts int64, received time.Time) string {
 	if t.Ignore {
@@ -63,7 +67,7 @@ func Stripe(in Input, secret string, tol Tolerance) Verdict {
 		}
 	}
 	t, err := strconv.ParseInt(ts, 10, 64)
-	if err != nil {
+	if err != nil || !plausible(t) {
 		return fail("no t= timestamp in " + name)
 	}
 	if len(sigs) == 0 {

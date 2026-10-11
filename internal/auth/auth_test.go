@@ -282,3 +282,23 @@ func TestBasic(t *testing.T) {
 		check(t, c.name, Basic(x, "qa", pw), c.want)
 	}
 }
+
+// TestTimestampOverflow: a timestamp chosen so that received - t wraps
+// around must not slip past the tolerance (found in review).
+func TestTimestampOverflow(t *testing.T) {
+	v := load(t).Stripe[0]
+	sw := load(t).Standard[0]
+	for _, ts := range []string{"-9223372036854775808", "9223372036854775807", "-9223372034094575798", "0", "-1", "253402300800"} {
+		x := in(v.Body, "Stripe-Signature", "t="+ts+",v1="+v.V1)
+		check(t, "stripe t="+ts, Stripe(x, v.Secret, Tolerance{Seconds: 300}), outcome{Fail, "no t= timestamp in Stripe-Signature"})
+		y := in(sw.Body, "webhook-id", sw.ID, "webhook-timestamp", ts, "webhook-signature", sw.Signature)
+		check(t, "standard t="+ts, Standard(y, sw.Secret, Tolerance{Seconds: 300}), outcome{Fail, "header webhook-timestamp is not a unix time"})
+	}
+}
+
+func TestStripeRepeatedTimestamp(t *testing.T) {
+	v := load(t).Stripe[0]
+	// The last t= wins, as in a simple key=value parse; the signature was made for the first.
+	x := in(v.Body, "Stripe-Signature", "t="+v.Timestamp+",t=1760200001,v1="+v.V1)
+	check(t, "repeated t", Stripe(x, v.Secret, Tolerance{Seconds: 300}), outcome{Fail, "signature does not match"})
+}

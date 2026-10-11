@@ -43,7 +43,7 @@ func Standard(in Input, secret string, tol Tolerance) Verdict {
 	}
 	header, id, ts := vals[0], vals[1], vals[2]
 	t, err := strconv.ParseInt(ts, 10, 64)
-	if err != nil {
+	if err != nil || !plausible(t) {
 		return fail("header " + prefix + "timestamp is not a unix time")
 	}
 	key, err := StandardKey(secret)
