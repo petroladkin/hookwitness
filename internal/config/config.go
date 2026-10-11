@@ -16,12 +16,13 @@ import (
 
 // Config is the resolved configuration of the server.
 type Config struct {
-	Addr        string // listen address, host:port
-	DBPath      string // sqlite file
-	LogFormat   string // "text" or "json"
-	MaxBody     int64  // largest request body kept, in bytes
-	Retention   int    // requests kept per endpoint
-	AdminPrefix string // path prefix of the web UI, e.g. /admin
+	Addr        string   // listen address, host:port
+	DBPath      string   // sqlite file
+	LogFormat   string   // "text" or "json"
+	MaxBody     int64    // largest request body kept, in bytes
+	Retention   int      // requests kept per endpoint
+	AdminPrefix string   // path prefix of the web UI, e.g. /admin
+	AdminHosts  []string // host names the UI answers to besides IPs and localhost
 }
 
 // Defaults.
@@ -43,7 +44,7 @@ type setting struct {
 // getenv. Usage and errors from the flag package go to out.
 func Parse(args []string, getenv func(string) string, out io.Writer) (Config, error) {
 	var c Config
-	var maxBody, retention string
+	var maxBody, retention, adminHosts string
 	settings := []setting{
 		{"addr", "HOOKWITNESS_ADDR", DefaultAddr, "listen address (host:port)", &c.Addr},
 		{"db", "HOOKWITNESS_DB", DefaultDBPath, "path to the sqlite database file", &c.DBPath},
@@ -51,6 +52,7 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		{"max-body", "HOOKWITNESS_MAX_BODY", DefaultMaxBody, "largest request body to keep, in bytes or with KiB/MiB/GiB; a larger one is answered 413", &maxBody},
 		{"retention", "HOOKWITNESS_RETENTION", DefaultRetention, "requests kept per endpoint; the oldest are pruned", &retention},
 		{"admin-prefix", "HOOKWITNESS_ADMIN_PREFIX", DefaultAdminPrefix, "path prefix of the web UI; requests under it are never caught", &c.AdminPrefix},
+		{"admin-hosts", "HOOKWITNESS_ADMIN_HOSTS", "", "comma-separated host names the web UI answers to, besides IP addresses and localhost", &adminHosts},
 	}
 
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -84,6 +86,11 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		return Config{}, fmt.Errorf("invalid retention %q: want a whole number of at least 1", retention)
 	}
 	c.Retention = n
+	for name := range strings.SplitSeq(adminHosts, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			c.AdminHosts = append(c.AdminHosts, name)
+		}
+	}
 	return c, c.validate()
 }
 

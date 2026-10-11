@@ -46,7 +46,10 @@ to the retention limit. The same body delivered again is marked as a retry.
 Everything except `/healthz` and the admin prefix is caught, so senders can be
 pointed at their real paths. To expose the catch endpoints but not the UI,
 publish everything except `/admin` through your reverse proxy. The UI itself
-has no login: keep it on localhost or behind the proxy.
+has no login: keep it on localhost or behind the proxy. It answers only when
+opened by IP address or `localhost` (so a hostile web page cannot reach it by
+pointing its own domain at your server); allow other host names with
+`-admin-hosts`.
 
 ## Build from source
 
@@ -73,6 +76,7 @@ variable.
 | `-max-body` | `HOOKWITNESS_MAX_BODY` | `10MiB` (bytes, or with `KiB`, `MiB`, `GiB`) |
 | `-retention` | `HOOKWITNESS_RETENTION` | `1000` requests per endpoint |
 | `-admin-prefix` | `HOOKWITNESS_ADMIN_PREFIX` | `/admin` |
+| `-admin-hosts` | `HOOKWITNESS_ADMIN_HOSTS` | none: host names, comma-separated |
 
 Ctrl-C or SIGTERM stops the server gracefully. `make check` runs the templ
 check, the build, `go vet`, the gofmt check, staticcheck and the tests. The

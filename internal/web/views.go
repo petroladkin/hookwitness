@@ -30,6 +30,7 @@ type registerView struct {
 	Newest   int64 // id of the newest row, where the live feed starts
 	Base     string
 	Selected int64
+	Keep     int // retention: the register never holds more
 }
 
 // rowView is one line of the register.

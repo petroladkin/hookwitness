@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,7 @@ func TestDefaults(t *testing.T) {
 	}
 	want := Config{Addr: DefaultAddr, DBPath: DefaultDBPath, LogFormat: DefaultLogFormat,
 		MaxBody: 10 << 20, Retention: 1000, AdminPrefix: "/admin"}
-	if c != want {
+	if !reflect.DeepEqual(c, want) {
 		t.Fatalf("got %+v, want %+v", c, want)
 	}
 }
@@ -32,11 +33,12 @@ func TestEnvOverridesDefault(t *testing.T) {
 		"HOOKWITNESS_MAX_BODY":     "512KiB",
 		"HOOKWITNESS_RETENTION":    "50",
 		"HOOKWITNESS_ADMIN_PREFIX": "/_hw/ui",
+		"HOOKWITNESS_ADMIN_HOSTS":  "hooks.example.test, ui.example.test,",
 	}), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Addr != "127.0.0.1:9000" || c.DBPath != "/tmp/x.db" || c.LogFormat != "json" ||
+	if c.Addr != "127.0.0.1:9000" || c.DBPath != "/tmp/x.db" || c.LogFormat != "json" || len(c.AdminHosts) != 2 || c.AdminHosts[1] != "ui.example.test" ||
 		c.MaxBody != 512<<10 || c.Retention != 50 || c.AdminPrefix != "/_hw/ui" {
 		t.Fatalf("env not applied: %+v", c)
 	}

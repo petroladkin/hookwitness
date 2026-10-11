@@ -42,7 +42,9 @@ update it in the same change that makes it false.
   `views_templ.go` is committed), handlers, SSE feed, embedded `static/`
   (our `app.css`, `app.js`; vendored htmx, htmx-ext-sse and fonts under
   `static/vendor/<name>/` with `LICENSE` and `SOURCE`). Strict CSP: no
-  inline scripts or styles, nothing from other origins.
+  inline scripts or styles, nothing from other origins. Answers only to IP
+  addresses, localhost and `-admin-hosts` names (DNS rebinding); refuses
+  cross-origin form posts.
 - `internal/version` — version and commit, set via `-ldflags` by `make build`.
 - `internal/repoguard` — tests over the repository itself: no private network
   addresses or home-directory paths in tracked files (exempt a line with

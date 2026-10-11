@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"path"
 	"regexp"
 	"strconv"
@@ -43,6 +45,8 @@ type Handler struct {
 	log    *slog.Logger
 	prefix string
 	limit  int64 // the body limit, shown when a body was refused
+	keep   int   // retention per register, so the page can drop pruned rows
+	hosts  map[string]bool
 	mux    http.Handler
 	assets map[string]string // asset path -> content hash for cache busting
 
@@ -50,10 +54,22 @@ type Handler struct {
 	stop     chan struct{}
 }
 
-// New returns the UI mounted at prefix (e.g. /admin); maxBody is the body
-// limit the catcher applies.
-func New(st *store.Store, broker *live.Broker, log *slog.Logger, prefix string, maxBody int64) *Handler {
-	h := &Handler{store: st, live: broker, log: log, prefix: prefix, limit: maxBody, stop: make(chan struct{})}
+// Options configure the UI.
+type Options struct {
+	Prefix    string   // where the UI is mounted, e.g. /admin
+	MaxBody   int64    // the catcher's body limit, shown when a body was refused
+	Retention int      // requests kept per register
+	Hosts     []string // host names the UI answers to besides IP addresses and localhost
+}
+
+// New returns the UI.
+func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Handler {
+	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention,
+		hosts: map[string]bool{}, stop: make(chan struct{})}
+	for _, name := range o.Hosts {
+		h.hosts[strings.ToLower(name)] = true
+	}
+	prefix := o.Prefix
 	h.assets = hashAssets()
 
 	mux := http.NewServeMux()
@@ -87,11 +103,33 @@ const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 's
 	"connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !h.allowedHost(r.Host) {
+		// A page on another site can point its own host name at this server
+		// (DNS rebinding) and then read the UI as same-origin.
+		h.log.Warn("web: request for an unknown host name refused", "host", r.Host)
+		http.Error(w, fmt.Sprintf("The web UI does not answer to the host name %q. "+
+			"Open it by IP address or localhost, or allow the name with -admin-hosts.", r.Host), http.StatusMisdirectedRequest)
+		return
+	}
 	hd := w.Header()
 	hd.Set("Content-Security-Policy", csp)
 	hd.Set("X-Content-Type-Options", "nosniff")
 	hd.Set("Referrer-Policy", "same-origin")
 	h.mux.ServeHTTP(w, r)
+}
+
+// allowedHost reports whether the UI answers to host (a Host header): an IP
+// address, localhost or a *.localhost name, or one of the configured names.
+func (h *Handler) allowedHost(host string) bool {
+	name := host
+	if hn, _, err := net.SplitHostPort(host); err == nil {
+		name = hn
+	}
+	name = strings.ToLower(strings.TrimSuffix(strings.Trim(name, "[]"), "."))
+	if _, err := netip.ParseAddr(name); err == nil {
+		return true
+	}
+	return name == "localhost" || strings.HasSuffix(name, ".localhost") || h.hosts[name]
 }
 
 // regID reads the {reg} path value: an endpoint id, or "unmatched".
@@ -345,6 +383,7 @@ func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 		Newest:   newest,
 		Base:     h.regPath(reg),
 		Selected: selectedID(ex),
+		Keep:     h.keep,
 	}, ex))
 }
 

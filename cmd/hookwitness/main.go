@@ -96,7 +96,9 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 		"max_body", cfg.MaxBody, "retention", cfg.Retention)
 
 	broker := live.New()
-	ui := web.New(st, broker, log, cfg.AdminPrefix, cfg.MaxBody)
+	ui := web.New(st, broker, log, web.Options{
+		Prefix: cfg.AdminPrefix, MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts,
+	})
 	root := server.New(server.Options{
 		DB:          st,
 		Log:         log,

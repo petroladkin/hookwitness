@@ -33,7 +33,8 @@ func newEnv(t *testing.T) env {
 	}
 	t.Cleanup(func() { st.Close() })
 	lv := live.New()
-	return env{New(st, lv, slog.New(slog.NewTextHandler(io.Discard, nil)), "/admin", 10<<20), st, lv}
+	return env{New(st, lv, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Options{Prefix: "/admin", MaxBody: 10 << 20, Retention: 1000, Hosts: []string{"hooks.example.test", "example.com"}}), st, lv}
 }
 
 func (e env) do(method, target string, form url.Values, hdr ...string) *httptest.ResponseRecorder {
@@ -194,6 +195,9 @@ func TestRegisterAndExhibit(t *testing.T) {
 	// Newest first.
 	if strings.Index(body, `id="req-`+id(big.ID)) > strings.Index(body, `id="req-`+id(first.ID)) {
 		t.Error("register is not newest first")
+	}
+	if !strings.Contains(body, `data-keep="1000"`) {
+		t.Error("the page does not know the retention limit")
 	}
 	if !strings.Contains(body, "retry 1") || !strings.Contains(body, "Refused: body over the limit") {
 		t.Error("retry or refusal not shown in the register")
@@ -410,5 +414,32 @@ func TestAssetsSelfContained(t *testing.T) {
 	}
 	if rec := e.do("GET", "/admin/static/vendor/htmx/LICENSE", nil); rec.Code != 404 {
 		t.Errorf("licence files are not served as assets: %d", rec.Code)
+	}
+}
+
+// TestHostCheck: the UI answers to IP addresses, localhost and the configured
+// names only, so a rebound DNS name cannot read it as same-origin.
+func TestHostCheck(t *testing.T) {
+	e := newEnv(t)
+	for host, want := range map[string]int{
+		"127.0.0.1:8080":          200,
+		"[::1]:8080":              200,
+		"192.0.2.10":              200,
+		"localhost:8080":          200,
+		"LOCALHOST":               200,
+		"ui.localhost:8080":       200,
+		"hooks.example.test:8443": 200,
+		"hooks.example.test.":     200,
+		"attacker.example:8080":   http.StatusMisdirectedRequest,
+		"localhost.attacker.test": http.StatusMisdirectedRequest,
+		"":                        http.StatusMisdirectedRequest,
+	} {
+		r := httptest.NewRequest("GET", "/admin/", nil)
+		r.Host = host
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, r)
+		if rec.Code != want {
+			t.Errorf("Host %q: %d, want %d", host, rec.Code, want)
+		}
 	}
 }

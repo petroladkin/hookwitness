@@ -40,8 +40,16 @@
   document.addEventListener("htmx:sseMessage", () => {
     const empty = document.getElementById("register-empty");
     if (empty) empty.remove();
+    // The server prunes past the retention limit; so does the page.
+    const reg = document.getElementById("register");
+    const keep = Number(reg && reg.dataset.keep) || 0;
+    const rows = reg ? reg.querySelectorAll(":scope > li.row") : [];
+    if (keep > 0) for (let i = rows.length - 1; i >= keep; i--) rows[i].remove();
     const kept = document.getElementById("kept");
-    if (kept) kept.textContent = String((Number(kept.textContent) || 0) + 1);
+    if (kept) {
+      const n = (Number(kept.textContent) || 0) + 1;
+      kept.textContent = String(keep > 0 ? Math.min(n, keep) : n);
+    }
     markSelected();
     draw();
   });

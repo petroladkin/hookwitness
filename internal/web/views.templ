@@ -164,6 +164,7 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 					sse-swap="request"
 					hx-swap="afterbegin"
 					data-selected={ id(reg.Selected) }
+					data-keep={ strconv.Itoa(reg.Keep) }
 				>
 					for _, r := range reg.Rows {
 						@row(r)
