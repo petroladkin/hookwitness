@@ -13,7 +13,7 @@ import (
 // modules actually compiled into the binary: every one must have a section,
 // and no section may outlive its module. `make notices` regenerates the file.
 func TestNoticesCoverEveryModule(t *testing.T) {
-	root := repoRoot(t)
+	root := moduleRoot(t)
 	cmd := exec.Command("go", "list", "-deps", "-f", "{{with .Module}}{{if not .Main}}{{.Path}}{{end}}{{end}}", "./cmd/hookwitness")
 	cmd.Dir = root
 	out, err := cmd.Output()
@@ -50,6 +50,21 @@ func TestNoticesCoverEveryModule(t *testing.T) {
 	if len(stale) > 0 {
 		t.Errorf("notices for modules no longer compiled in: %v (run make notices)", stale)
 	}
+}
+
+// moduleRoot is the directory holding go.mod; unlike the private-string scan
+// this check needs no git, so it also runs in an unpacked source archive.
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("go", "env", "GOMOD").Output()
+	if err != nil {
+		t.Fatalf("go env GOMOD: %v", err)
+	}
+	gomod := strings.TrimSpace(string(out))
+	if gomod == "" || gomod == os.DevNull {
+		t.Fatal("not inside the hookwitness module")
+	}
+	return filepath.Dir(gomod)
 }
 
 // listedModules returns the level-2 headings outside fenced blocks: the
