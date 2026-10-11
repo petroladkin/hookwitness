@@ -405,7 +405,7 @@ func tabTitle(tab string) string {
 	case "checks":
 		return "Checks"
 	case "default":
-		return "Default reply"
+		return "Default"
 	case "vars":
 		return "Variables"
 	}
