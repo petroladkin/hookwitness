@@ -1,0 +1,351 @@
+package web
+
+import (
+	"strconv"
+
+	"github.com/petroladkin/hookwitness/internal/store"
+)
+
+// favicon is inline so that browsers do not ask the server for
+// /favicon.ico, which would land in the Unmatched register.
+const favicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2324308C'/%3E%3Cpath d='M3 12V4M3 8h4M7 12V4M10 12l1.5-8 1.5 8' stroke='%23E6ECE7' stroke-width='1.6' fill='none'/%3E%3C/svg%3E"
+
+templ layout(nav navView, pageTitle string) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="color-scheme" content="light dark"/>
+			<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"historyCacheSize":0}'/>
+			<title>{ pageTitle } · Hookwitness</title>
+			<link rel="icon" href={ templ.SafeURL(favicon) }/>
+			<link rel="stylesheet" href={ templ.SafeURL(nav.Asset("app.css")) }/>
+			<script src={ nav.Asset("vendor/htmx/htmx.min.js") } defer></script>
+			<script src={ nav.Asset("vendor/htmx-ext-sse/sse.min.js") } defer></script>
+			<script src={ nav.Asset("app.js") } defer></script>
+		</head>
+		<body>
+			<div class="wrap">
+				@masthead(nav)
+				{ children... }
+			</div>
+		</body>
+	</html>
+}
+
+templ masthead(nav navView) {
+	<header class="mast">
+		<a class="brand" href={ templ.SafeURL(nav.Prefix + "/") }>Hookwitness</a>
+		if len(nav.Endpoints) > 0 || nav.Unmatched > 0 {
+			<div class="endpoint">
+				<label for="register-select">Endpoint</label>
+				<select id="register-select" data-navigate>
+					if nav.Current < 0 {
+						<option value="" selected>Choose…</option>
+					}
+					for _, e := range nav.Endpoints {
+						<option value={ nav.registerURL(e.ID) } selected?={ nav.Current == e.ID }>{ e.Path }</option>
+					}
+					<option value={ nav.registerURL(store.Unmatched) } selected?={ nav.Current == store.Unmatched }>Unmatched · { strconv.Itoa(nav.Unmatched) }</option>
+				</select>
+			</div>
+		}
+		<div class="status">
+			if nav.OnRegister {
+				<span class="rec" id="feed-state" data-state="connecting"><i aria-hidden="true"></i><span>Connecting</span></span>
+			}
+			<span class="addr">{ nav.Host }</span>
+			<a class="btn" href={ templ.SafeURL(nav.Prefix + "/") }>Endpoints</a>
+		</div>
+	</header>
+}
+
+templ endpointsPage(nav navView, formPath, formErr string) {
+	@layout(nav, "Endpoints") {
+		<main class="sheet">
+			<h1 class="title">Endpoints</h1>
+			<p class="lede">
+				An endpoint is an exact path on this server. Point a sender at it and every request that arrives is
+				kept as evidence. Requests to any other path are answered 404 and kept under Unmatched.
+			</p>
+			<form class="create" method="post" action={ templ.SafeURL(nav.Prefix + "/endpoints") }>
+				<label for="path">New endpoint path</label>
+				<div class="field">
+					<input
+						id="path"
+						name="path"
+						value={ formPath }
+						placeholder="/stripe/webhooks"
+						autocomplete="off"
+						spellcheck="false"
+						aria-describedby="path-help"
+						if formErr != "" {
+							aria-invalid="true"
+						}
+					/>
+					<button class="btn solid" type="submit">Create endpoint</button>
+				</div>
+				<p id="path-help" class="help">
+					Leave it empty for a random path. Letters, digits and <code>. _ ~ -</code> between slashes;
+					a trailing slash is part of the path.
+				</p>
+				if formErr != "" {
+					<p class="error" role="alert">{ formErr }</p>
+				}
+			</form>
+			if len(nav.Endpoints) == 0 {
+				<p class="empty">No endpoints yet. Create one above, then send it a request.</p>
+			} else {
+				<div class="scroll">
+					<table class="eps">
+						<thead>
+							<tr><th>Path</th><th>Catch URL</th><th class="num">Kept</th><th>Last received</th><th><span class="sr">Actions</span></th></tr>
+						</thead>
+						<tbody>
+							for _, e := range nav.Endpoints {
+								<tr>
+									<td><a href={ templ.SafeURL(nav.registerURL(e.ID)) }>{ e.Path }</a></td>
+									<td class="url">http://{ nav.Host }{ e.Path }</td>
+									<td class="num">{ strconv.Itoa(e.Count) }</td>
+									<td class="when">{ lastSeen(e.LastAt) }</td>
+									<td class="acts">
+										@clearForm(nav, e.ID, nav.Prefix+"/", e.Path)
+										<form method="post" action={ templ.SafeURL(nav.registerURL(e.ID) + "/delete") } data-confirm={ "Delete " + e.Path + " and its " + strconv.Itoa(e.Count) + " requests?" }>
+											<button class="btn quiet" type="submit">Delete</button>
+										</form>
+									</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+			<p class="unmatched-line">
+				<a href={ templ.SafeURL(nav.registerURL(store.Unmatched)) }>Unmatched requests</a>
+				· { strconv.Itoa(nav.Unmatched) } kept
+			</p>
+		</main>
+	}
+}
+
+templ clearForm(nav navView, regID int64, next, what string) {
+	<form method="post" action={ templ.SafeURL(nav.registerURL(regID) + "/clear") } data-confirm={ "Clear every request kept for " + what + "?" }>
+		<input type="hidden" name="next" value={ next }/>
+		<button class="btn quiet" type="submit">Clear</button>
+	</form>
+}
+
+templ registerPage(nav navView, reg registerView, ex *exhibitView) {
+	@layout(nav, title(reg)) {
+		<section class="strip" aria-label="Arrivals over the last two minutes">
+			<canvas id="trace" aria-hidden="true"></canvas>
+			<div class="legend"><b>Last 2 min</b> · mark height = body size · same body bracketed</div>
+		</section>
+		<main class="desk">
+			<section class="register" aria-label="Caught requests">
+				<div class="reg-head">
+					<span class="reg-name">{ title(reg) }</span>
+					<span><span id="kept">{ strconv.Itoa(reg.Count) }</span> kept</span>
+				</div>
+				<div class="reg-tools">
+					if reg.ID == store.Unmatched {
+						@clearForm(nav, reg.ID, reg.Base, "Unmatched")
+					} else {
+						@clearForm(nav, reg.ID, reg.Base, reg.Path)
+					}
+				</div>
+				<ol
+					class="reg-list"
+					id="register"
+					aria-label="Caught requests, newest first"
+					hx-ext="sse"
+					sse-connect={ reg.Base + "/events?after=" + id(reg.Newest) }
+					sse-swap="request"
+					hx-swap="afterbegin"
+					data-selected={ id(reg.Selected) }
+				>
+					for _, r := range reg.Rows {
+						@row(r)
+					}
+					if reg.More && len(reg.Rows) > 0 {
+						@moreRow(reg.Base, reg.Rows[len(reg.Rows)-1].ID)
+					}
+				</ol>
+				if len(reg.Rows) == 0 {
+					<p class="empty" id="register-empty">Nothing caught yet.</p>
+				}
+			</section>
+			<article class="exhibit" id="exhibit" aria-live="polite">
+				if ex != nil {
+					@exhibit(*ex)
+				} else {
+					@noExhibit(nav, reg)
+				}
+			</article>
+		</main>
+	}
+}
+
+templ noExhibit(nav navView, reg registerView) {
+	<div class="ex-empty">
+		if reg.ID == store.Unmatched {
+			<p>Requests to paths that no endpoint has land here, answered 404, so a typo in a sender’s URL shows up at once.</p>
+		} else if len(reg.Rows) == 0 {
+			<p>Point a sender at this endpoint, or send a test request:</p>
+			<pre class="try">{ tryCommand(nav.Host, reg.Path) }</pre>
+			<p>It appears in the register on the left as it arrives.</p>
+		} else {
+			<p>Choose a request in the register to see it in full.</p>
+		}
+	</div>
+}
+
+templ moreRow(base string, beforeID int64) {
+	<li class="more">
+		<button class="btn quiet" type="button" hx-get={ base + "/rows?before=" + id(beforeID) } hx-target="closest li" hx-swap="outerHTML">Show older</button>
+	</li>
+}
+
+templ rowsChunk(rows []rowView, more bool, base string) {
+	for _, r := range rows {
+		@row(r)
+	}
+	if more && len(rows) > 0 {
+		@moreRow(base, rows[len(rows)-1].ID)
+	}
+}
+
+templ row(r rowView) {
+	<li
+		class={ "row", templ.KV("bad", r.TooLarge), templ.KV("fresh", r.Fresh) }
+		id={ "req-" + id(r.ID) }
+		data-id={ id(r.ID) }
+		data-at={ strconv.FormatInt(r.At.UnixMilli(), 10) }
+		data-size={ strconv.FormatInt(r.Size, 10) }
+		data-group={ r.Group }
+		if r.TooLarge {
+			data-bad="1"
+		}
+	>
+		<a href={ templ.SafeURL(r.Href) } hx-get={ r.Href } hx-target="#exhibit" hx-push-url="true" hx-swap="innerHTML">
+			<span class="no">{ id(r.No) }</span>
+			<span class="m">{ r.Method } <em>{ size(r.Size) }</em></span>
+			<span class="t">{ clock(r.At) }</span>
+			<span class="ev">
+				if r.TooLarge {
+					Refused: body over the limit
+				} else if r.Detail != "" {
+					{ r.Detail }
+				} else if r.Size == 0 {
+					No body
+				}
+				if r.Delivery > 1 {
+					<span class="retry">retry { strconv.Itoa(r.Delivery - 1) }</span>
+				}
+			</span>
+		</a>
+	</li>
+}
+
+templ exhibit(x exhibitView) {
+	<div class="ex-top" data-exhibit={ id(x.ID) }>
+		<div class="ex-no"><small>№</small>{ id(x.No) }</div>
+		<div class="ex-line">
+			<div class="ex-path">
+				<b>{ x.Method }</b> { x.Path }
+				if x.RawQuery != "" {
+					<span class="q">?{ x.RawQuery }</span>
+				}
+			</div>
+			<div class="ex-meta">
+				<span>received <b>{ fullTime(x.At) }</b></span>
+				<span>from <b>{ host(x.From) }</b></span>
+				<span>body <b>{ size(x.Size) }</b></span>
+				<span>{ x.Proto }</span>
+				if x.Delivery > 1 {
+					<span>delivery <b>{ strconv.Itoa(x.Delivery) }</b> of this body</span>
+				}
+			</div>
+		</div>
+		<div class={ "stamp", templ.KV("bad", x.Status != 200) }>{ strconv.Itoa(x.Status) } sent</div>
+	</div>
+	if !x.TooLarge && x.Size > 0 {
+		<div class="ex-actions">
+			<a class="btn" href={ templ.SafeURL(x.Download) } download>Download body</a>
+		</div>
+	}
+	<h2>Body</h2>
+	if x.TooLarge {
+		<div class="too">
+			The sender tried to deliver { size(x.Size) }. The limit is { size(x.Limit) }, so the body was not kept
+			if x.Unmatch {
+				(and the path has no endpoint: the answer was 404).
+			} else {
+				and Hookwitness answered 413.
+			}
+			Start hookwitness with a larger <code>-max-body</code> to catch it.
+		</div>
+	} else {
+		switch x.Body.Kind {
+			case bodyEmpty:
+				<p class="note">No body.</p>
+			case bodyJSON:
+				<pre class="body json">
+					for _, t := range x.Body.JSON {
+						if t.Class == "" {
+							{ t.Text }
+						} else {
+							<span class={ t.Class }>{ t.Text }</span>
+						}
+					}
+				</pre>
+				<details class="raw">
+					<summary>Raw view</summary>
+					<pre class="body">{ x.Body.Text }</pre>
+				</details>
+			case bodyText:
+				<pre class="body">{ x.Body.Text }</pre>
+				if x.Body.Truncated {
+					<p class="note">Only the first 256 KiB are shown; download the body for all of it.</p>
+				}
+			case bodyBinary:
+				<p class="note">Binary, { size(x.Size) }. The first bytes:</p>
+				<pre class="body hex">{ x.Body.Hex }</pre>
+		}
+	}
+	<h2>Headers · { strconv.Itoa(len(x.Headers)) }</h2>
+	<div class="scroll">
+		<table class="kv">
+			<tbody>
+				for _, hd := range x.Headers {
+					<tr><th>{ hd.Name }</th><td>{ hd.Value }</td></tr>
+				}
+			</tbody>
+		</table>
+	</div>
+	<h2>Query</h2>
+	if len(x.Query) == 0 {
+		<p class="note">No query string.</p>
+	} else {
+		<div class="scroll">
+			<table class="kv">
+				<tbody>
+					for _, q := range x.Query {
+						<tr><th>{ q.Name }</th><td>{ q.Value }</td></tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+templ notFoundPage(nav navView, msg string) {
+	@layout(nav, "Not found") {
+		<main class="sheet">
+			<h1 class="title">Not found</h1>
+			<p class="lede">{ msg }</p>
+			<p><a href={ templ.SafeURL(nav.Prefix + "/") }>Back to the endpoints</a></p>
+		</main>
+	}
+}

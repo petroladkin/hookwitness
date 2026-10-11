@@ -6,14 +6,26 @@ VERSION ?= $(shell git describe --tags --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 LDFLAGS := -s -w -X $(MODULE)/internal/version.Version=$(VERSION) -X $(MODULE)/internal/version.Commit=$(COMMIT)
 
-.PHONY: build check vet fmt-check staticcheck test notices hooks clean
+.PHONY: build check generate templ-check vet fmt-check staticcheck test notices hooks clean
 
 ## build: one static binary in bin/ (no cgo)
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/hookwitness ./cmd/hookwitness
 
 ## check: everything a change must pass
-check: build vet fmt-check staticcheck test
+check: templ-check build vet fmt-check staticcheck test
+
+## generate: regenerate the Go code of the templ components (*_templ.go)
+generate:
+	go tool templ fmt .
+	go tool templ generate
+
+# The generated files are committed, so `go install` works without templ;
+# they must match their .templ sources, which must be formatted.
+templ-check:
+	@go tool templ generate -check || { echo "templ output is stale: run make generate"; exit 1; }
+	@for f in $$(find . -name '*.templ' -not -path './.*'); do \
+		go tool templ fmt -stdout "$$f" | cmp -s - "$$f" || { echo "templ fmt needed on $$f (run make generate)"; exit 1; }; done
 
 vet:
 	go vet ./...

@@ -2,7 +2,8 @@
 # Writes THIRD-PARTY-NOTICES.md to stdout: every module compiled into the
 # hookwitness binary, its version, its license, and the full text of every
 # license and notice file at the module's root (BSD and MIT require the text
-# to travel with binary distributions).
+# to travel with binary distributions); then every web asset bundled under
+# internal/web/static/vendor/<name>/ (a LICENSE and a SOURCE file beside it).
 #
 # Fails when a module's license is not one of the permissive licenses this
 # project accepts, so a copyleft dependency cannot slip in unnoticed.
@@ -14,6 +15,10 @@ classify() {
   local f=$1
   if grep -qE 'GNU (Affero |Lesser )?General Public License|Mozilla Public License' "$f"; then
     echo "REFUSED"
+  elif grep -qE 'Zero-Clause BSD|BSD Zero Clause' "$f"; then
+    echo "0BSD"
+  elif grep -q 'SIL Open Font License' "$f" && grep -q 'Version 1.1' "$f"; then
+    echo "OFL-1.1"
   elif grep -q 'Apache License' "$f" && grep -q 'Version 2.0' "$f"; then
     echo "Apache-2.0"
   elif grep -q 'Permission is hereby granted, free of charge' "$f"; then
@@ -69,4 +74,32 @@ for m in $modules; do
     case "$(tail -c1 "$dir/$f")" in "") ;; *) echo ;; esac
     printf '`````\n'
   done
+done
+
+cat <<'ASSETS'
+
+# Bundled web assets
+
+The web UI embeds these files in the binary. In the source tree each
+directory holds the files, their LICENSE and a SOURCE note (package, version,
+origin).
+ASSETS
+
+for dir in $(ls -d internal/web/static/vendor/*/ | LC_ALL=C sort); do
+  dir=${dir%/}
+  if [ ! -f "$dir/LICENSE" ] || [ ! -f "$dir/SOURCE" ]; then
+    echo "notices: $dir needs a LICENSE and a SOURCE file" >&2
+    exit 1
+  fi
+  spdx=$(classify "$dir/LICENSE")
+  case "$spdx" in
+    REFUSED|UNKNOWN)
+      echo "notices: $dir: license is $spdx; only permissive licenses are accepted" >&2
+      exit 1
+      ;;
+  esac
+  printf '\n## %s\n\n%s, license %s.\n\n`````text\n' "$dir" "$(head -n1 "$dir/SOURCE")" "$spdx"
+  cat "$dir/LICENSE"
+  case "$(tail -c1 "$dir/LICENSE")" in "") ;; *) echo ;; esac
+  printf '`````\n'
 done
