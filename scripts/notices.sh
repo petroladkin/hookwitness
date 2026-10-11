@@ -27,7 +27,13 @@ classify() {
   fi
 }
 
-modules=$(go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}}{{end}}{{end}}' ./cmd/hookwitness | LC_ALL=C sort -u)
+# The module set differs per target OS, so the notices cover the union of the
+# platforms hookwitness is built for; keep this list in step with
+# internal/repoguard/notices_test.go.
+PLATFORMS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 freebsd/amd64"
+modules=$(for p in $PLATFORMS; do
+  GOOS=${p%/*} GOARCH=${p#*/} go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}}{{end}}{{end}}' ./cmd/hookwitness
+done | LC_ALL=C sort -u)
 
 cat <<'HEAD'
 # Third-party notices

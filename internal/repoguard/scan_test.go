@@ -70,7 +70,19 @@ func repoRoot(t *testing.T) string {
 	if err != nil {
 		t.Skipf("not a git checkout (git rev-parse: %v); the repository guard did not run", err)
 	}
-	return strings.TrimSpace(string(out))
+	top := strings.TrimSpace(string(out))
+	// A source archive unpacked inside some other checkout must not scan
+	// that other repository.
+	if mod := moduleRoot(t); !sameDir(top, mod) {
+		t.Skipf("the git checkout at %s is not this module's (%s); the repository guard did not run", top, mod)
+	}
+	return top
+}
+
+func sameDir(a, b string) bool {
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }
 
 // TestTrackedFilesHaveNoPrivateStrings is the guard: every file git tracks

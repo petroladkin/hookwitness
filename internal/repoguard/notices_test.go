@@ -9,20 +9,29 @@ import (
 	"testing"
 )
 
+// platforms is the set the notices cover; the module graph differs per OS, so
+// the union is checked whatever OS runs the test. Keep in step with
+// scripts/notices.sh.
+var platforms = []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64", "freebsd/amd64"}
+
 // TestNoticesCoverEveryModule checks THIRD-PARTY-NOTICES.md against the
-// modules actually compiled into the binary: every one must have a section,
+// modules compiled into the binary on any supported platform: every one must have a section,
 // and no section may outlive its module. `make notices` regenerates the file.
 func TestNoticesCoverEveryModule(t *testing.T) {
 	root := moduleRoot(t)
-	cmd := exec.Command("go", "list", "-deps", "-f", "{{with .Module}}{{if not .Main}}{{.Path}}{{end}}{{end}}", "./cmd/hookwitness")
-	cmd.Dir = root
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("go list: %v", err)
-	}
 	deps := map[string]bool{}
-	for _, m := range strings.Fields(string(out)) {
-		deps[m] = true
+	for _, p := range platforms {
+		goos, goarch, _ := strings.Cut(p, "/")
+		cmd := exec.Command("go", "list", "-deps", "-f", "{{with .Module}}{{if not .Main}}{{.Path}}{{end}}{{end}}", "./cmd/hookwitness")
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("go list for %s: %v", p, err)
+		}
+		for _, m := range strings.Fields(string(out)) {
+			deps[m] = true
+		}
 	}
 
 	notices, err := os.ReadFile(filepath.Join(root, "THIRD-PARTY-NOTICES.md"))
