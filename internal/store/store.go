@@ -64,6 +64,11 @@ func open(ctx context.Context, dbPath string, migrations fs.FS) (*Store, error) 
 	return &Store{db: db}, nil
 }
 
+// uriPath escapes the characters that would otherwise end the path part of a
+// file: URI ('?' starts the query, '#' a fragment) or start an escape ('%').
+// SQLite decodes the %XX escapes back.
+var uriPath = strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23")
+
 // dsn builds the modernc.org/sqlite connection string. The pragmas are set on
 // every new connection of the pool, not once.
 func dsn(dbPath string) string {
@@ -72,7 +77,7 @@ func dsn(dbPath string) string {
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_txlock", "immediate")
-	return "file:" + dbPath + "?" + q.Encode()
+	return "file:" + uriPath.Replace(dbPath) + "?" + q.Encode()
 }
 
 func loadMigrations(fsys fs.FS) ([]migration, error) {

@@ -171,3 +171,27 @@ func TestBadMigrationNames(t *testing.T) {
 		}
 	}
 }
+
+// The path reaches SQLite as a file: URI, where '?', '#' and '%' mean
+// something; the file must still be created under exactly the given name.
+func TestPathWithURICharacters(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "dir with space")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "a#b?c%41.db")
+	s, err := Open(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	entries, _ := os.ReadDir(dir)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("database not at %q; directory holds %v", p, names)
+	}
+}
