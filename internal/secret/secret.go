@@ -1,15 +1,17 @@
 // Package secret keeps endpoint secrets at rest. Signing keys are sealed
 // with AES-256-GCM, because verifying a signature needs the key itself;
-// tokens and passwords are kept only as salted PBKDF2-SHA256 hashes, because
-// checking them needs only a comparison. The key comes from
-// HOOKWITNESS_SECRET_KEY or a key file next to the database, so a copied
-// database without the key reveals nothing.
+// tokens and passwords are kept only as salted PBKDF2-SHA256 of their HMAC
+// under the key, because checking them needs only a comparison. The key
+// comes from HOOKWITNESS_SECRET_KEY or a key file next to the database; a
+// copied database without it reveals nothing and cannot be brute-forced.
+// Separate subkeys (HKDF) seal, fingerprint and hash.
 package secret
 
 import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/pbkdf2"
 	"crypto/rand"
@@ -21,22 +23,34 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Iterations of PBKDF2 for new token hashes: about 6 ms per comparison on
 // a 2026 laptop. A record keeps its own count, so this can grow.
 const Iterations = 50000
 
-// Key seals, opens and fingerprints secrets.
+// tokenPrefix marks a token record: PBKDF2-SHA256 over HMAC-SHA256(token
+// subkey, value).
+const tokenPrefix = "hk1-pbkdf2-sha256"
+
+// ErrBusy is returned when too many token comparisons run at once: each
+// costs a few milliseconds of CPU, so a flood of wrong tokens is bounded.
+var ErrBusy = errors.New("too many token checks at once")
+
+// Key seals, opens, fingerprints and hashes secrets.
 type Key struct {
-	aead cipher.AEAD
-	raw  []byte
+	aead     cipher.AEAD
+	finger   []byte // subkey of fingerprints
+	tokenKey []byte // subkey of token hashes
 
 	mu      sync.Mutex
 	matched map[[32]byte]bool // sha256(record, value) of successful token matches
+	slots   chan struct{}     // concurrent PBKDF2 runs
 }
 
 // Load returns the key from env (base64 of 32 bytes) or, when env is empty,
@@ -46,7 +60,11 @@ func Load(env, path string) (*Key, error) {
 	if err != nil {
 		return nil, err
 	}
-	block, err := aes.NewCipher(raw)
+	sub := func(purpose string) []byte {
+		k, _ := hkdf.Key(sha256.New, raw, nil, "hookwitness "+purpose, 32)
+		return k
+	}
+	block, err := aes.NewCipher(sub("seal"))
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +72,8 @@ func Load(env, path string) (*Key, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Key{aead: aead, raw: raw, matched: map[[32]byte]bool{}}, nil
+	return &Key{aead: aead, finger: sub("fingerprint"), tokenKey: sub("token"),
+		matched: map[[32]byte]bool{}, slots: make(chan struct{}, max(1, runtime.GOMAXPROCS(0)/2))}, nil
 }
 
 func loadRaw(env, path string) ([]byte, error) {
@@ -122,45 +141,61 @@ func (k *Key) Open(sealed string) (string, error) {
 // Fingerprint identifies a value without revealing it: keyed, so a weak
 // secret cannot be guessed from it without the key; 8 hex characters.
 func (k *Key) Fingerprint(value string) string {
-	m := hmac.New(sha256.New, k.raw)
+	m := hmac.New(sha256.New, k.finger)
 	m.Write([]byte(value))
 	return hex.EncodeToString(m.Sum(nil))[:8]
 }
 
+// keyed is the value bound to this key before hashing: without the key a
+// stored hash cannot even be guessed at.
+func (k *Key) keyed(value string) string {
+	m := hmac.New(sha256.New, k.tokenKey)
+	m.Write([]byte(value))
+	return string(m.Sum(nil))
+}
+
 // HashToken is the stored form of a token or password:
-// "pbkdf2-sha256$<iterations>$<salt>$<hash>", base64.
+// "hk1-pbkdf2-sha256$<iterations>$<salt>$<hash>", base64.
 func (k *Key) HashToken(value string) string {
 	salt := make([]byte, 16)
 	rand.Read(salt)
-	h, _ := pbkdf2.Key(sha256.New, value, salt, Iterations, 32)
-	return "pbkdf2-sha256$" + strconv.Itoa(Iterations) + "$" +
+	h, _ := pbkdf2.Key(sha256.New, k.keyed(value), salt, Iterations, 32)
+	return tokenPrefix + "$" + strconv.Itoa(Iterations) + "$" +
 		base64.StdEncoding.EncodeToString(salt) + "$" + base64.StdEncoding.EncodeToString(h)
 }
 
 // MatchToken reports whether value is the token a record was made from.
 // Successful matches are remembered for the life of the process, so
-// regular traffic does not pay the hash on every request; failures are not.
-func (k *Key) MatchToken(record, value string) bool {
+// regular traffic does not pay the hash on every request; failures are not,
+// and at most a few hashes run at once: a caller that waits over a second
+// for a slot gets ErrBusy.
+func (k *Key) MatchToken(record, value string) (bool, error) {
 	id := sha256.Sum256([]byte(record + "\x00" + value))
 	k.mu.Lock()
 	hit := k.matched[id]
 	k.mu.Unlock()
 	if hit {
-		return true
+		return true, nil
 	}
 	parts := strings.Split(record, "$")
-	if len(parts) != 4 || parts[0] != "pbkdf2-sha256" {
-		return false
+	if len(parts) != 4 || parts[0] != tokenPrefix {
+		return false, nil
 	}
 	iter, err1 := strconv.Atoi(parts[1])
 	salt, err2 := base64.StdEncoding.DecodeString(parts[2])
 	want, err3 := base64.StdEncoding.DecodeString(parts[3])
 	if err1 != nil || err2 != nil || err3 != nil || iter < 1 || iter > 10_000_000 || len(want) == 0 {
-		return false
+		return false, nil
 	}
-	got, err := pbkdf2.Key(sha256.New, value, salt, iter, len(want))
+	select {
+	case k.slots <- struct{}{}:
+	case <-time.After(time.Second):
+		return false, ErrBusy
+	}
+	got, err := pbkdf2.Key(sha256.New, k.keyed(value), salt, iter, len(want))
+	<-k.slots
 	if err != nil || subtle.ConstantTimeCompare(got, want) != 1 {
-		return false
+		return false, nil
 	}
 	k.mu.Lock()
 	if len(k.matched) >= 1024 {
@@ -168,5 +203,5 @@ func (k *Key) MatchToken(record, value string) bool {
 	}
 	k.matched[id] = true
 	k.mu.Unlock()
-	return true
+	return true, nil
 }

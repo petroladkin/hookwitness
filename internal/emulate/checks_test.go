@@ -23,7 +23,7 @@ func (keyring) Open(sealed string) (string, error) {
 	}
 	return v, nil
 }
-func (keyring) MatchToken(record, value string) bool { return record == "hash:"+value }
+func (keyring) MatchToken(record, value string) (bool, error) { return record == "hash:"+value, nil }
 
 func signingKey(name, value string) Secret {
 	_, err := auth.StandardKey(value)

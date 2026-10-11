@@ -86,7 +86,7 @@ type Secret struct {
 // Keyring opens signing keys and matches tokens (internal/secret.Key).
 type Keyring interface {
 	Open(sealed string) (string, error)
-	MatchToken(record, value string) bool
+	MatchToken(record, value string) (bool, error) // an error: could not compare now
 }
 
 // SecretByName finds a secret.
@@ -230,11 +230,22 @@ func (c Config) verify(ch Check, r Request, in auth.Input, keys Keyring) auth.Ve
 		return auth.Verdict{Result: auth.NotVerifiable, Reason: "no secret key loaded"}
 	}
 	if !ch.usesKey() {
-		match := func(v string) bool { return keys.MatchToken(s.Hash, v) }
-		if ch.kind() == KindBasic {
-			return auth.Basic(in, ch.User, match)
+		var busy error
+		match := func(v string) bool {
+			ok, err := keys.MatchToken(s.Hash, v)
+			if err != nil {
+				busy = err
+			}
+			return ok
 		}
-		return auth.Bearer(in, match)
+		v := auth.Bearer(in, match)
+		if ch.kind() == KindBasic {
+			v = auth.Basic(in, ch.User, match)
+		}
+		if busy != nil {
+			return auth.Verdict{Result: auth.NotVerifiable, Reason: "not compared: " + busy.Error()}
+		}
+		return v
 	}
 	key, err := keys.Open(s.Sealed)
 	if err != nil {

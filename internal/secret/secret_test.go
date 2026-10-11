@@ -101,7 +101,7 @@ func TestHashToken(t *testing.T) {
 	if h1 == h2 {
 		t.Fatal("two hashes of one value are equal: no salt")
 	}
-	if !strings.HasPrefix(h1, "pbkdf2-sha256$50000$") || strings.Contains(h1, "tok_test_123") {
+	if !strings.HasPrefix(h1, "hk1-pbkdf2-sha256$50000$") || strings.Contains(h1, "tok_test_123") {
 		t.Fatalf("record %q", h1)
 	}
 	for _, c := range []struct {
@@ -112,12 +112,40 @@ func TestHashToken(t *testing.T) {
 		{h2, "tok_test_123", true},
 		{h1, "tok_test_124", false},
 		{h1, "", false},
-		{"pbkdf2-sha256$x$y$z", "tok_test_123", false},
+		{"hk1-pbkdf2-sha256$x$y$z", "tok_test_123", false},
 		{"", "tok_test_123", false},
 	} {
-		if got := k.MatchToken(c.record, c.value); got != c.want {
-			t.Errorf("MatchToken(%q, %q) = %v", c.record, c.value, got)
+		if got, err := k.MatchToken(c.record, c.value); got != c.want || err != nil {
+			t.Errorf("MatchToken(%q, %q) = %v, %v", c.record, c.value, got, err)
 		}
+	}
+	// The hash is bound to the key: another key cannot match it.
+	other, _ := Load(base64.StdEncoding.EncodeToString([]byte("fedcba9876543210fedcba9876543210")), "")
+	if ok, _ := other.MatchToken(h1, "tok_test_123"); ok {
+		t.Fatal("a token hash matched under another key")
+	}
+}
+
+func TestTokenChecksAreBounded(t *testing.T) {
+	k := testKey(t)
+	rec := k.HashToken("tok_test_123")
+	for range cap(k.slots) {
+		k.slots <- struct{}{} // every slot taken
+	}
+	if ok, err := k.MatchToken(rec, "wrong"); ok || err != ErrBusy {
+		t.Fatalf("saturated: %v %v", ok, err)
+	}
+	for range cap(k.slots) {
+		<-k.slots
+	}
+	if ok, err := k.MatchToken(rec, "tok_test_123"); !ok || err != nil {
+		t.Fatalf("free again: %v %v", ok, err)
+	}
+	for range cap(k.slots) {
+		k.slots <- struct{}{}
+	}
+	if ok, err := k.MatchToken(rec, "tok_test_123"); !ok || err != nil {
+		t.Fatalf("a remembered match needs no slot: %v %v", ok, err)
 	}
 }
 
@@ -125,6 +153,6 @@ func BenchmarkMatchTokenUncached(b *testing.B) {
 	k, _ := Load(base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")), "")
 	rec := k.HashToken("tok_test_123")
 	for b.Loop() {
-		k.MatchToken(rec, "wrong") // failures are not cached
+		k.MatchToken(rec, "wrong") //nolint:errcheck // failures are not cached
 	}
 }
