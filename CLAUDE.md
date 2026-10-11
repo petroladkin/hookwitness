@@ -17,8 +17,11 @@ into the Unmatched register with a 404. The UI shows each endpoint's requests
 live (SSE + HTMX) with the recorder strip and the request detail. Each
 endpoint's behaviour page scripts its answers: required-header checks, ordered
 rules (every Nth, first N, random p%) with reply / timeout / drop, a default
-reply, template variables; every request records its outcome. No verdicts,
-reports, REST API or MCP yet. `hookwitness version`
+reply, template variables; every request records its outcome. Authorization
+checks (GitHub, Stripe, Standard Webhooks/Svix, generic HMAC, bearer, basic)
+give each request pass / fail / n/v verdicts, optionally enforced, with
+re-check; their secrets are write-only (signing keys sealed, tokens hashed).
+No JSON Schema verdicts, reports, REST API or MCP yet. `hookwitness version`
 prints the build identity. This section must describe what is true now —
 update it in the same change that makes it false.
 
@@ -38,8 +41,17 @@ update it in the same change that makes it false.
 - `internal/server` — the root router on the raw path (`/healthz`, admin
   prefix, everything else caught; no ServeMux cleaning) and graceful shutdown.
 - `internal/emulate` — pure decision logic for an endpoint's answer: config
-  (JSON in `endpoints.config`), validation, checks, rule conditions,
-  text/template rendering, the outcome record (JSON in `requests.outcome`).
+  (JSON in `endpoints.config`), validation, required-header and
+  authorization checks (`checks.go`: kinds, secrets list, `Verify`), rule
+  conditions, text/template rendering, the outcome record (JSON in
+  `requests.outcome`). Verdicts go to `requests.verdict` / `verdicts`.
+- `internal/auth` — pure verifiers of signatures and credentials, one-line
+  reasons, constant-time compares; golden vectors in `testdata/auth`
+  (published by the providers or computed with openssl — protected).
+- `internal/secret` — the secret key (`HOOKWITNESS_SECRET_KEY` or `<db>.key`,
+  0600), sealing signing keys (AES-256-GCM), hashing tokens (PBKDF2-SHA256),
+  keyed fingerprints. Plain secret values never reach the store, the logs or
+  a rendered page.
 - `internal/catch` — records and answers caught requests (body limit, 413,
   404 + Unmatched); runs checks, lets the store decide the rule inside the
   counter's transaction (exact under concurrency), then replies, delays,
