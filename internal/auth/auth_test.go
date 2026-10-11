@@ -95,3 +95,45 @@ func TestShort(t *testing.T) {
 		}
 	}
 }
+
+func TestStripe(t *testing.T) {
+	v := load(t).Stripe[0]
+	ok := "t=" + v.Timestamp + ",v1=" + v.V1
+	tol := Tolerance{Seconds: 300}
+	zeros := "0000000000000000000000000000000000000000000000000000000000000000"
+	for _, c := range []struct {
+		name, header string
+		received     int64 // unix seconds; the vector is signed at 1760200000
+		tol          Tolerance
+		want         outcome
+	}{
+		{"vector", ok, 1760200010, tol, outcome{Pass, "signature matches"}},
+		{"spaces after commas", "t=" + v.Timestamp + ", v1=" + v.V1, 1760200010, tol, outcome{Pass, "signature matches"}},
+		{"second v1 matches", "t=" + v.Timestamp + ",v1=" + zeros + ",v1=" + v.V1, 1760200010, tol, outcome{Pass, "signature matches"}},
+		{"v0 is not v1", "t=" + v.Timestamp + ",v0=" + v.V1, 1760200010, tol, outcome{Fail, "no v1 signature in Stripe-Signature"}},
+		{"missing", "", 1760200010, tol, outcome{Fail, "header Stripe-Signature missing"}},
+		{"no timestamp", "v1=" + v.V1, 1760200010, tol, outcome{Fail, "no t= timestamp in Stripe-Signature"}},
+		{"bad timestamp", "t=soon,v1=" + v.V1, 1760200010, tol, outcome{Fail, "no t= timestamp in Stripe-Signature"}},
+		{"mismatch", "t=" + v.Timestamp + ",v1=" + zeros, 1760200010, tol, outcome{Fail, "signature does not match"}},
+		{"signed for another time", "t=1760200001,v1=" + v.V1, 1760200010, tol, outcome{Fail, "signature does not match"}},
+		{"old", ok, 1760200412, tol, outcome{Fail, "timestamp 412 s old (tolerance 300 s)"}},
+		{"old and wrong: the signature is the reason", "t=" + v.Timestamp + ",v1=" + zeros, 1760200412, tol, outcome{Fail, "signature does not match"}},
+		{"at the tolerance", ok, 1760200300, tol, outcome{Pass, "signature matches"}},
+		{"future", ok, 1760199500, tol, outcome{Fail, "timestamp 500 s in the future (tolerance 300 s)"}},
+		{"old but ignored", ok, 1760299999, Tolerance{Ignore: true}, outcome{Pass, "signature matches"}},
+		{"zero tolerance means 300 s", ok, 1760200299, Tolerance{}, outcome{Pass, "signature matches"}},
+	} {
+		x := in(v.Body)
+		if c.header != "" {
+			x = in(v.Body, "Stripe-Signature", c.header)
+		}
+		x.Received = time.Unix(c.received, 0)
+		check(t, c.name, Stripe(x, v.Secret, c.tol), c.want)
+	}
+	check(t, "no body kept", Stripe(Input{Headers: []Header{{"Stripe-Signature", ok}}}, v.Secret, tol),
+		outcome{NotVerifiable, "body not kept (over the size limit)"})
+	got := Stripe(in(v.Body, "Stripe-Signature", "t="+v.Timestamp+",v1="+zeros), v.Secret, tol)
+	if got.Expected != "t="+v.Timestamp+",v1=c4bcbd5f…" || got.Received != "t="+v.Timestamp+",v1="+zeros {
+		t.Errorf("evidence: expected %q received %q", got.Expected, got.Received)
+	}
+}
