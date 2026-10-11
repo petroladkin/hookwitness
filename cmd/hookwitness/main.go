@@ -107,7 +107,9 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 		Admin:       ui,
 		Catch:       catcher,
 	})
-	if err := server.Serve(ctx, ln, root, log, ui.StopStreams, catcher.Stop); err != nil {
+	err = server.Serve(ctx, ln, root, log, ui.StopStreams, catcher.Stop)
+	catcher.Wait() // timeouts and drops record their outcome before the store closes
+	if err != nil {
 		log.Error("server stopped with an error", "err", err)
 		return 1
 	}

@@ -32,12 +32,32 @@
   document.addEventListener("htmx:sseOpen", () => feed("live", "Recording"));
   document.addEventListener("htmx:sseError", () => feed("lost", "Reconnecting"));
 
-  // Each request appears once, whatever the feed resends.
+  // Each request appears once, whatever the feed resends; an "update"
+  // replaces the row it names with its final outcome.
   document.addEventListener("htmx:sseBeforeMessage", (e) => {
-    const id = e.detail && e.detail.lastEventId;
+    const ev = e.detail || {};
+    if (ev.type === "update") {
+      e.preventDefault();
+      const tpl = document.createElement("template");
+      tpl.innerHTML = String(ev.data || "").trim();
+      const fresh = tpl.content.firstElementChild;
+      const old = fresh && fresh.id && document.getElementById(fresh.id);
+      if (!old) return;
+      old.replaceWith(fresh);
+      htmx.process(fresh);
+      const ex = document.querySelector("#exhibit [data-exhibit]");
+      if (ex && "req-" + ex.dataset.exhibit === fresh.id) {
+        // The open exhibit shows the request that changed: reload it.
+        htmx.ajax("GET", fresh.querySelector("a").getAttribute("href"), { target: "#exhibit", swap: "innerHTML" });
+      }
+      markSelected();
+      return;
+    }
+    const id = ev.lastEventId;
     if (id && document.getElementById("req-" + id)) e.preventDefault();
   });
-  document.addEventListener("htmx:sseMessage", () => {
+  document.addEventListener("htmx:sseMessage", (e) => {
+    if (e.detail && e.detail.type === "update") return;
     const empty = document.getElementById("register-empty");
     if (empty) empty.remove();
     // The server prunes past the retention limit; so does the page.

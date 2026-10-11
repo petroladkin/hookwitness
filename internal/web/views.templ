@@ -164,7 +164,7 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 					aria-label="Caught requests, newest first"
 					hx-ext="sse"
 					sse-connect={ reg.Base + "/events?after=" + id(reg.Newest) }
-					sse-swap="request"
+					sse-swap="request,update"
 					hx-swap="afterbegin"
 					data-selected={ id(reg.Selected) }
 					data-keep={ strconv.Itoa(reg.Keep) }
@@ -440,6 +440,7 @@ templ behaviourPage(nav navView, b behaviourView) {
 				<h2>Default reply</h2>
 				<form class="card" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
 					<input type="hidden" name="op" value="default"/>
+					<input type="hidden" name="v" value={ b.Version }/>
 					@replyFields(b, "default", "", b.Config.Default)
 					<div class="acts"><button class="btn solid" type="submit">Save default reply</button></div>
 				</form>
@@ -448,6 +449,7 @@ templ behaviourPage(nav navView, b behaviourView) {
 				<h2>Variables · test values</h2>
 				<form class="card" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
 					<input type="hidden" name="op" value="vars"/>
+					<input type="hidden" name="v" value={ b.Version }/>
 					<label for="vars-text">One per line, <code>NAME=value</code>. Shown and stored in plain text: use test tokens, never real secrets.</label>
 					<textarea id="vars-text" name="vars" rows="4" spellcheck="false">{ emulate.FormatVars(b.Config.Vars) }</textarea>
 					<div class="acts"><button class="btn solid" type="submit">Save variables</button></div>
@@ -466,6 +468,7 @@ templ opButton(b behaviourView, op string, i int, label string) {
 	<form class="inline" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
 		<input type="hidden" name="op" value={ op }/>
 		<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
+		<input type="hidden" name="v" value={ b.Version }/>
 		<button class="btn quiet" type="submit">{ label }</button>
 	</form>
 }
@@ -486,6 +489,7 @@ templ replyFields(b behaviourView, id, prefix string, r emulate.Reply) {
 templ ruleForm(b behaviourView, i int, rule emulate.Rule) {
 	<form class={ "card", templ.KV("has-error", b.Section == "rule-"+strconv.Itoa(i)) } id={ "rule-" + strconv.Itoa(i) } method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
 		<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
+		<input type="hidden" name="v" value={ b.Version }/>
 		<div class="card-head">
 			<span class="no">{ strconv.Itoa(i + 1) }</span>
 			<span class="label">{ rule.When.Label() } → { ruleAction(rule) }</span>
@@ -523,6 +527,7 @@ templ ruleForm(b behaviourView, i int, rule emulate.Rule) {
 templ checkForm(b behaviourView, i int, ch emulate.Check) {
 	<form class={ "card", templ.KV("has-error", b.Section == "check-"+strconv.Itoa(i)) } id={ "check-" + strconv.Itoa(i) } method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
 		<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
+		<input type="hidden" name="v" value={ b.Version }/>
 		<div class="card-head"><span class="no">{ strconv.Itoa(i + 1) }</span><span class="label">header { ch.Header } { matchLabel(ch) }</span></div>
 		<div class="grid3">
 			<label>Header <input name="header" value={ ch.Header } required spellcheck="false"/></label>

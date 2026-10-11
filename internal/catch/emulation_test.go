@@ -313,3 +313,21 @@ func TestEveryThirdIsExact(t *testing.T) {
 		t.Fatalf("answers %v, stored rule matches %d; want 33 x 500, 66 x 200, 33", codes, matched)
 	}
 }
+
+// TestWaitRecordsTheHoldBeforeShutdown: Stop ends a hold and Wait returns
+// only once its outcome (with the wait) is stored, so the store may close.
+func TestWaitRecordsTheHoldBeforeShutdown(t *testing.T) {
+	h, st, _ := setup(t, 1<<20)
+	h.MaxWait = time.Hour
+	url := serve(t, h)
+	ep := configure(t, st, "/hold", emulate.Config{Default: emulate.Reply{Status: 200},
+		Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenEvery, N: 1}, Do: emulate.ActTimeout}}})
+	go do(t, http.DefaultClient, "POST", url+"/hold", "")
+	time.Sleep(200 * time.Millisecond)
+	h.Stop()
+	h.Wait()
+	_, o := lastOutcome(t, st, ep)
+	if o.Action != emulate.ActTimeout || o.WaitedMs < 150 {
+		t.Fatalf("after Wait: %+v, want the hold's wait recorded", o)
+	}
+}

@@ -194,8 +194,16 @@ func (s *Store) updateEndpoint(ctx context.Context, query string, args ...any) e
 func (s *Store) UpdateOutcome(ctx context.Context, id int64, status int, outcome string) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
-	_, err := s.db.ExecContext(ctx, `UPDATE requests SET status = ?, outcome = ? WHERE id = ?`, status, outcome, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE requests SET status = ?, outcome = ?, changed_at = ? WHERE id = ?`,
+		status, outcome, millis(time.Now()), id)
 	return err
+}
+
+// RequestsChanged lists a register's requests up to upToID whose outcome
+// was updated at or after since (unix ms), oldest first, without bodies.
+func (s *Store) RequestsChanged(ctx context.Context, endpointID, upToID, since int64) ([]Request, error) {
+	return s.listRequests(ctx, `SELECT `+requestColumns+` FROM requests
+		WHERE endpoint_id IS ? AND id <= ? AND changed_at >= ? ORDER BY id`, register(endpointID), upToID, since)
 }
 
 // DeleteEndpoint removes an endpoint and every request it caught.

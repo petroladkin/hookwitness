@@ -38,6 +38,7 @@ type Handler struct {
 	stopOnce sync.Once
 	stop     chan struct{}
 	initOnce sync.Once
+	inflight sync.WaitGroup
 }
 
 // DefaultBodyTimeout is enough for 10 MiB over a slow link.
@@ -55,6 +56,11 @@ func (h *Handler) stopping() chan struct{} {
 // onShutdown function so a held request does not delay the shutdown.
 func (h *Handler) Stop() { h.stopOnce.Do(func() { close(h.stopping()) }) }
 
+// Wait returns when every request being answered has stored its outcome.
+// http.Server.Shutdown does not wait for handlers whose connection was
+// hijacked (timeouts, drops), so call Wait before closing the store.
+func (h *Handler) Wait() { h.inflight.Wait() }
+
 func (h *Handler) maxWait() time.Duration {
 	if h.MaxWait > 0 {
 		return h.MaxWait
@@ -65,6 +71,8 @@ func (h *Handler) maxWait() time.Duration {
 // Catch answers and records r. headers are its header lines as received
 // (wire.Take); ok false falls back to the order net/http keeps.
 func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.Header, ok bool) {
+	h.inflight.Add(1)
+	defer h.inflight.Done()
 	received := time.Now().UTC()
 	p := RawPath(r)
 	// net/http cancels the request context when the sender closes its side,
@@ -120,6 +128,8 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 		if err := h.Store.UpdateOutcome(ctx, req.ID, plan.out.Status, plan.out.String()); err != nil {
 			h.Log.Error("catch: outcome not stored", "request", req.ID, "err", err)
 		}
+		// Live feeds refresh the row with the final outcome.
+		h.Live.Publish(req.EndpointID)
 	}
 }
 

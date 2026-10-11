@@ -348,6 +348,13 @@ func TestConfigAndCounter(t *testing.T) {
 	if got, _ := s.Request(ctx, r.ID); got.Status != 503 || got.Outcome != `{"delay_ms":12}` {
 		t.Fatalf("after update: %d %q", got.Status, got.Outcome)
 	}
+	changed, _ := s.RequestsChanged(ctx, ep.ID, r.ID, time.Now().Add(-time.Minute).UnixMilli())
+	if len(changed) != 1 || changed[0].ID != r.ID {
+		t.Fatalf("changed rows %+v, want only the updated one", changed)
+	}
+	if later, _ := s.RequestsChanged(ctx, ep.ID, r.ID, time.Now().Add(time.Minute).UnixMilli()); len(later) != 0 {
+		t.Fatal("rows changed before since must not be listed")
+	}
 	if got, _ := s.Request(ctx, refused.ID); got.Outcome != `{"action":"refused"}` || got.Status != 400 {
 		t.Fatalf("refused stored as %d %q", got.Status, got.Outcome)
 	}

@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,10 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/catch"
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/wire"
@@ -229,5 +232,19 @@ func TestSenderClosingItsSideIsStillKept(t *testing.T) {
 	}
 	if e, _ := st.Endpoint(context.Background(), ep.ID); e.Count != 5 {
 		t.Fatalf("%d of 5 half-closed requests kept", e.Count)
+	}
+}
+
+// TestDropThroughTheRecordingListener: the reset reaches the sender through
+// the production listener, whose connections wrap the TCP connection.
+func TestDropThroughTheRecordingListener(t *testing.T) {
+	addr, st := serveReal(t)
+	ep, _ := st.CreateEndpoint(context.Background(), "/crash")
+	cfg := emulate.Config{Default: emulate.Reply{Status: 200},
+		Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenEvery, N: 1}, Do: emulate.ActDrop}}}
+	st.SetConfig(context.Background(), ep.ID, cfg.String())
+	_, err := http.Post("http://"+addr+"/crash", "text/plain", strings.NewReader("x"))
+	if err == nil || !(errors.Is(err, syscall.ECONNRESET) || strings.Contains(err.Error(), "connection reset")) {
+		t.Fatalf("sender saw %v, want a TCP reset", err)
 	}
 }

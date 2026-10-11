@@ -25,7 +25,13 @@ func (e env) config(t *testing.T, id int64) emulate.Config {
 	return c
 }
 
+// edit posts a behaviour form as the page would, with the current version
+// unless the form names one.
 func (e env) edit(endpoint int64, form url.Values) *httptest.ResponseRecorder {
+	if _, ok := form["v"]; !ok {
+		ep, _ := e.st.Endpoint(context.Background(), endpoint)
+		form.Set("v", configVersion(ep.Config))
+	}
 	return e.do("POST", "/admin/e/"+id(endpoint)+"/behaviour", form)
 }
 
@@ -173,5 +179,40 @@ func TestExhibitShowsTheAnswer(t *testing.T) {
 	tp := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(tr.ID), nil).Body.String()
 	if !strings.Contains(tp, "Held without an answer for 30.0 s, then closed") || !strings.Contains(tp, ">timeout <small>default reply</small>") {
 		t.Error("timeout exhibit lacks its stamp or answer")
+	}
+}
+
+// TestStaleEditRefused: a page loaded before another change must not apply
+// its edit to whatever rule now sits at its index.
+func TestStaleEditRefused(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/s")
+	e.edit(ep.ID, url.Values{"op": {"rule-add"}})
+	e.edit(ep.ID, url.Values{"op": {"rule-add"}})
+	e.edit(ep.ID, url.Values{"op": {"rule-save"}, "i": {"1"}, "when": {"every"}, "n": {"5"}, "do": {"drop"}})
+	page := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour", nil).Body.String()
+	stale := configVersion(func() string { x, _ := e.st.Endpoint(context.Background(), ep.ID); return x.Config }())
+	if !strings.Contains(page, `name="v" value="`+stale+`"`) {
+		t.Fatal("the page does not carry the version")
+	}
+	// Another tab deletes rule 1; this page still thinks rule 2 is at index 1.
+	e.edit(ep.ID, url.Values{"op": {"rule-del"}, "i": {"0"}})
+	before := e.config(t, ep.ID).String()
+	rec := e.edit(ep.ID, url.Values{"op": {"rule-del"}, "i": {"1"}, "v": {stale}})
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "changed elsewhere") {
+		t.Fatalf("stale edit: %d %s", rec.Code, errorOf(rec.Body.String()))
+	}
+	if e.config(t, ep.ID).String() != before {
+		t.Fatal("a stale edit changed the behaviour")
+	}
+	if rec := e.edit(ep.ID, url.Values{"op": {"rule-del"}, "i": {"x"}}); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("garbled index: %d", rec.Code)
+	}
+	if e.config(t, ep.ID).String() != before || len(e.config(t, ep.ID).Rules) != 1 {
+		t.Fatal("a garbled index must not fall back to rule 1")
+	}
+	// Reset needs no version: it changes no configuration.
+	if rec := e.do("POST", "/admin/e/"+id(ep.ID)+"/behaviour", url.Values{"op": {"counter-reset"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("reset without a version: %d", rec.Code)
 	}
 }

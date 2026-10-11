@@ -1,6 +1,8 @@
 package web
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -22,6 +24,14 @@ type behaviourView struct {
 	MaxWait time.Duration
 	Error   string // the last edit was refused: why
 	Section string // the section the error belongs to
+	Version string // of the stored configuration; every form sends it back
+}
+
+// configVersion identifies a stored configuration, so an edit made on a page
+// loaded before another change is refused instead of hitting the wrong rule.
+func configVersion(stored string) string {
+	sum := sha256.Sum256([]byte(stored))
+	return hex.EncodeToString(sum[:6])
 }
 
 func (h *Handler) behaviourPage(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +65,7 @@ func (h *Handler) showBehaviour(w http.ResponseWriter, r *http.Request, status i
 	}
 	h.render(w, r, status, behaviourPage(nav, behaviourView{
 		ID: ep.ID, Path: ep.Path, Base: h.regPath(ep.ID), Counter: ep.Counter,
-		Config: cfg, MaxWait: h.maxWait, Error: msg, Section: section,
+		Config: cfg, MaxWait: h.maxWait, Error: msg, Section: section, Version: configVersion(ep.Config),
 	}))
 }
 
@@ -85,6 +95,12 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 	}
 
 	op := r.PostFormValue("op")
+	if op != "counter-reset" && r.PostFormValue("v") != configVersion(ep.Config) {
+		h.showBehaviour(w, r, http.StatusConflict, ep, cfg, "",
+			"the behaviour was changed elsewhere (another tab or client) after this page was loaded, so nothing was saved; "+
+				"this is the current version, make the change again")
+		return
+	}
 	if op == "counter-reset" {
 		if err := h.store.ResetCounter(ctx, id); err != nil {
 			h.fail(w, "reset counter", err)
@@ -111,8 +127,8 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 
 // applyEdit changes cfg as the form asks; it returns the section to show.
 func applyEdit(cfg *emulate.Config, op string, r *http.Request) (string, error) {
-	i, _ := strconv.Atoi(r.PostFormValue("i"))
-	inRange := func(n int) bool { return i >= 0 && i < n }
+	i, iErr := strconv.Atoi(r.PostFormValue("i"))
+	inRange := func(n int) bool { return iErr == nil && i >= 0 && i < n }
 	switch op {
 	case "default":
 		reply, err := formReply(r, "")
