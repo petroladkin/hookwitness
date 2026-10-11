@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"testing"
@@ -222,5 +223,62 @@ func TestHMAC(t *testing.T) {
 	}
 	if !ValidAlgo("sha512") || ValidAlgo("md5") {
 		t.Error("ValidAlgo")
+	}
+}
+
+func equals(want string) func(string) bool { return func(got string) bool { return got == want } }
+
+func TestBearer(t *testing.T) {
+	tok := equals("tok_test_123")
+	for _, c := range []struct {
+		name, header string
+		want         outcome
+	}{
+		{"match", "Bearer tok_test_123", outcome{Pass, "token matches"}},
+		{"scheme in any case", "bearer tok_test_123", outcome{Pass, "token matches"}},
+		{"missing", "", outcome{Fail, "header Authorization missing"}},
+		{"wrong scheme", "Basic dTpw", outcome{Fail, "scheme is Basic, not Bearer"}},
+		{"no token", "Bearer", outcome{Fail, "no token after Bearer"}},
+		{"mismatch", "Bearer tok_test_124", outcome{Fail, "token does not match"}},
+	} {
+		x := in("")
+		if c.header != "" {
+			x = in("", "Authorization", c.header)
+		}
+		x.HasBody = false // bearer does not need the body
+		got := Bearer(x, tok)
+		check(t, c.name, got, c.want)
+		if got.Expected != "" || got.Received != "" {
+			t.Errorf("%s: a token check must not keep values", c.name)
+		}
+	}
+}
+
+func TestBasic(t *testing.T) {
+	pw := equals("pw_test")
+	cred := func(s string) string { return "Basic " + base64.StdEncoding.EncodeToString([]byte(s)) }
+	for _, c := range []struct {
+		name, header string
+		want         outcome
+	}{
+		{"match", cred("qa:pw_test"), outcome{Pass, "user and password match"}},
+		{"colon in the password", "", outcome{}},
+		{"missing", "", outcome{Fail, "header Authorization missing"}},
+		{"wrong scheme", "Bearer x", outcome{Fail, "scheme is Bearer, not Basic"}},
+		{"not base64", "Basic ***", outcome{Fail, "credentials are not base64 user:password"}},
+		{"no colon", cred("qa"), outcome{Fail, "credentials are not base64 user:password"}},
+		{"wrong user", cred("ops:pw_test"), outcome{Fail, "user or password does not match"}},
+		{"wrong password", cred("qa:pw"), outcome{Fail, "user or password does not match"}},
+	} {
+		if c.name == "colon in the password" {
+			x := in("", "Authorization", cred("qa:a:b"))
+			check(t, c.name, Basic(x, "qa", equals("a:b")), outcome{Pass, "user and password match"})
+			continue
+		}
+		x := in("")
+		if c.header != "" {
+			x = in("", "Authorization", c.header)
+		}
+		check(t, c.name, Basic(x, "qa", pw), c.want)
 	}
 }
