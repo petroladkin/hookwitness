@@ -96,17 +96,20 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 		"max_body", cfg.MaxBody, "retention", cfg.Retention)
 
 	broker := live.New()
+	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, Retention: cfg.Retention, MaxWait: cfg.MaxWait}
 	ui := web.New(st, broker, log, web.Options{
-		Prefix: cfg.AdminPrefix, MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts,
+		Prefix: cfg.AdminPrefix, MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait,
 	})
 	root := server.New(server.Options{
 		DB:          st,
 		Log:         log,
 		AdminPrefix: cfg.AdminPrefix,
 		Admin:       ui,
-		Catch:       &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, Retention: cfg.Retention},
+		Catch:       catcher,
 	})
-	if err := server.Serve(ctx, ln, root, log, ui.StopStreams); err != nil {
+	err = server.Serve(ctx, ln, root, log, ui.StopStreams, catcher.Stop)
+	catcher.Wait() // timeouts and drops record their outcome before the store closes
+	if err != nil {
 		log.Error("server stopped with an error", "err", err)
 		return 1
 	}

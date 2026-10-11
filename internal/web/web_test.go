@@ -62,7 +62,7 @@ func (e env) add(t *testing.T, endpointID int64, body string, mod func(*store.Re
 	if mod != nil {
 		mod(r)
 	}
-	if err := e.st.AddRequest(context.Background(), r, 1000); err != nil {
+	if err := e.st.AddRequest(context.Background(), r, 1000, nil); err != nil {
 		t.Fatal(err)
 	}
 	return r
@@ -354,6 +354,59 @@ func TestLiveFeed(t *testing.T) {
 	want := []string{id(b.ID), id(c.ID), id(d.ID)}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("events %v, want %v: missed ones once each, then live ones once each, nothing from other endpoints", got, want)
+	}
+}
+
+// TestLiveFeedSendsUpdatedOutcomes: a row already shown is sent again, as an
+// "update" without an id, when its outcome changes (a delay measured, a
+// render error, a timeout's wait).
+func TestLiveFeedSendsUpdatedOutcomes(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/upd")
+	srv := httptest.NewServer(e.h)
+	defer srv.Close()
+	a := e.add(t, ep.ID, "{}", func(r *store.Request) { r.Outcome = `{"source":"default","action":"reply","status":200}` })
+	resp, err := http.Get(srv.URL + "/admin/e/" + id(ep.ID) + "/events?after=" + id(a.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	lines := make(chan string, 64)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	e.st.UpdateOutcome(context.Background(), a.ID, 500, `{"source":"default","action":"error","status":500,"error":"boom"}`)
+	e.lv.Publish(ep.ID)
+	var event []string
+	timeout := time.After(3 * time.Second)
+	for {
+		select {
+		case l := <-lines:
+			if l == "" && len(event) > 0 {
+				joined := strings.Join(event, "\n")
+				if strings.Contains(joined, "event: update") {
+					if strings.Contains(joined, "id: ") {
+						t.Fatal("an update must not carry an id (it would move Last-Event-ID)")
+					}
+					if !strings.Contains(joined, `id="req-`+id(a.ID)+`"`) || !strings.Contains(joined, "500 template error") {
+						t.Fatalf("update event: %s", joined)
+					}
+					return
+				}
+				event = nil
+				continue
+			}
+			if l != "" && !strings.HasPrefix(l, "retry:") {
+				event = append(event, l)
+			}
+		case <-timeout:
+			t.Fatal("no update event")
+		}
 	}
 }
 

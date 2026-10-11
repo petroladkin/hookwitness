@@ -14,8 +14,11 @@ sqlite, also shipped as a Docker image.
 `hookwitness serve` catches webhooks: endpoints are exact paths managed in the
 web UI under the admin prefix (default `/admin`); every other path is caught
 into the Unmatched register with a 404. The UI shows each endpoint's requests
-live (SSE + HTMX) with the recorder strip and the request detail. No scripted
-responses, verdicts, reports, REST API or MCP yet. `hookwitness version`
+live (SSE + HTMX) with the recorder strip and the request detail. Each
+endpoint's behaviour page scripts its answers: required-header checks, ordered
+rules (every Nth, first N, random p%) with reply / timeout / drop, a default
+reply, template variables; every request records its outcome. No verdicts,
+reports, REST API or MCP yet. `hookwitness version`
 prints the build identity. This section must describe what is true now —
 update it in the same change that makes it false.
 
@@ -34,8 +37,13 @@ update it in the same change that makes it false.
   them). The root handler must `wire.Take` every request.
 - `internal/server` — the root router on the raw path (`/healthz`, admin
   prefix, everything else caught; no ServeMux cleaning) and graceful shutdown.
+- `internal/emulate` — pure decision logic for an endpoint's answer: config
+  (JSON in `endpoints.config`), validation, checks, rule conditions,
+  text/template rendering, the outcome record (JSON in `requests.outcome`).
 - `internal/catch` — records and answers caught requests (body limit, 413,
-  404 + Unmatched).
+  404 + Unmatched); runs checks, lets the store decide the rule inside the
+  counter's transaction (exact under concurrency), then replies, delays,
+  holds (timeout) or resets (drop, SO_LINGER 0); holds end on shutdown.
 - `internal/live` — wake-ups for live feeds; feeds read what they missed from
   the store, so nothing is lost or repeated.
 - `internal/web` — the UI: templ components (`views.templ`, generated

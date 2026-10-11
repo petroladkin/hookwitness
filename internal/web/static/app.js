@@ -32,12 +32,32 @@
   document.addEventListener("htmx:sseOpen", () => feed("live", "Recording"));
   document.addEventListener("htmx:sseError", () => feed("lost", "Reconnecting"));
 
-  // Each request appears once, whatever the feed resends.
+  // Each request appears once, whatever the feed resends; an "update"
+  // replaces the row it names with its final outcome.
   document.addEventListener("htmx:sseBeforeMessage", (e) => {
-    const id = e.detail && e.detail.lastEventId;
+    const ev = e.detail || {};
+    if (ev.type === "update") {
+      e.preventDefault();
+      const tpl = document.createElement("template");
+      tpl.innerHTML = String(ev.data || "").trim();
+      const fresh = tpl.content.firstElementChild;
+      const old = fresh && fresh.id && document.getElementById(fresh.id);
+      if (!old) return;
+      old.replaceWith(fresh);
+      htmx.process(fresh);
+      const ex = document.querySelector("#exhibit [data-exhibit]");
+      if (ex && "req-" + ex.dataset.exhibit === fresh.id) {
+        // The open exhibit shows the request that changed: reload it.
+        htmx.ajax("GET", fresh.querySelector("a").getAttribute("href"), { target: "#exhibit", swap: "innerHTML" });
+      }
+      markSelected();
+      return;
+    }
+    const id = ev.lastEventId;
     if (id && document.getElementById("req-" + id)) e.preventDefault();
   });
-  document.addEventListener("htmx:sseMessage", () => {
+  document.addEventListener("htmx:sseMessage", (e) => {
+    if (e.detail && e.detail.type === "update") return;
     const empty = document.getElementById("register-empty");
     if (empty) empty.remove();
     // The server prunes past the retention limit; so does the page.
@@ -81,8 +101,20 @@
     if (el.matches && el.matches("select[data-navigate]") && el.value) location.assign(el.value);
   });
   document.addEventListener("submit", (e) => {
-    const msg = e.target.dataset && e.target.dataset.confirm;
+    const by = e.submitter && e.submitter.dataset.confirm;
+    const msg = by || (e.target.dataset && e.target.dataset.confirm);
     if (msg && !window.confirm(msg)) e.preventDefault();
+  });
+
+  // Editors are dialogs with their own URL: the page renders one open, here
+  // it becomes modal; Escape goes back to the list it was opened from.
+  document.querySelectorAll("dialog[data-modal]").forEach((d) => {
+    d.close();
+    d.showModal();
+    d.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      location.assign(d.dataset.close);
+    });
   });
 
   // The strip: the last two minutes on recorder paper, the pen on the right,
@@ -101,7 +133,7 @@
       out.push({
         at: Number(li.dataset.at),
         size: Number(li.dataset.size),
-        bad: li.dataset.bad === "1",
+        mark: li.dataset.mark || "ok",
         group: li.dataset.group || "",
         selected: li.getAttribute("aria-current") === "true",
       });
@@ -185,16 +217,41 @@
       if (mx < -4) return;
       const size = m.size > 0 ? m.size : 64;
       const hgt = Math.max(10, Math.min(base - top, (Math.log2(Math.max(size, 64)) - 6) * 9));
-      const col = css(m.bad ? "--alarm" : "--ink");
+      const col = css(m.mark === "ok" ? "--ink" : "--alarm");
+      const tip = base - hgt;
       ctx.strokeStyle = col;
+      ctx.fillStyle = col;
       ctx.lineWidth = m.selected ? 3 : 2;
+      if (m.mark === "timeout") {
+        // A timeout: a dashed stem to the top, nothing came back.
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(mx, base);
+        ctx.lineTo(mx, top);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(mx, top, m.selected ? 5 : 4, 0, Math.PI * 2);
+        ctx.stroke();
+        return;
+      }
       ctx.beginPath();
       ctx.moveTo(mx, base);
-      ctx.lineTo(mx, base - hgt);
+      ctx.lineTo(mx, tip);
       ctx.stroke();
-      ctx.fillStyle = col;
+      if (m.mark === "drop") {
+        // A drop: the stem ends in a cross, the line was cut.
+        const r = m.selected ? 6 : 5;
+        ctx.beginPath();
+        ctx.moveTo(mx - r, tip - r);
+        ctx.lineTo(mx + r, tip + r);
+        ctx.moveTo(mx + r, tip - r);
+        ctx.lineTo(mx - r, tip + r);
+        ctx.stroke();
+        return;
+      }
       ctx.beginPath();
-      ctx.arc(mx, base - hgt, m.selected ? 4 : 3, 0, Math.PI * 2);
+      ctx.arc(mx, tip, m.selected ? 4 : 3, 0, Math.PI * 2);
       ctx.fill();
     });
     // The pen.

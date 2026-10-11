@@ -25,6 +25,7 @@ import (
 
 	"github.com/a-h/templ"
 
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
@@ -40,15 +41,16 @@ const heartbeat = 25 * time.Second
 
 // Handler serves the UI. Create it with New.
 type Handler struct {
-	store  *store.Store
-	live   *live.Broker
-	log    *slog.Logger
-	prefix string
-	limit  int64 // the body limit, shown when a body was refused
-	keep   int   // retention per register, so the page can drop pruned rows
-	hosts  map[string]bool
-	mux    http.Handler
-	assets map[string]string // asset path -> content hash for cache busting
+	store   *store.Store
+	live    *live.Broker
+	log     *slog.Logger
+	prefix  string
+	limit   int64 // the body limit, shown when a body was refused
+	keep    int   // retention per register, so the page can drop pruned rows
+	maxWait time.Duration
+	hosts   map[string]bool
+	mux     http.Handler
+	assets  map[string]string // asset path -> content hash for cache busting
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -56,16 +58,20 @@ type Handler struct {
 
 // Options configure the UI.
 type Options struct {
-	Prefix    string   // where the UI is mounted, e.g. /admin
-	MaxBody   int64    // the catcher's body limit, shown when a body was refused
-	Retention int      // requests kept per register
-	Hosts     []string // host names the UI answers to besides IP addresses and localhost
+	Prefix    string        // where the UI is mounted, e.g. /admin
+	MaxBody   int64         // the catcher's body limit, shown when a body was refused
+	Retention int           // requests kept per register
+	MaxWait   time.Duration // longest delay an endpoint may configure
+	Hosts     []string      // host names the UI answers to besides IP addresses and localhost
 }
 
 // New returns the UI.
 func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Handler {
-	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention,
+	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention, maxWait: o.MaxWait,
 		hosts: map[string]bool{}, stop: make(chan struct{})}
+	if h.maxWait == 0 {
+		h.maxWait = 5 * time.Minute
+	}
 	for _, name := range o.Hosts {
 		h.hosts[strings.ToLower(name)] = true
 	}
@@ -85,6 +91,8 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("GET "+p+"/e/{reg}/events", h.events)
 	mux.HandleFunc("POST "+p+"/e/{reg}/clear", h.clear)
 	mux.HandleFunc("POST "+p+"/e/{reg}/delete", h.deleteEndpoint)
+	mux.HandleFunc("GET "+p+"/e/{reg}/behaviour", h.behaviourPage)
+	mux.HandleFunc("POST "+p+"/e/{reg}/behaviour", h.editBehaviour)
 	mux.HandleFunc("GET "+p+"/r/{id}/body", h.downloadBody)
 	mux.HandleFunc("GET "+p+"/static/{file...}", h.static)
 
@@ -188,16 +196,17 @@ func (h *Handler) nav(r *http.Request, current int64, onRegister bool) (navView,
 }
 
 func (h *Handler) endpointsPage(w http.ResponseWriter, r *http.Request) {
-	h.showEndpoints(w, r, http.StatusOK, "", "")
+	h.showEndpoints(w, r, http.StatusOK, r.URL.Query().Get("edit") == "new", "", "")
 }
 
-func (h *Handler) showEndpoints(w http.ResponseWriter, r *http.Request, status int, formPath, formErr string) {
+// showEndpoints renders the list; creating opens the new-endpoint dialog.
+func (h *Handler) showEndpoints(w http.ResponseWriter, r *http.Request, status int, creating bool, formPath, formErr string) {
 	nav, err := h.nav(r, -1, false)
 	if err != nil {
 		h.fail(w, "endpoints", err)
 		return
 	}
-	h.render(w, r, status, endpointsPage(nav, formPath, formErr))
+	h.render(w, r, status, endpointsPage(nav, creating, formPath, formErr))
 }
 
 // pathSegment is one segment of an endpoint path.
@@ -252,12 +261,12 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		p = randomPath()
 	}
 	if msg := h.checkPath(p); msg != "" {
-		h.showEndpoints(w, r, http.StatusUnprocessableEntity, p, msg)
+		h.showEndpoints(w, r, http.StatusUnprocessableEntity, true, p, msg)
 		return
 	}
 	ep, err := h.store.CreateEndpoint(r.Context(), p)
 	if errors.Is(err, store.ErrDuplicatePath) {
-		h.showEndpoints(w, r, http.StatusUnprocessableEntity, p, p+" is already an endpoint.")
+		h.showEndpoints(w, r, http.StatusUnprocessableEntity, true, p, p+" is already an endpoint.")
 		return
 	}
 	if err != nil {
@@ -436,6 +445,7 @@ func (h *Handler) row(ctx context.Context, req store.Request, fresh bool) (rowVi
 		Delivery: n,
 		Href:     h.regPath(req.EndpointID) + "/r/" + strconv.FormatInt(req.ID, 10),
 		Fresh:    fresh,
+		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
 	}
 	if len(req.BodySHA256) > 0 {
 		v.Group = hex.EncodeToString(req.BodySHA256[:6])
@@ -507,6 +517,7 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		Download: h.prefix + "/r/" + strconv.FormatInt(req.ID, 10) + "/body",
 		Unmatch:  req.EndpointID == store.Unmatched,
 		Limit:    h.limit,
+		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
 	}
 	return v, nil
 }
@@ -558,8 +569,40 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, "retry: 2000\n\n")
 
+	// since: outcomes updated from then on are sent again (as "update"
+	// events, without an id) so rows show what was finally done.
+	since := time.Now().UnixMilli()
+	writeRow := func(req store.Request, event string) bool {
+		v, err := h.row(r.Context(), req, event == "request")
+		if err != nil {
+			return false
+		}
+		var buf bytes.Buffer
+		if err := row(v).Render(r.Context(), &buf); err != nil {
+			return false
+		}
+		if event == "request" {
+			fmt.Fprintf(w, "id: %d\n", req.ID)
+		}
+		fmt.Fprintf(w, "event: %s\n", event)
+		for line := range strings.SplitSeq(strings.TrimRight(buf.String(), "\n"), "\n") {
+			fmt.Fprintf(w, "data: %s\n", line)
+		}
+		fmt.Fprint(w, "\n")
+		return true
+	}
 	send := func() bool {
+		now := time.Now().UnixMilli()
 		reqs, err := h.store.RequestsAfter(r.Context(), reg, last)
+		if err == nil && last > 0 {
+			var changed []store.Request
+			changed, err = h.store.RequestsChanged(r.Context(), reg, last, since)
+			for _, req := range changed {
+				if !writeRow(req, "update") {
+					return false
+				}
+			}
+		}
 		if err != nil {
 			if r.Context().Err() == nil {
 				h.log.Error("web: live feed", "err", err)
@@ -567,21 +610,12 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 			return false
 		}
 		for _, req := range reqs {
-			v, err := h.row(r.Context(), req, true)
-			if err != nil {
+			if !writeRow(req, "request") {
 				return false
 			}
-			var buf bytes.Buffer
-			if err := row(v).Render(r.Context(), &buf); err != nil {
-				return false
-			}
-			fmt.Fprintf(w, "id: %d\nevent: request\n", req.ID)
-			for line := range strings.SplitSeq(strings.TrimRight(buf.String(), "\n"), "\n") {
-				fmt.Fprintf(w, "data: %s\n", line)
-			}
-			fmt.Fprint(w, "\n")
 			last = req.ID
 		}
+		since = now
 		return rc.Flush() == nil
 	}
 

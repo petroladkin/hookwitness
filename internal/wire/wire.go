@@ -81,6 +81,14 @@ type head struct {
 	headers []Header
 }
 
+// Underlying returns the connection a Conn wraps, or c itself.
+func Underlying(c net.Conn) net.Conn {
+	if wc, ok := c.(*Conn); ok {
+		return wc.Conn
+	}
+	return c
+}
+
 func (c *Conn) Read(b []byte) (int, error) {
 	n, err := c.Conn.Read(b)
 	if n > 0 {

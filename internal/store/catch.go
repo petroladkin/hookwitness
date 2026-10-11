@@ -29,6 +29,8 @@ type Endpoint struct {
 	CreatedAt time.Time
 	Count     int       // requests kept
 	LastAt    time.Time // newest kept request; zero when there is none
+	Config    string    // how it answers (internal/emulate); empty for the default
+	Counter   int64     // requests that passed its checks since the last reset
 }
 
 // Header is one header line as received: original case, received order,
@@ -54,8 +56,15 @@ type Request struct {
 	BodySHA256 []byte // nil when there is no body
 	Size       int64  // body bytes; for a refused body the declared length, -1 if unknown
 	TooLarge   bool
-	Status     int // what hookwitness answered with
+	Status     int    // what hookwitness answered with; 0 when nothing was sent
+	Outcome    string // what it did, as JSON (internal/emulate.Outcome)
 }
+
+// Decide is called by AddRequest inside its transaction with the request's
+// number since the counter was reset; it returns the status and outcome to
+// store. Deciding under the same lock as counting keeps "every Nth" exact
+// when requests arrive together.
+type Decide func(counter int64) (status int, outcome string)
 
 // register turns a register id into the value compared with endpoint_id;
 // queries use "endpoint_id IS ?" so that NULL matches the Unmatched register.
@@ -91,14 +100,15 @@ func (s *Store) CreateEndpoint(ctx context.Context, path string) (Endpoint, erro
 
 const endpointSummary = `SELECT e.id, e.path, e.created_at,
 	(SELECT COUNT(*) FROM requests r WHERE r.endpoint_id = e.id),
-	(SELECT MAX(received_at) FROM requests r WHERE r.endpoint_id = e.id)
+	(SELECT MAX(received_at) FROM requests r WHERE r.endpoint_id = e.id),
+	e.config, e.counter
 	FROM endpoints e`
 
 func scanEndpoint(sc interface{ Scan(...any) error }) (Endpoint, error) {
 	var e Endpoint
 	var created int64
 	var last sql.NullInt64
-	if err := sc.Scan(&e.ID, &e.Path, &created, &e.Count, &last); err != nil {
+	if err := sc.Scan(&e.ID, &e.Path, &created, &e.Count, &last, &e.Config, &e.Counter); err != nil {
 		return Endpoint{}, err
 	}
 	e.CreatedAt = fromMillis(created)
@@ -146,14 +156,54 @@ func (s *Store) Endpoint(ctx context.Context, id int64) (Endpoint, error) {
 	return e, err
 }
 
-// EndpointIDByPath finds the endpoint whose path equals p byte for byte.
-func (s *Store) EndpointIDByPath(ctx context.Context, p string) (int64, error) {
-	var id int64
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM endpoints WHERE path = ?`, p).Scan(&id)
+// EndpointByPath finds the endpoint whose path equals p byte for byte and
+// returns its id and configuration.
+func (s *Store) EndpointByPath(ctx context.Context, p string) (id int64, config string, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT id, config FROM endpoints WHERE path = ?`, p).Scan(&id, &config)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
+		return 0, "", ErrNotFound
 	}
-	return id, err
+	return id, config, err
+}
+
+// SetConfig replaces an endpoint's configuration; the caller validates it.
+func (s *Store) SetConfig(ctx context.Context, id int64, config string) error {
+	return s.updateEndpoint(ctx, `UPDATE endpoints SET config = ? WHERE id = ?`, config, id)
+}
+
+// ResetCounter starts an endpoint's request count again from zero.
+func (s *Store) ResetCounter(ctx context.Context, id int64) error {
+	return s.updateEndpoint(ctx, `UPDATE endpoints SET counter = 0 WHERE id = ?`, id)
+}
+
+func (s *Store) updateEndpoint(ctx context.Context, query string, args ...any) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	res, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateOutcome replaces a stored request's outcome once the action has run
+// (measured delay, how long a sender waited, a render error).
+func (s *Store) UpdateOutcome(ctx context.Context, id int64, status int, outcome string) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	_, err := s.db.ExecContext(ctx, `UPDATE requests SET status = ?, outcome = ?, changed_at = ? WHERE id = ?`,
+		status, outcome, millis(time.Now()), id)
+	return err
+}
+
+// RequestsChanged lists a register's requests up to upToID whose outcome
+// was updated at or after since (unix ms), oldest first, without bodies.
+func (s *Store) RequestsChanged(ctx context.Context, endpointID, upToID, since int64) ([]Request, error) {
+	return s.listRequests(ctx, `SELECT `+requestColumns+` FROM requests
+		WHERE endpoint_id IS ? AND id <= ? AND changed_at >= ? ORDER BY id`, register(endpointID), upToID, since)
 }
 
 // DeleteEndpoint removes an endpoint and every request it caught.
@@ -190,8 +240,10 @@ func (s *Store) ClearRequests(ctx context.Context, endpointID int64) error {
 
 // AddRequest stores r in its register (r.EndpointID), numbers it, and prunes
 // the register's oldest requests beyond keep. It sets r.ID, r.No and
-// r.BodySHA256. An endpoint deleted meanwhile yields ErrNotFound.
-func (s *Store) AddRequest(ctx context.Context, r *Request, keep int) error {
+// r.BodySHA256. With decide (an endpoint's request that passed its checks)
+// the endpoint's counter advances and decide sets r.Status and r.Outcome in
+// the same transaction. An endpoint deleted meanwhile yields ErrNotFound.
+func (s *Store) AddRequest(ctx context.Context, r *Request, keep int, decide Decide) error {
 	if keep < 1 {
 		return fmt.Errorf("keep must be at least 1, got %d", keep)
 	}
@@ -240,13 +292,21 @@ func (s *Store) AddRequest(ctx context.Context, r *Request, keep int) error {
 		if err != nil {
 			return fmt.Errorf("number request: %w", err)
 		}
+		if decide != nil {
+			var n int64
+			if err := tx.QueryRowContext(ctx,
+				`UPDATE endpoints SET counter = counter + 1 WHERE id = ? RETURNING counter`, r.EndpointID).Scan(&n); err != nil {
+				return fmt.Errorf("count request: %w", err)
+			}
+			r.Status, r.Outcome = decide(n)
+		}
 	}
 
 	res, err := tx.ExecContext(ctx, `INSERT INTO requests
-		(endpoint_id, no, received_at, method, path, raw_query, proto, remote_addr, headers, body, body_sha256, size, too_large, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(endpoint_id, no, received_at, method, path, raw_query, proto, remote_addr, headers, body, body_sha256, size, too_large, status, outcome)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		register(r.EndpointID), no, millis(r.ReceivedAt), r.Method, r.Path, r.RawQuery, r.Proto, r.RemoteAddr,
-		string(headers), body, sum, r.Size, r.TooLarge, r.Status)
+		string(headers), body, sum, r.Size, r.TooLarge, r.Status, r.Outcome)
 	if err != nil {
 		return fmt.Errorf("store request: %w", err)
 	}
@@ -277,7 +337,7 @@ func pairs(hs []Header) [][2]string {
 }
 
 const requestColumns = `id, endpoint_id, no, received_at, method, path, raw_query, proto, remote_addr,
-	headers, body_sha256, size, too_large, status`
+	headers, body_sha256, size, too_large, status, outcome`
 
 func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, error) {
 	var r Request
@@ -285,7 +345,7 @@ func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, er
 	var at int64
 	var headers string
 	dst := []any{&r.ID, &ep, &r.No, &at, &r.Method, &r.Path, &r.RawQuery, &r.Proto, &r.RemoteAddr,
-		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status}
+		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome}
 	if withBody {
 		dst = append(dst, &r.Body)
 	}
