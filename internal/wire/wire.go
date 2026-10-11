@@ -14,6 +14,8 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/textproto"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,7 +65,7 @@ func Take(r *http.Request) (hs []Header, ok bool) {
 	if c == nil || r.ProtoMajor != 1 {
 		return nil, false
 	}
-	return c.take(r.Method, r.RequestURI)
+	return c.take(r.Method, r.RequestURI, r.Header)
 }
 
 // Conn records the request heads read through it.
@@ -89,7 +91,7 @@ func (c *Conn) Read(b []byte) (int, error) {
 	return n, err
 }
 
-func (c *Conn) take(method, uri string) ([]Header, bool) {
+func (c *Conn) take(method, uri string, parsed http.Header) ([]Header, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.p.broken || len(c.heads) == 0 {
@@ -97,13 +99,41 @@ func (c *Conn) take(method, uri string) ([]Header, bool) {
 	}
 	h := c.heads[0]
 	c.heads = c.heads[1:]
-	if !strings.HasPrefix(h.line, method+" "+uri+" ") {
+	if !strings.HasPrefix(h.line, method+" "+uri+" ") || !sameHeaders(h.headers, parsed) {
 		// Out of step with net/http: stop guessing for this connection.
 		c.p.broken = true
 		c.heads = nil
 		return nil, false
 	}
 	return h.headers, true
+}
+
+// skipped are the header names net/http takes out of Request.Header (Host)
+// or rewrites while framing the body; they are left out of the comparison.
+var skipped = map[string]bool{"Host": true, "Transfer-Encoding": true, "Content-Length": true, "Trailer": true}
+
+// sameHeaders reports whether the recorded lines carry exactly the names and
+// values net/http parsed. Anything else means the two framed the stream
+// differently, and the recorded head must not be trusted as evidence.
+func sameHeaders(recorded []Header, parsed http.Header) bool {
+	got := map[string][]string{}
+	for _, h := range recorded {
+		k := textproto.CanonicalMIMEHeaderKey(h.Name)
+		if !skipped[k] {
+			got[k] = append(got[k], h.Value)
+		}
+	}
+	n := 0
+	for k, vs := range parsed {
+		if skipped[k] {
+			continue
+		}
+		n++
+		if !slices.Equal(got[k], vs) {
+			return false
+		}
+	}
+	return n == len(got)
 }
 
 type state int
@@ -206,19 +236,17 @@ func (p *parser) line(b []byte, whole bool) (got, rest []byte, done bool) {
 	start := len(p.buf)
 	p.buf = append(p.buf, b...)
 	var end int
-	if whole {
-		// A trailer section may be empty: just CRLF.
-		if bytes.HasPrefix(p.buf, []byte("\r\n")) && p.st == inTrailer {
-			end = 2
-		} else if bytes.HasPrefix(p.buf, []byte("\n")) && p.st == inTrailer {
-			end = 1
-		} else if i := bytes.Index(p.buf, []byte("\r\n\r\n")); i >= 0 {
-			end = i + 4
-		} else if i := bytes.Index(p.buf, []byte("\n\n")); i >= 0 {
-			end = i + 2
+	switch {
+	case whole && p.st == inTrailer && bytes.HasPrefix(p.buf, []byte("\r\n")):
+		end = 2 // an empty trailer section
+	case whole && p.st == inTrailer && bytes.HasPrefix(p.buf, []byte("\n")):
+		end = 1
+	case whole:
+		end = blankLine(p.buf, max(0, start-2))
+	default:
+		if i := bytes.IndexByte(p.buf[start:], '\n'); i >= 0 {
+			end = start + i + 1
 		}
-	} else if i := bytes.IndexByte(p.buf, '\n'); i >= 0 {
-		end = i + 1
 	}
 	if end == 0 {
 		if len(p.buf) > maxHead {
@@ -232,6 +260,25 @@ func (p *parser) line(b []byte, whole bool) (got, rest []byte, done bool) {
 	return got, rest, true
 }
 
+// blankLine finds the first line end followed by an empty line (LF LF or
+// LF CR LF, so CRLF CRLF and bare LFs alike) at or after from, and returns
+// the offset just past it, or 0. Searching only from the newly read bytes
+// keeps a head dripped in byte by byte linear.
+func blankLine(buf []byte, from int) int {
+	for i := from; i < len(buf); i++ {
+		if buf[i] != '\n' {
+			continue
+		}
+		switch {
+		case i+1 < len(buf) && buf[i+1] == '\n':
+			return i + 2
+		case i+2 < len(buf) && buf[i+1] == '\r' && buf[i+2] == '\n':
+			return i + 3
+		}
+	}
+	return 0
+}
+
 // parseHead splits a request head into the request line and header lines,
 // and works out how its body is framed, as net/http does: chunked when
 // Transfer-Encoding ends in chunked, otherwise Content-Length.
@@ -243,6 +290,8 @@ func parseHead(raw []byte) (h head, framing string, length int64, ok bool) {
 	}
 	framing = "length"
 	cl := ""
+	// Like net/http, Transfer-Encoding counts only from HTTP/1.1 on.
+	te := !strings.HasSuffix(h.line, " HTTP/1.0")
 	for _, l := range lines[1:] {
 		l = strings.TrimSuffix(l, "\r")
 		if l == "" {
@@ -263,7 +312,7 @@ func parseHead(raw []byte) (h head, framing string, length int64, ok bool) {
 		switch strings.ToLower(name) {
 		case "transfer-encoding":
 			codings := strings.Split(value, ",")
-			if strings.EqualFold(strings.TrimSpace(codings[len(codings)-1]), "chunked") {
+			if te && strings.EqualFold(strings.TrimSpace(codings[len(codings)-1]), "chunked") {
 				framing = "chunked"
 			}
 		case "content-length":
