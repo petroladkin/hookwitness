@@ -11,34 +11,57 @@ sqlite, also shipped as a Docker image.
 
 ## Current state
 
-Skeleton only: `hookwitness serve` opens and migrates the sqlite database and
-answers `GET /healthz`; `hookwitness version` prints the build identity. No
-webhook catching, UI or API yet. This section must describe what is true now —
+`hookwitness serve` catches webhooks: endpoints are exact paths managed in the
+web UI under the admin prefix (default `/admin`); every other path is caught
+into the Unmatched register with a 404. The UI shows each endpoint's requests
+live (SSE + HTMX) with the recorder strip and the request detail. No scripted
+responses, verdicts, reports, REST API or MCP yet. `hookwitness version`
+prints the build identity. This section must describe what is true now —
 update it in the same change that makes it false.
 
 ## Layout
 
 - `cmd/hookwitness` — the command: subcommands `serve`, `version`; signal
-  handling; logger setup.
+  handling; logger setup; wiring of the parts below.
 - `internal/config` — `serve` settings from flags and `HOOKWITNESS_*` env.
 - `internal/store` — sqlite (modernc.org/sqlite, no cgo): pragmas, embedded
   migrations in `internal/store/migrations/NNNN_name.sql`, applied in order and
   recorded in `schema_migrations`; a newer database schema is refused.
-- `internal/server` — HTTP routes and graceful shutdown.
+  Endpoints and requests (`catch.go`); `endpoint_id` NULL is the Unmatched
+  register; request ids are never reused (they are the SSE event ids).
+- `internal/wire` — follows the raw HTTP/1.x stream of each connection to keep
+  header lines in received order, case and repetition (net/http's map loses
+  them). The root handler must `wire.Take` every request.
+- `internal/server` — the root router on the raw path (`/healthz`, admin
+  prefix, everything else caught; no ServeMux cleaning) and graceful shutdown.
+- `internal/catch` — records and answers caught requests (body limit, 413,
+  404 + Unmatched).
+- `internal/live` — wake-ups for live feeds; feeds read what they missed from
+  the store, so nothing is lost or repeated.
+- `internal/web` — the UI: templ components (`views.templ`, generated
+  `views_templ.go` is committed), handlers, SSE feed, embedded `static/`
+  (our `app.css`, `app.js`; vendored htmx, htmx-ext-sse and fonts under
+  `static/vendor/<name>/` with `LICENSE` and `SOURCE`). Strict CSP: no
+  inline scripts or styles, nothing from other origins. Answers only to IP
+  addresses, localhost and `-admin-hosts` names (DNS rebinding); refuses
+  cross-origin form posts.
 - `internal/version` — version and commit, set via `-ldflags` by `make build`.
 - `internal/repoguard` — tests over the repository itself: no private network
   addresses or home-directory paths in tracked files (exempt a line with
   `guard:allow`, a file with `guard:allow-file` in its first line), and
-  `THIRD-PARTY-NOTICES.md` matching the modules compiled in.
+  `THIRD-PARTY-NOTICES.md` matching the modules compiled in and the bundled
+  web assets.
 - `scripts/hooks` — git hooks; `scripts/notices.sh` — notices generator.
 
 ## Commands
 
 - `make build` — `bin/hookwitness`.
-- `make check` — build, vet, gofmt check, staticcheck (a `go tool`
-  dependency), `go test -race ./...`. Must pass before a merge.
+- `make check` — templ check, build, vet, gofmt check, staticcheck (a
+  `go tool` dependency), `go test -race ./...`. Must pass before a merge.
+- `make generate` — format the `.templ` files and regenerate `*_templ.go`
+  (templ is a `go tool` dependency); commit both.
 - `make notices` — regenerate `THIRD-PARTY-NOTICES.md` after a dependency
-  change; only permissive licenses are accepted.
+  or vendored-asset change; only permissive licenses are accepted.
 - `make hooks` — enable the git hooks.
 
 ## Scope
@@ -48,7 +71,7 @@ update it in the same change that makes it false.
 
 ## Stack
 
-Go, sqlite, HTMX, Server-Sent Events, Docker.
+Go, sqlite, templ, HTMX, Server-Sent Events, Docker.
 
 ## Working rules
 

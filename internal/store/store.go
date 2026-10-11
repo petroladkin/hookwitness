@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"modernc.org/sqlite" // also registers the "sqlite" driver
@@ -31,6 +32,9 @@ var ErrSchemaTooNew = errors.New("database schema is newer than this binary")
 // Store is an open, migrated database.
 type Store struct {
 	db *sql.DB
+	// wmu serialises writes inside this process: SQLite has one writer at a
+	// time anyway, and queueing here is cheaper than retrying SQLITE_BUSY.
+	wmu sync.Mutex
 }
 
 type migration struct {
@@ -87,6 +91,12 @@ func setup(ctx context.Context, db *sql.DB, dbPath string, ms []migration) error
 		return fmt.Errorf("open %s: %w", dbPath, err)
 	}
 	return migrate(ctx, db, ms)
+}
+
+// isUnique reports a UNIQUE constraint violation.
+func isUnique(err error) bool {
+	var se *sqlite.Error
+	return errors.As(err, &se) && se.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE
 }
 
 // isBusy reports SQLITE_BUSY or SQLITE_LOCKED, including extended codes.

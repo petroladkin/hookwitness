@@ -14,10 +14,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/config"
+	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/server"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/version"
+	"github.com/petroladkin/hookwitness/internal/web"
 )
 
 const usage = `Usage: hookwitness <command> [flags]
@@ -88,9 +91,22 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	schema, _ := st.SchemaVersion(ctx)
 	log.Info("hookwitness started",
 		"version", version.Version, "commit", version.Commit,
-		"addr", ln.Addr().String(), "db", cfg.DBPath, "schema", schema)
+		"addr", ln.Addr().String(), "db", cfg.DBPath, "schema", schema,
+		"ui", "http://"+ln.Addr().String()+cfg.AdminPrefix+"/",
+		"max_body", cfg.MaxBody, "retention", cfg.Retention)
 
-	if err := server.Serve(ctx, ln, server.New(st, log), log); err != nil {
+	broker := live.New()
+	ui := web.New(st, broker, log, web.Options{
+		Prefix: cfg.AdminPrefix, MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts,
+	})
+	root := server.New(server.Options{
+		DB:          st,
+		Log:         log,
+		AdminPrefix: cfg.AdminPrefix,
+		Admin:       ui,
+		Catch:       &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, Retention: cfg.Retention},
+	})
+	if err := server.Serve(ctx, ln, root, log, ui.StopStreams); err != nil {
 		log.Error("server stopped with an error", "err", err)
 		return 1
 	}

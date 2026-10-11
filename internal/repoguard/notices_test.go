@@ -38,7 +38,12 @@ func TestNoticesCoverEveryModule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listed := listedModules(string(notices))
+	listed := map[string]bool{}
+	for h := range listedModules(string(notices)) {
+		if !strings.HasPrefix(h, assetDir) {
+			listed[h] = true
+		}
+	}
 
 	var missing, stale []string
 	for m := range deps {
@@ -58,6 +63,54 @@ func TestNoticesCoverEveryModule(t *testing.T) {
 	}
 	if len(stale) > 0 {
 		t.Errorf("notices for modules no longer compiled in: %v (run make notices)", stale)
+	}
+}
+
+// assetDir holds the vendored web assets, one directory each.
+const assetDir = "internal/web/static/vendor/"
+
+// TestNoticesCoverEveryBundledAsset checks the bundled web assets the same
+// way: each vendored directory carries its LICENSE and SOURCE and has a
+// section in THIRD-PARTY-NOTICES.md, and no section outlives its directory.
+func TestNoticesCoverEveryBundledAsset(t *testing.T) {
+	root := moduleRoot(t)
+	entries, err := os.ReadDir(filepath.Join(root, assetDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs := map[string]bool{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			t.Errorf("%s%s: vendored files go in a directory with their LICENSE and SOURCE", assetDir, e.Name())
+			continue
+		}
+		dir := assetDir + e.Name()
+		dirs[dir] = true
+		for _, f := range []string{"LICENSE", "SOURCE"} {
+			if _, err := os.Stat(filepath.Join(root, dir, f)); err != nil {
+				t.Errorf("%s has no %s", dir, f)
+			}
+		}
+	}
+	notices, err := os.ReadFile(filepath.Join(root, "THIRD-PARTY-NOTICES.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	for h := range listedModules(string(notices)) {
+		if strings.HasPrefix(h, assetDir) {
+			listed[h] = true
+		}
+	}
+	for d := range dirs {
+		if !listed[d] {
+			t.Errorf("bundled asset %s has no notice (run make notices)", d)
+		}
+	}
+	for d := range listed {
+		if !dirs[d] {
+			t.Errorf("notice for %s, which is no longer bundled (run make notices)", d)
+		}
 	}
 }
 
