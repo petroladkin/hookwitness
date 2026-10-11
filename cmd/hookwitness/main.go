@@ -29,6 +29,9 @@ Commands:
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// After the first signal, restore the default handling so that a second
+	// Ctrl-C during the graceful shutdown kills the process at once.
+	go func() { <-ctx.Done(); stop() }()
 	code := run(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr)
 	stop()
 	os.Exit(code)
@@ -68,6 +71,10 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 
 	st, err := store.Open(ctx, cfg.DBPath)
 	if err != nil {
+		if ctx.Err() != nil {
+			log.Info("stopped before the server started")
+			return 0
+		}
 		log.Error("cannot open the database", "db", cfg.DBPath, "err", err)
 		return 1
 	}

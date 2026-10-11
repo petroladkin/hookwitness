@@ -16,7 +16,9 @@ API and an MCP server let tests and AI agents drive it.
 
 ## Build from source
 
-Requires Go 1.27 or newer.
+Requires Go 1.27 or newer. `make check` also needs a C compiler for the
+race detector (`build-essential` on Debian/Ubuntu, Xcode command line tools
+on macOS); the binary itself is built without cgo.
 
 ```sh
 make build                    # writes bin/hookwitness, a single static binary

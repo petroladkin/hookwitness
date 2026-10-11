@@ -25,8 +25,11 @@ fmt-check:
 staticcheck:
 	go tool staticcheck ./...
 
-# -race needs cgo; the shipped binary does not.
+# -race needs cgo and so a C compiler; the shipped binary needs neither.
 test:
+	@command -v "$$(go env CC)" >/dev/null 2>&1 || { \
+		echo "make test: the race detector needs a C compiler ($$(go env CC) not found)."; \
+		echo "  Debian/Ubuntu: apt install build-essential   macOS: xcode-select --install"; exit 1; }
 	CGO_ENABLED=1 go test -race -count=1 ./...
 
 ## notices: regenerate THIRD-PARTY-NOTICES.md from the modules compiled in
