@@ -209,3 +209,25 @@ func TestTrickledBodyIsCutOff(t *testing.T) {
 		t.Fatal("an incomplete body was kept")
 	}
 }
+
+// TestSenderClosingItsSideIsStillKept: a sender that writes the request and
+// half-closes the connection at once (fire and forget) cancels the request
+// context in net/http; the request was received in full and must be kept.
+func TestSenderClosingItsSideIsStillKept(t *testing.T) {
+	addr, st := serveReal(t)
+	ep, _ := st.CreateEndpoint(context.Background(), "/fire")
+	for range 5 {
+		c, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.WriteString(c, "POST /fire HTTP/1.1\r\nHost: a\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+		c.(*net.TCPConn).CloseWrite()
+		c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		io.Copy(io.Discard, c)
+		c.Close()
+	}
+	if e, _ := st.Endpoint(context.Background(), ep.ID); e.Count != 5 {
+		t.Fatalf("%d of 5 half-closed requests kept", e.Count)
+	}
+}

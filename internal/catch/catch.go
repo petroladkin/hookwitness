@@ -2,6 +2,7 @@
 package catch
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -35,8 +36,12 @@ const DefaultBodyTimeout = 60 * time.Second
 func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.Header, ok bool) {
 	received := time.Now().UTC()
 	p := RawPath(r)
+	// net/http cancels the request context when the sender closes its side,
+	// which fire-and-forget senders do right after the request; a request
+	// that was received in full is still evidence and must be kept.
+	ctx := context.WithoutCancel(r.Context())
 
-	endpointID, err := h.Store.EndpointIDByPath(r.Context(), p)
+	endpointID, err := h.Store.EndpointIDByPath(ctx, p)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		endpointID = store.Unmatched
@@ -70,11 +75,11 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	default:
 		req.Status = http.StatusOK
 	}
-	err = h.Store.AddRequest(r.Context(), req, h.Retention)
+	err = h.Store.AddRequest(ctx, req, h.Retention)
 	if errors.Is(err, store.ErrNotFound) {
 		// The endpoint was deleted after the lookup: the path is unknown now.
 		req.EndpointID, req.Status = store.Unmatched, http.StatusNotFound
-		err = h.Store.AddRequest(r.Context(), req, h.Retention)
+		err = h.Store.AddRequest(ctx, req, h.Retention)
 	}
 	if err != nil {
 		h.Log.Error("catch: request not stored", "method", r.Method, "path", p, "err", err)
