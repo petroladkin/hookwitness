@@ -1,0 +1,64 @@
+#!/bin/bash
+# Pre-commit guards. Enable once per clone:
+#   git config core.hooksPath scripts/hooks
+# To get past a guard deliberately: git commit --no-verify
+
+# 1. No commits on integration branches.
+#
+# Work goes on a feature/fix/release/hotfix branch and reaches dev or main
+# through a merge after review. A rule that depends on remembering is not a
+# guard, so here is one that does not.
+branch=$(git rev-parse --abbrev-ref HEAD)
+case "$branch" in
+  dev|main)
+    echo "refusing to commit on '$branch': work belongs on a branch." >&2
+    echo "  git switch -c feature/<name>   (your changes come along)" >&2
+    exit 1
+    ;;
+esac
+
+# 2. No compiled binaries at the repository root.
+#
+# `go build ./cmd/x` run from the root writes the executable beside the source,
+# and `git add -A` picks it up. This asks what the file is, not what it is
+# called, so commands nobody has written yet are covered too.
+#
+# A loop fed by process substitution rather than a pipeline inside $( ):
+# macOS ships bash 3.2, which cannot parse `case` inside a command substitution.
+root_binaries=""
+while IFS= read -r -d '' path; do
+  [ "$path" = "${path#*/}" ] || continue
+  [ -f "$path" ] || continue
+  case "$(file -b --mime-type -- "$path")" in
+    application/x-mach-binary|application/x-executable|application/x-sharedlib|application/x-pie-executable|application/x-dosexec)
+      root_binaries="$root_binaries $path"
+      ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=AM -z)
+if [ -n "$root_binaries" ]; then
+  echo "refusing to commit a compiled binary at the repository root:" >&2
+  printf '  %s\n' $root_binaries >&2
+  echo "build into bin/ instead (go build -o bin/x ./cmd/x)." >&2
+  exit 1
+fi
+
+# 3. No lines matching the maintainer's local deny-list.
+#
+# Optional: if .git/info/private-patterns exists (one extended regular
+# expression per line, matched case-insensitively), staged added lines that
+# match any of them are refused. The list lives outside the repository so that
+# the repository does not itself publish what it is meant to keep out.
+patterns="$(git rev-parse --git-dir)/info/private-patterns"
+if [ -s "$patterns" ]; then
+  hits=$(git diff --cached -U0 --no-color --diff-filter=AM \
+    | grep -E '^(\+\+\+ |\+)' \
+    | awk '/^\+\+\+ /{file=substr($0,7); next} {print file": "substr($0,2)}' \
+    | grep -iE -f "$patterns")
+  if [ -n "$hits" ]; then
+    echo "refusing to commit lines that match .git/info/private-patterns:" >&2
+    printf '%s\n' "$hits" | sed 's/^/  /' >&2
+    exit 1
+  fi
+fi
+
+exit 0

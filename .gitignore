@@ -1,0 +1,32 @@
+# Build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Local data: catch databases, scratch files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+.local/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+
+# Personal working notes, kept outside this repository and linked in locally.
+# They are the author's notes, not the project's documentation (README and
+# CONTRIBUTING are that).
+CLAUDE.local.md
+docs/backlog
+docs/superpowers
+
+# AI agent state and per-machine settings
+.claude/
+.superpowers/
+.worktrees/
