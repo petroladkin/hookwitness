@@ -66,13 +66,26 @@ const (
 	MatchRegex   = "regex"
 )
 
-// Check is a request check: here a required header. A request that fails a
-// check is refused with Error, or the standard 400 when Error is nil.
+// Check is a request check: a required header (KindHeader), which always
+// refuses a request that fails it, or an authorization check (checks.go),
+// which records a verdict on every request and refuses only when Enforce
+// is set. A refusal is Error, or the standard reply when Error is nil.
 type Check struct {
-	Header string `json:"header"`
-	Match  string `json:"match"`
-	Value  string `json:"value,omitempty"` // for MatchEquals and MatchRegex
+	Kind   string `json:"kind,omitempty"`   // "" reads as KindHeader (configurations before authorization checks)
+	Header string `json:"header,omitempty"` // KindHeader; KindHMAC: the signature header
+	Match  string `json:"match,omitempty"`  // KindHeader
+	Value  string `json:"value,omitempty"`  // KindHeader, for MatchEquals and MatchRegex
 	Error  *Reply `json:"error,omitempty"`
+
+	Enforce         bool   `json:"enforce,omitempty"`          // authorization kinds: refuse on fail
+	Secret          string `json:"secret,omitempty"`           // the secret's name
+	User            string `json:"user,omitempty"`             // KindBasic: the user name (not secret)
+	Algo            string `json:"algo,omitempty"`             // KindHMAC: sha1, sha256, sha512
+	Encoding        string `json:"encoding,omitempty"`         // KindHMAC: hex, base64
+	Prefix          string `json:"prefix,omitempty"`           // KindHMAC: before the signature
+	Content         string `json:"content,omitempty"`          // KindHMAC: template of the signed content; "" = the raw body
+	ToleranceS      int64  `json:"tolerance_s,omitempty"`      // KindStripe, KindStandard; 0 = auth.DefaultTolerance
+	IgnoreTimestamp bool   `json:"ignore_timestamp,omitempty"` // KindStripe, KindStandard
 }
 
 // Var is an endpoint variable: a test value in plain text, never a secret.
@@ -83,10 +96,11 @@ type Var struct {
 
 // Config is an endpoint's behaviour.
 type Config struct {
-	Default Reply   `json:"default"`
-	Rules   []Rule  `json:"rules,omitempty"`
-	Checks  []Check `json:"checks,omitempty"`
-	Vars    []Var   `json:"vars,omitempty"`
+	Default Reply    `json:"default"`
+	Rules   []Rule   `json:"rules,omitempty"`
+	Checks  []Check  `json:"checks,omitempty"`
+	Vars    []Var    `json:"vars,omitempty"`
+	Secrets []Secret `json:"secrets,omitempty"` // sealed or hashed; never template data
 }
 
 // DefaultConfig is what a new endpoint does: 200 with an empty body.
@@ -135,6 +149,9 @@ func (c Config) Validate(maxWait time.Duration) error {
 		}
 		seen[v.Name] = true
 	}
+	if err := c.validateSecrets(); err != nil {
+		return err
+	}
 	if err := c.Default.validate(maxWait); err != nil {
 		return fmt.Errorf("default reply: %w", err)
 	}
@@ -144,6 +161,15 @@ func (c Config) Validate(maxWait time.Duration) error {
 		}
 	}
 	for i, ch := range c.Checks {
+		if ch.kind() != KindHeader {
+			if err := c.validateAuth(ch, maxWait); err != nil {
+				if !knownKind(ch.kind()) {
+					return fmt.Errorf("check %d: %w", i+1, err)
+				}
+				return fmt.Errorf("check %d (%s): %w", i+1, ch.Label(), err)
+			}
+			continue
+		}
 		if err := ch.validate(maxWait); err != nil {
 			return fmt.Errorf("check %d: %w", i+1, err)
 		}
@@ -292,17 +318,24 @@ type Request struct {
 type Failed struct {
 	Index int // 1-based
 	Check Check
-	Why   string // "missing" or "wrong value"
+	Why   string // a header check: "missing" or "has a wrong value"; an authorization check: the verdict's reason
 }
 
 // Describe names the failed check for the record and the standard error.
 func (f Failed) Describe() string {
+	if f.Check.kind() != KindHeader {
+		return fmt.Sprintf("check %d: %s: %s", f.Index, f.Check.Label(), f.Why)
+	}
 	return fmt.Sprintf("check %d: header %s %s", f.Index, f.Check.Header, f.Why)
 }
 
-// RunChecks returns the first failed check, or nil.
+// RunChecks returns the first failed required-header check, or nil.
+// Authorization checks are Verify's.
 func (c Config) RunChecks(r Request) *Failed {
 	for i, ch := range c.Checks {
+		if ch.kind() != KindHeader {
+			continue
+		}
 		values := headerValues(r.Headers, ch.Header)
 		why := ""
 		switch {
@@ -375,6 +408,9 @@ func (c Config) Choose(n int64) Choice {
 func (f Failed) Refusal() Reply {
 	if f.Check.Error != nil {
 		return *f.Check.Error
+	}
+	if f.Check.kind() != KindHeader {
+		return f.authRefusal()
 	}
 	return Reply{
 		Status:  400,
