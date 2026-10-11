@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"flag"
 	"io"
 	"strings"
 	"testing"
@@ -64,5 +66,28 @@ func TestInvalid(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("Parse(%v) error = %v, want it to contain %q", tc.args, err, tc.want)
 		}
+	}
+}
+
+func TestHelpPrintsUsage(t *testing.T) {
+	var out strings.Builder
+	_, err := Parse([]string{"-h"}, env(nil), &out)
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("err = %v, want flag.ErrHelp", err)
+	}
+	for _, want := range []string{"Usage: hookwitness serve", "-addr", "HOOKWITNESS_DB", "-log-format"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("usage lacks %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestUnknownFlagPrintsNothing(t *testing.T) {
+	var out strings.Builder
+	if _, err := Parse([]string{"-bogus"}, env(nil), &out); err == nil {
+		t.Fatal("want an error")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("printed %q; the caller prints the one-line error", out.String())
 	}
 }

@@ -42,7 +42,9 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 	}
 
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	fs.SetOutput(out)
+	// The flag package would print the whole usage after every error; keep
+	// errors to one line and print the usage only when it is asked for.
+	fs.SetOutput(io.Discard)
 	for _, s := range settings {
 		def := s.def
 		if v := getenv(s.env); v != "" {
@@ -51,6 +53,11 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		fs.StringVar(s.dst, s.flag, def, s.usage+" (env "+s.env+")")
 	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fs.SetOutput(out)
+			fmt.Fprintln(out, "Usage: hookwitness serve [flags]")
+			fs.PrintDefaults()
+		}
 		return Config{}, err
 	}
 	if fs.NArg() > 0 {
