@@ -78,6 +78,7 @@
 html,body{min-height:100%}
 body{margin:0;background:var(--paper);color:var(--text);font:400 15px/1.5 var(--f-body);padding-inline:16px;padding-block:0}
 .wrap{max-width:1320px;margin:0 auto;display:flex;flex-direction:column;min-height:100vh}
+.wrap>*{min-width:0}
 a{color:var(--ink)}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 code{font:400 .9em/1 var(--f-data)}
@@ -189,6 +190,19 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
   .ex-no{font-size:48px}
   .strip canvas{height:110px}
   .status .addr{display:none}
+}
+/* Phones: each endpoint becomes a block instead of a table row. */
+@media (max-width:640px){
+  .eps thead{display:none}
+  .eps,.eps tbody{display:block}
+  .eps tr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding-block:12px;border-bottom:1px solid var(--rule)}
+  .eps td{display:block;border:0;padding:0}
+  .eps td:first-child{grid-column:1 / -1;font-weight:600}
+  .eps .url{grid-column:1 / -1}
+  .eps .num{grid-row:3;grid-column:2}
+  .eps .num::after{content:" kept"}
+  .eps .when{grid-row:3;grid-column:1}
+  .eps .acts{grid-column:1 / -1;justify-content:flex-start}
 }
 @media (prefers-reduced-motion:reduce){
   .rec[data-state="live"] i{animation:none}
