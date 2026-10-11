@@ -33,7 +33,7 @@ func TestHealthz(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			New(tc.db, quiet).ServeHTTP(rec, httptest.NewRequest("GET", "/healthz", nil))
+			New(Options{DB: tc.db, Log: quiet}).ServeHTTP(rec, httptest.NewRequest("GET", "/healthz", nil))
 			if rec.Code != tc.code {
 				t.Fatalf("status %d, want %d", rec.Code, tc.code)
 			}
@@ -53,7 +53,7 @@ func TestHealthz(t *testing.T) {
 
 func TestHealthzRejectsOtherMethods(t *testing.T) {
 	rec := httptest.NewRecorder()
-	New(pinger{}, quiet).ServeHTTP(rec, httptest.NewRequest("POST", "/healthz", nil))
+	New(Options{DB: pinger{}, Log: quiet}).ServeHTTP(rec, httptest.NewRequest("POST", "/healthz", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status %d, want 405", rec.Code)
 	}
