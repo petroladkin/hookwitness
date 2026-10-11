@@ -62,7 +62,7 @@ func (e env) add(t *testing.T, endpointID int64, body string, mod func(*store.Re
 	if mod != nil {
 		mod(r)
 	}
-	if err := e.st.AddRequest(context.Background(), r, 1000); err != nil {
+	if err := e.st.AddRequest(context.Background(), r, 1000, nil); err != nil {
 		t.Fatal(err)
 	}
 	return r

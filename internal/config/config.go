@@ -12,17 +12,19 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config is the resolved configuration of the server.
 type Config struct {
-	Addr        string   // listen address, host:port
-	DBPath      string   // sqlite file
-	LogFormat   string   // "text" or "json"
-	MaxBody     int64    // largest request body kept, in bytes
-	Retention   int      // requests kept per endpoint
-	AdminPrefix string   // path prefix of the web UI, e.g. /admin
-	AdminHosts  []string // host names the UI answers to besides IPs and localhost
+	Addr        string        // listen address, host:port
+	DBPath      string        // sqlite file
+	LogFormat   string        // "text" or "json"
+	MaxBody     int64         // largest request body kept, in bytes
+	Retention   int           // requests kept per endpoint
+	AdminPrefix string        // path prefix of the web UI, e.g. /admin
+	AdminHosts  []string      // host names the UI answers to besides IPs and localhost
+	MaxWait     time.Duration // longest reply delay or timeout hold
 }
 
 // Defaults.
@@ -33,6 +35,7 @@ const (
 	DefaultMaxBody     = "10MiB"
 	DefaultRetention   = "1000"
 	DefaultAdminPrefix = "/admin"
+	DefaultMaxWait     = "5m"
 )
 
 type setting struct {
@@ -44,7 +47,7 @@ type setting struct {
 // getenv. Usage and errors from the flag package go to out.
 func Parse(args []string, getenv func(string) string, out io.Writer) (Config, error) {
 	var c Config
-	var maxBody, retention, adminHosts string
+	var maxBody, retention, adminHosts, maxWait string
 	settings := []setting{
 		{"addr", "HOOKWITNESS_ADDR", DefaultAddr, "listen address (host:port)", &c.Addr},
 		{"db", "HOOKWITNESS_DB", DefaultDBPath, "path to the sqlite database file", &c.DBPath},
@@ -53,6 +56,7 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		{"retention", "HOOKWITNESS_RETENTION", DefaultRetention, "requests kept per endpoint; the oldest are pruned", &retention},
 		{"admin-prefix", "HOOKWITNESS_ADMIN_PREFIX", DefaultAdminPrefix, "path prefix of the web UI; requests under it are never caught", &c.AdminPrefix},
 		{"admin-hosts", "HOOKWITNESS_ADMIN_HOSTS", "", "comma-separated host names the web UI answers to, besides IP addresses and localhost", &adminHosts},
+		{"max-wait", "HOOKWITNESS_MAX_WAIT", DefaultMaxWait, "longest reply delay or timeout hold an endpoint may use, e.g. 30s or 5m", &maxWait},
 	}
 
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -86,6 +90,9 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		return Config{}, fmt.Errorf("invalid retention %q: want a whole number of at least 1", retention)
 	}
 	c.Retention = n
+	if c.MaxWait, err = time.ParseDuration(maxWait); err != nil || c.MaxWait < time.Second || c.MaxWait > time.Hour {
+		return Config{}, fmt.Errorf("invalid max wait %q: want a duration from 1s to 1h, e.g. 30s or 5m", maxWait)
+	}
 	for name := range strings.SplitSeq(adminHosts, ",") {
 		if name = strings.TrimSpace(name); name != "" {
 			c.AdminHosts = append(c.AdminHosts, name)

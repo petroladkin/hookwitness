@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func env(m map[string]string) func(string) string {
@@ -19,7 +20,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Config{Addr: DefaultAddr, DBPath: DefaultDBPath, LogFormat: DefaultLogFormat,
-		MaxBody: 10 << 20, Retention: 1000, AdminPrefix: "/admin"}
+		MaxBody: 10 << 20, Retention: 1000, AdminPrefix: "/admin", MaxWait: 5 * time.Minute}
 	if !reflect.DeepEqual(c, want) {
 		t.Fatalf("got %+v, want %+v", c, want)
 	}
@@ -45,13 +46,13 @@ func TestEnvOverridesDefault(t *testing.T) {
 }
 
 func TestFlagWinsOverEnv(t *testing.T) {
-	c, err := Parse([]string{"-addr", ":7000", "-log-format", "text", "-max-body", "2048", "-retention", "7", "-admin-prefix", "/ui"},
+	c, err := Parse([]string{"-addr", ":7000", "-log-format", "text", "-max-body", "2048", "-retention", "7", "-admin-prefix", "/ui", "-max-wait", "90s"},
 		env(map[string]string{"HOOKWITNESS_ADDR": "127.0.0.1:9000", "HOOKWITNESS_LOG_FORMAT": "json",
 			"HOOKWITNESS_MAX_BODY": "1MiB", "HOOKWITNESS_RETENTION": "9", "HOOKWITNESS_ADMIN_PREFIX": "/x"}), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Addr != ":7000" || c.LogFormat != "text" || c.MaxBody != 2048 || c.Retention != 7 || c.AdminPrefix != "/ui" {
+	if c.Addr != ":7000" || c.LogFormat != "text" || c.MaxBody != 2048 || c.Retention != 7 || c.AdminPrefix != "/ui" || c.MaxWait != 90*time.Second {
 		t.Fatalf("flag did not win: %+v", c)
 	}
 }
@@ -71,6 +72,9 @@ func TestInvalid(t *testing.T) {
 		{[]string{"-max-body", "-5"}, "KiB, MiB or GiB"},
 		{[]string{"-max-body", "2000GiB"}, "at most 1024 GiB"},
 		{[]string{"-retention", "0"}, "at least 1"},
+		{[]string{"-max-wait", "soon"}, "1s to 1h"},
+		{[]string{"-max-wait", "500ms"}, "1s to 1h"},
+		{[]string{"-max-wait", "2h"}, "1s to 1h"},
 		{[]string{"-retention", "many"}, "at least 1"},
 		{[]string{"-admin-prefix", "admin"}, "leading"},
 		{[]string{"-admin-prefix", "/"}, "leading"},
