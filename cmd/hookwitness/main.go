@@ -98,7 +98,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	broker := live.New()
 	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, Retention: cfg.Retention, MaxWait: cfg.MaxWait}
 	ui := web.New(st, broker, log, web.Options{
-		Prefix: cfg.AdminPrefix, MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts,
+		Prefix: cfg.AdminPrefix, MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait,
 	})
 	root := server.New(server.Options{
 		DB:          st,

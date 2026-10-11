@@ -3,6 +3,7 @@ package web
 import (
 	"strconv"
 
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -110,6 +111,7 @@ templ endpointsPage(nav navView, formPath, formErr string) {
 									<td class="num">{ strconv.Itoa(e.Count) }</td>
 									<td class="when">{ lastSeen(e.LastAt) }</td>
 									<td class="acts">
+										<a class="btn quiet" href={ templ.SafeURL(nav.registerURL(e.ID) + "/behaviour") }>Behaviour</a>
 										@clearForm(nav, e.ID, nav.Prefix+"/", e.Path)
 										<form method="post" action={ templ.SafeURL(nav.registerURL(e.ID) + "/delete") } data-confirm={ "Delete " + e.Path + " and its " + strconv.Itoa(e.Count) + " requests?" }>
 											<button class="btn quiet" type="submit">Delete</button>
@@ -140,7 +142,7 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 	@layout(nav, title(reg)) {
 		<section class="strip" aria-label="Arrivals over the last two minutes">
 			<canvas id="trace" aria-hidden="true"></canvas>
-			<div class="legend"><b>Last 2 min</b> · mark height = body size · same body bracketed</div>
+			<div class="legend"><b>Last 2 min</b> · height = body size · red: not 2xx · dashed: timeout · ×: dropped · same body bracketed</div>
 		</section>
 		<main class="desk">
 			<section class="register" aria-label="Caught requests">
@@ -153,6 +155,7 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 						@clearForm(nav, reg.ID, reg.Base, "Unmatched")
 					} else {
 						@clearForm(nav, reg.ID, reg.Base, reg.Path)
+						<a class="btn" href={ templ.SafeURL(reg.Base + "/behaviour") }>Behaviour</a>
 					}
 				</div>
 				<ol
@@ -219,15 +222,13 @@ templ rowsChunk(rows []rowView, more bool, base string) {
 
 templ row(r rowView) {
 	<li
-		class={ "row", templ.KV("bad", r.TooLarge), templ.KV("fresh", r.Fresh) }
+		class={ "row", templ.KV("bad", r.mark() != "ok"), templ.KV("fresh", r.Fresh) }
 		id={ "req-" + id(r.ID) }
 		data-id={ id(r.ID) }
 		data-at={ strconv.FormatInt(r.At.UnixMilli(), 10) }
 		data-size={ strconv.FormatInt(r.Size, 10) }
 		data-group={ r.Group }
-		if r.TooLarge {
-			data-bad="1"
-		}
+		data-mark={ r.mark() }
 	>
 		<a href={ templ.SafeURL(r.Href) } hx-get={ r.Href } hx-target="#exhibit" hx-push-url="true" hx-swap="innerHTML">
 			<span class="no">{ id(r.No) }</span>
@@ -243,6 +244,9 @@ templ row(r rowView) {
 				}
 				if r.Delivery > 1 {
 					<span class="retry">retry { strconv.Itoa(r.Delivery - 1) }</span>
+				}
+				if t := r.tag(); t != "" {
+					<span class={ "tag", "mark-" + r.mark() }>{ t }</span>
 				}
 			</span>
 		</a>
@@ -269,7 +273,12 @@ templ exhibit(x exhibitView) {
 				}
 			</div>
 		</div>
-		<div class={ "stamp", templ.KV("bad", x.Status != 200) }>{ strconv.Itoa(x.Status) } sent</div>
+		<div class={ "stamp", templ.KV("bad", !x.Outcome.Good()) }>
+			{ x.Outcome.Stamp() }
+			if w := x.Outcome.Why(); w != "" {
+				<small>{ w }</small>
+			}
+		</div>
 	</div>
 	if !x.TooLarge && x.Size > 0 {
 		<div class="ex-actions">
@@ -315,6 +324,7 @@ templ exhibit(x exhibitView) {
 				<pre class="body hex">{ x.Body.Hex }</pre>
 		}
 	}
+	@answer(x)
 	<h2>Headers · { strconv.Itoa(len(x.Headers)) }</h2>
 	<div class="scroll">
 		<table class="kv">
@@ -349,4 +359,188 @@ templ notFoundPage(nav navView, msg string) {
 			<p><a href={ templ.SafeURL(nav.Prefix + "/") }>Back to the endpoints</a></p>
 		</main>
 	}
+}
+
+// answer is what Hookwitness did with the request.
+templ answer(x exhibitView) {
+	if x.Outcome.Source != "" {
+		<h2>Answer</h2>
+		<div class="answer">
+			<p class="note">
+				{ answerText(x.Outcome) }
+				if x.Outcome.Error != "" {
+					<code>{ x.Outcome.Error }</code>
+				}
+			</p>
+			if len(x.Outcome.Headers) > 0 {
+				<div class="scroll">
+					<table class="kv">
+						<tbody>
+							for _, hd := range x.Outcome.Headers {
+								<tr><th>{ hd.Name }</th><td>{ hd.Value }</td></tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+			if x.Outcome.Body != "" {
+				<pre class="body sent">{ x.Outcome.Body }</pre>
+				if x.Outcome.Cut {
+					<p class="note">Only the first 64 KiB of the reply are kept.</p>
+				}
+			}
+		</div>
+	}
+}
+
+templ behaviourPage(nav navView, b behaviourView) {
+	@layout(nav, "Behaviour · "+b.Path) {
+		<main class="sheet behaviour">
+			<p class="crumb"><a href={ templ.SafeURL(b.Base) }>{ b.Path }</a></p>
+			<h1 class="title">Behaviour</h1>
+			<p class="lede">
+				How this endpoint answers. Checks run first and can refuse a request; then the first rule whose
+				condition holds decides; otherwise the default reply. Changes apply to the next request.
+			</p>
+			if b.Error != "" {
+				<p class="error banner" role="alert">Not saved: { b.Error }</p>
+			}
+			<section id="counter" class="part">
+				<h2>Counter</h2>
+				<p class="note">
+					<b class="big">{ i64(b.Counter) }</b> requests passed the checks since the last reset. Rules count these:
+					“first 2” means the first two after a reset.
+				</p>
+				<form method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+					<input type="hidden" name="op" value="counter-reset"/>
+					<button class="btn" type="submit">Reset counter</button>
+				</form>
+			</section>
+			<section id="checks" class="part">
+				<h2>Checks · run first</h2>
+				if len(b.Config.Checks) == 0 {
+					<p class="note">No checks: every request goes on to the rules.</p>
+				}
+				for i, ch := range b.Config.Checks {
+					@checkForm(b, i, ch)
+				}
+				@opButton(b, "check-add", 0, "Add a required header")
+			</section>
+			<section id="rules" class="part">
+				<h2>Rules · first match wins</h2>
+				if len(b.Config.Rules) == 0 {
+					<p class="note">No rules: every request gets the default reply.</p>
+				}
+				for i, rule := range b.Config.Rules {
+					@ruleForm(b, i, rule)
+				}
+				@opButton(b, "rule-add", 0, "Add a rule")
+			</section>
+			<section id="default" class="part">
+				<h2>Default reply</h2>
+				<form class="card" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+					<input type="hidden" name="op" value="default"/>
+					@replyFields(b, "default", "", b.Config.Default)
+					<div class="acts"><button class="btn solid" type="submit">Save default reply</button></div>
+				</form>
+			</section>
+			<section id="vars" class="part">
+				<h2>Variables · test values</h2>
+				<form class="card" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+					<input type="hidden" name="op" value="vars"/>
+					<label for="vars-text">One per line, <code>NAME=value</code>. Shown and stored in plain text: use test tokens, never real secrets.</label>
+					<textarea id="vars-text" name="vars" rows="4" spellcheck="false">{ emulate.FormatVars(b.Config.Vars) }</textarea>
+					<div class="acts"><button class="btn solid" type="submit">Save variables</button></div>
+				</form>
+			</section>
+			<details class="help" id="templates">
+				<summary>Templates in headers and bodies</summary>
+				<p class="note">Header values and bodies are Go templates. They can use the request and the variables:</p>
+				<pre>{ templateHelp }</pre>
+			</details>
+		</main>
+	}
+}
+
+templ opButton(b behaviourView, op string, i int, label string) {
+	<form class="inline" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+		<input type="hidden" name="op" value={ op }/>
+		<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
+		<button class="btn quiet" type="submit">{ label }</button>
+	</form>
+}
+
+templ replyFields(b behaviourView, id, prefix string, r emulate.Reply) {
+	<div class="grid3">
+		<label>Status <input type="number" name={ prefix + "status" } value={ strconv.Itoa(r.Status) } min="200" max="599" required/></label>
+		<label>Delay, ms <input type="number" name={ prefix + "delay" } value={ ms(r.DelayMs) } min="0" placeholder="0"/></label>
+		<label>+ random jitter, ms <input type="number" name={ prefix + "jitter" } value={ ms(r.JitterMs) } min="0" placeholder="0"/></label>
+	</div>
+	<label for={ id + "-headers" }>Headers, one per line as <code>Name: value</code></label>
+	<textarea id={ id + "-headers" } name={ prefix + "headers" } rows="3" spellcheck="false" placeholder="Content-Type: application/json">{ emulate.FormatHeaders(r.Headers) }</textarea>
+	<label for={ id + "-body" }>Body</label>
+	<textarea id={ id + "-body" } name={ prefix + "body" } rows="4" spellcheck="false">{ r.Body }</textarea>
+	<p class="help">Delay plus jitter up to { span(b.MaxWait) }. Content-Length, Transfer-Encoding and Connection are set by the server.</p>
+}
+
+templ ruleForm(b behaviourView, i int, rule emulate.Rule) {
+	<form class={ "card", templ.KV("has-error", b.Section == "rule-"+strconv.Itoa(i)) } id={ "rule-" + strconv.Itoa(i) } method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+		<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
+		<div class="card-head">
+			<span class="no">{ strconv.Itoa(i + 1) }</span>
+			<span class="label">{ rule.When.Label() } → { ruleAction(rule) }</span>
+		</div>
+		<div class="grid3">
+			<label>
+				When
+				<select name="when">
+					<option value="every" selected?={ rule.When.Kind == "every" }>every Nth request</option>
+					<option value="first" selected?={ rule.When.Kind == "first" }>the first N requests</option>
+					<option value="random" selected?={ rule.When.Kind == "random" }>at random, p%</option>
+				</select>
+			</label>
+			<label>N <input type="number" name="n" value={ blank(rule.When.N) } min="1"/></label>
+			<label>p, % <input type="number" name="percent" value={ percent(rule.When.Percent) } min="0" max="100" step="any"/></label>
+		</div>
+		<label>
+			Do
+			<select name="do">
+				<option value="reply" selected?={ rule.Do == "reply" }>reply as below</option>
+				<option value="timeout" selected?={ rule.Do == "timeout" }>time out: hold, never answer</option>
+				<option value="drop" selected?={ rule.Do == "drop" }>drop: reset the connection</option>
+			</select>
+		</label>
+		@replyFields(b, "rule-"+strconv.Itoa(i), "", replyOrDefault(rule))
+		<div class="acts">
+			<button class="btn solid" type="submit" name="op" value="rule-save">Save rule</button>
+			<button class="btn quiet" type="submit" name="op" value="rule-up" disabled?={ i == 0 }>Up</button>
+			<button class="btn quiet" type="submit" name="op" value="rule-down" disabled?={ i == len(b.Config.Rules)-1 }>Down</button>
+			<button class="btn quiet" type="submit" name="op" value="rule-del" formnovalidate>Delete</button>
+		</div>
+	</form>
+}
+
+templ checkForm(b behaviourView, i int, ch emulate.Check) {
+	<form class={ "card", templ.KV("has-error", b.Section == "check-"+strconv.Itoa(i)) } id={ "check-" + strconv.Itoa(i) } method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+		<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
+		<div class="card-head"><span class="no">{ strconv.Itoa(i + 1) }</span><span class="label">header { ch.Header } { matchLabel(ch) }</span></div>
+		<div class="grid3">
+			<label>Header <input name="header" value={ ch.Header } required spellcheck="false"/></label>
+			<label>
+				Must
+				<select name="match">
+					<option value="present" selected?={ ch.Match == "present" }>be present</option>
+					<option value="equals" selected?={ ch.Match == "equals" }>equal</option>
+					<option value="regex" selected?={ ch.Match == "regex" }>match the regex</option>
+				</select>
+			</label>
+			<label>Value <input name="value" value={ ch.Value } spellcheck="false"/></label>
+		</div>
+		<label class="check"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header)</label>
+		@replyFields(b, "check-"+strconv.Itoa(i), "error_", errorOrStandard(ch))
+		<div class="acts">
+			<button class="btn solid" type="submit" name="op" value="check-save">Save check</button>
+			<button class="btn quiet" type="submit" name="op" value="check-del" formnovalidate>Delete</button>
+		</div>
+	</form>
 }

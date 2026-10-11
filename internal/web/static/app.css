@@ -127,6 +127,8 @@ code{font:400 .9em/1 var(--f-data)}
 .row .ev{grid-column:2 / 4;font:400 13px/1.3 var(--f-body);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row .ev .retry{color:var(--ink);font:600 10px/1 var(--f-data);letter-spacing:.06em;text-transform:uppercase;margin-left:6px}
 .row.bad .no,.row.bad .m{color:var(--alarm)}
+.row .ev .tag{font:600 10px/1 var(--f-data);letter-spacing:.06em;text-transform:uppercase;margin-left:6px;color:var(--alarm)}
+.row .ev .tag.mark-ok{color:var(--ink)}
 .row.fresh a{animation:land .9s ease-out}
 @keyframes land{from{background:color-mix(in srgb,var(--ink) 16%,transparent)}to{background:transparent}}
 .more{padding:10px 0;border-top:1px solid var(--rule)}
@@ -146,6 +148,9 @@ code{font:400 .9em/1 var(--f-data)}
 .ex-meta b{color:var(--text);font-weight:400}
 .stamp{margin-left:auto;align-self:center;font:400 13px/1 var(--f-stamp);letter-spacing:.14em;text-transform:uppercase;color:var(--ink);border:2px solid currentColor;padding:6px 10px 5px;transform:rotate(-4deg);opacity:.85}
 .stamp.bad{color:var(--alarm)}
+.stamp small{display:block;font:600 9px/1.3 var(--f-data);letter-spacing:.06em;margin-top:3px;text-transform:none}
+.answer table{margin-top:6px}
+pre.sent{margin-top:8px;border-left-color:var(--ink)}
 .ex-actions{display:flex;gap:8px;padding-block:14px 0}
 h2{font:600 10px/1 var(--f-data);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:22px 0 10px;display:flex;gap:10px;align-items:center}
 h2::after{content:"";flex:1;border-top:1px dashed var(--grid-major)}
@@ -191,6 +196,30 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
   .strip canvas{height:110px}
   .status .addr{display:none}
 }
+/* behaviour page */
+.crumb{font:400 13px/1 var(--f-data);margin:4px 0 0}
+.part{margin-top:30px}
+.part h2{margin-top:0}
+.big{font:400 28px/1 var(--f-stamp);color:var(--ink);margin-right:6px;vertical-align:-3px}
+.banner{border:1px dashed var(--alarm);padding:10px 14px;max-width:72ch}
+.card{display:flex;flex-direction:column;gap:8px;border-left:2px solid var(--grid-major);background:var(--paper-2);padding:14px 16px;margin-bottom:12px;max-width:820px}
+.card.has-error{border-left-color:var(--alarm)}
+.card-head{display:flex;gap:12px;align-items:baseline}
+.card-head .no{font:400 22px/1 var(--f-stamp);color:var(--ink)}
+.card-head .label{font:600 12px/1.3 var(--f-data)}
+.card label{display:flex;flex-direction:column;gap:4px;font:600 10px/1.3 var(--f-data);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.card label.check{flex-direction:row;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:12px}
+.card input:not([type=checkbox]),.card select,.card textarea{font:400 13px/1.4 var(--f-data);color:var(--text);background:var(--paper);border:0;border-bottom:2px solid var(--grid-major);padding:7px 8px;text-transform:none;letter-spacing:0;min-width:0}
+.card textarea{resize:vertical;width:100%}
+.card input:focus-visible,.card select:focus-visible,.card textarea:focus-visible{outline:none;border-bottom-color:var(--ink)}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.card .acts{display:flex;flex-wrap:wrap;gap:8px;padding-top:4px}
+.btn:disabled{opacity:.4;cursor:default}
+.btn:disabled:hover{background:transparent;color:var(--muted)}
+form.inline{display:inline-block}
+details.help{margin-top:30px;max-width:820px}
+details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:.08em;text-transform:uppercase;color:var(--ink)}
+
 /* Phones: each endpoint becomes a block instead of a table row. */
 @media (max-width:640px){
   .eps thead{display:none}
@@ -202,7 +231,8 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
   .eps .num{grid-row:3;grid-column:2}
   .eps .num::after{content:" kept"}
   .eps .when{grid-row:3;grid-column:1}
-  .eps .acts{grid-column:1 / -1;justify-content:flex-start}
+  .eps .acts{grid-column:1 / -1;justify-content:flex-start;flex-wrap:wrap}
+  .grid3{grid-template-columns:minmax(0,1fr)}
 }
 @media (prefers-reduced-motion:reduce){
   .rec[data-state="live"] i{animation:none}

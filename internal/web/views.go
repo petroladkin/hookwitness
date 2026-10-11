@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -46,6 +47,7 @@ type rowView struct {
 	Detail   string
 	Href     string
 	Fresh    bool // arrived on the live feed
+	Outcome  emulate.Outcome
 }
 
 // exhibitView is one request in full.
@@ -67,6 +69,7 @@ type exhibitView struct {
 	Download string
 	Unmatch  bool
 	Limit    int64
+	Outcome  emulate.Outcome
 }
 
 func id(n int64) string { return strconv.FormatInt(n, 10) }
@@ -122,4 +125,39 @@ func tryCommand(host, path string) string {
 	return "curl -X POST http://" + host + path + " \\\n" +
 		"  -H 'Content-Type: application/json' \\\n" +
 		`  -d '{"hello":"world"}'`
+}
+
+// mark is how the strip draws a request: "ok" (2xx), "bad" (any other
+// status, a refusal, a render error, a refused body), "timeout" or "drop".
+func (r rowView) mark() string {
+	switch {
+	case r.Outcome.Action == emulate.ActTimeout:
+		return "timeout"
+	case r.Outcome.Action == emulate.ActDrop:
+		return "drop"
+	case r.TooLarge || !r.Outcome.Good():
+		return "bad"
+	}
+	return "ok"
+}
+
+// tag is the short note on a register row about how it was answered, empty
+// for an ordinary 2xx default reply.
+func (r rowView) tag() string {
+	o := r.Outcome
+	switch {
+	case o.Action == emulate.ActTimeout:
+		return "timeout"
+	case o.Action == emulate.ActDrop:
+		return "dropped"
+	case o.Action == emulate.ActRefused:
+		return strconv.Itoa(o.Status) + " refused"
+	case o.Action == emulate.ActError:
+		return "500 template error"
+	case o.Source == emulate.FromRule:
+		return strconv.Itoa(o.Status) + " · rule " + strconv.Itoa(o.Rule)
+	case o.Source == emulate.FromDefault && !o.Good():
+		return strconv.Itoa(o.Status)
+	}
+	return ""
 }
