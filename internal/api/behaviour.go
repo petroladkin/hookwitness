@@ -17,21 +17,23 @@ import (
 // behaviourJSON is an endpoint's behaviour: its stored configuration with
 // each secret described instead of stored (never a value, sealed or hashed).
 type behaviourJSON struct {
-	Default emulate.Reply   `json:"default"`
-	Rules   []emulate.Rule  `json:"rules"`
-	Checks  []emulate.Check `json:"checks"`
-	Vars    []emulate.Var   `json:"vars"`
-	Secrets []secretJSON    `json:"secrets"`
+	Default emulate.Reply    `json:"default"`
+	Rules   []emulate.Rule   `json:"rules"`
+	Checks  []emulate.Check  `json:"checks"`
+	Vars    []emulate.Var    `json:"vars"`
+	Schemas []emulate.Schema `json:"schemas"`
+	Secrets []secretJSON     `json:"secrets"`
 }
 
 // behaviourIn is what a PUT replaces. Secrets are managed on their own
 // route; a "secrets" list sent back as read is accepted and ignored.
 type behaviourIn struct {
-	Default emulate.Reply   `json:"default"`
-	Rules   []emulate.Rule  `json:"rules"`
-	Checks  []emulate.Check `json:"checks"`
-	Vars    []emulate.Var   `json:"vars"`
-	Secrets json.RawMessage `json:"secrets"`
+	Default emulate.Reply    `json:"default"`
+	Rules   []emulate.Rule   `json:"rules"`
+	Checks  []emulate.Check  `json:"checks"`
+	Vars    []emulate.Var    `json:"vars"`
+	Schemas []emulate.Schema `json:"schemas"`
+	Secrets json.RawMessage  `json:"secrets"`
 }
 
 // secretJSON describes a secret.
@@ -52,7 +54,7 @@ func secretView(c emulate.Config, s emulate.Secret) secretJSON {
 }
 
 func behaviourView(c emulate.Config) behaviourJSON {
-	v := behaviourJSON{Default: c.Default, Rules: c.Rules, Checks: c.Checks, Vars: c.Vars, Secrets: []secretJSON{}}
+	v := behaviourJSON{Default: c.Default, Rules: c.Rules, Checks: c.Checks, Vars: c.Vars, Schemas: c.Schemas, Secrets: []secretJSON{}}
 	if v.Rules == nil {
 		v.Rules = []emulate.Rule{}
 	}
@@ -61,6 +63,9 @@ func behaviourView(c emulate.Config) behaviourJSON {
 	}
 	if v.Vars == nil {
 		v.Vars = []emulate.Var{}
+	}
+	if v.Schemas == nil {
+		v.Schemas = []emulate.Schema{}
 	}
 	for _, s := range c.Secrets {
 		v.Secrets = append(v.Secrets, secretView(c, s))
@@ -108,7 +113,7 @@ func (h *Handler) putBehaviour(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "behaviour", err)
 		return
 	}
-	cfg := emulate.Config{Default: in.Default, Rules: in.Rules, Checks: in.Checks, Vars: in.Vars, Secrets: stored.Secrets}
+	cfg := emulate.Config{Default: in.Default, Rules: in.Rules, Checks: in.Checks, Vars: in.Vars, Schemas: in.Schemas, Secrets: stored.Secrets}
 	if cfg.Default.Status == 0 {
 		cfg.Default.Status = 200 // as stored configurations read
 	}
@@ -139,7 +144,7 @@ func (h *Handler) stale(w http.ResponseWriter) {
 }
 
 // fieldPrefixes map the start of a validation message to its JSON path.
-var fieldPrefixes = regexp.MustCompile(`^(rule|check) (\d+)|^default reply|^variable|^secret`)
+var fieldPrefixes = regexp.MustCompile(`^(rule|check) (\d+)|^default reply|^variable|^secret|^schema`)
 
 // fieldOf names the part of the behaviour a validation error is about.
 func fieldOf(err error) string {
@@ -154,6 +159,8 @@ func fieldOf(err error) string {
 		return "default"
 	case m[0] == "variable":
 		return "vars"
+	case m[0] == "schema":
+		return "schemas"
 	}
 	return "secrets"
 }

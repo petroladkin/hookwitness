@@ -50,6 +50,7 @@ func TestGetBehaviour(t *testing.T) {
   "rules": [],
   "checks": [],
   "vars": [],
+  "schemas": [],
   "secrets": []
 }
 `
@@ -189,4 +190,25 @@ func TestPutBehaviourChangedMeanwhile(t *testing.T) {
 	if got := e.stored(t, ep.ID).Default.Status; got != 418 {
 		t.Fatalf("the other change was overwritten: status %d", got)
 	}
+}
+
+func TestSchemasThroughTheAPI(t *testing.T) {
+	e := newEnv(t)
+	ep := e.endpoint(t, "/orders")
+	_, tag := e.behaviour(t, ep.ID)
+	body := `{"schemas":[{"name":"OrderPaid","text":"{\"type\":\"object\",\"required\":[\"order_id\"]}"}],
+		"checks":[{"kind":"schema","select":{"from":"body","key":"/type","map":[{"value":"order.paid","schema":"OrderPaid"}]},"enforce":true}]}`
+	rec := e.putBehaviour(ep.ID, tag, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body)
+	}
+	got := decodeAs[behaviourJSON](t, rec)
+	if len(got.Schemas) != 1 || got.Schemas[0].Name != "OrderPaid" || got.Checks[0].Select.Map[0].Schema != "OrderPaid" {
+		t.Fatalf("answer %+v", got)
+	}
+	_, tag = e.behaviour(t, ep.ID)
+	wantError(t, e.putBehaviour(ep.ID, tag, `{"schemas":[{"name":"R","text":"{\"$ref\":\"https://example.com/x.json\"}"}]}`),
+		http.StatusUnprocessableEntity, "invalid", "schemas")
+	wantError(t, e.putBehaviour(ep.ID, tag, `{"checks":[{"kind":"schema","schema":"Missing"}],"schemas":[{"name":"A","text":"{}"}]}`),
+		http.StatusUnprocessableEntity, "invalid", "checks[0]")
 }
