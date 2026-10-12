@@ -134,7 +134,7 @@ func (c Config) verifySchema(ch Check, r Request, hasBody bool) auth.Verdict {
 		value, found, err := s.value(r)
 		if err != nil {
 			// The body is not JSON: that is the verdict, whatever the schema.
-			return auth.Verdict{Result: auth.Fail, Reason: "not JSON", Problems: []auth.Problem{{Keyword: "json", Message: err.Error()}}, Total: 1}
+			return auth.Verdict{Result: auth.Fail, Reason: err.Error(), Problems: []auth.Problem{{Keyword: "json", Message: err.Error()}}, Total: 1}
 		}
 		if !found {
 			return auth.Verdict{Result: auth.NotChecked, Reason: "no " + s.Label() + " in the request"}
@@ -179,14 +179,14 @@ func (s Select) value(r Request) (value string, found bool, err error) {
 		}
 		return vs[0], true, nil
 	}
+	if msg := schema.BodyError(r.Body); msg != "" {
+		return "", false, errors.New(msg)
+	}
 	dec := json.NewDecoder(bytes.NewReader(r.Body))
 	dec.UseNumber()
 	var doc any
 	if err := dec.Decode(&doc); err != nil {
-		if len(bytes.TrimSpace(r.Body)) == 0 {
-			return "", false, errors.New("empty body")
-		}
-		return "", false, fmt.Errorf("not JSON: %v", err)
+		return "", false, fmt.Errorf("not JSON: %v", err) // not reached: BodyError checked it
 	}
 	cur := doc
 	for _, tok := range strings.Split(s.Key[1:], "/") {

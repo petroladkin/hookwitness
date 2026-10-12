@@ -154,6 +154,18 @@ func (s *Set) Validate(name string, body []byte) Result {
 	return Result{Problems: ps, Total: total}
 }
 
+// BodyError says why body is not one JSON document, as a schema verdict
+// does ("empty body", "not JSON: ... at byte N"); "" when it is.
+func BodyError(body []byte) string {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return "empty body"
+	}
+	if _, err := jsonschema.UnmarshalJSON(bytes.NewReader(body)); err != nil {
+		return "not JSON: " + jsonError(string(body), err)
+	}
+	return ""
+}
+
 // jsonError describes a JSON syntax error with the offset of the byte it
 // stopped at.
 func jsonError(text string, err error) string {

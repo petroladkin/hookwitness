@@ -67,8 +67,11 @@ func TestSchemaCheckDiscriminator(t *testing.T) {
 	if v, _ := verifyOne(t, cfg, `{"kind":"x"}`, true); v.Result != auth.NotChecked || v.Reason != "no /type in the request" {
 		t.Fatalf("missing value: %+v", v)
 	}
-	if v, _ := verifyOne(t, cfg, `not json`, true); v.Result != auth.Fail {
+	if v, _ := verifyOne(t, cfg, `{"type":"order.paid",`, true); v.Result != auth.Fail || v.Reason != "not JSON: unexpected end of JSON input at byte 20" || v.Problems[0].Keyword != "json" {
 		t.Fatalf("not JSON with a body discriminator: %+v", v)
+	}
+	if v, _ := verifyOne(t, cfg, ` `, true); v.Result != auth.Fail || v.Reason != "empty body" {
+		t.Fatalf("empty body with a body discriminator: %+v", v)
 	}
 	nested := schemaConfig(Check{Kind: KindSchema, Select: &Select{From: FromBody, Key: "/data/0/kind", Map: []Mapping{{Value: "7", Schema: "OrderPaid"}}}})
 	if v, _ := verifyOne(t, nested, `{"data":[{"kind":7}],"order_id":1,"amount":1}`, true); v.Result != auth.Pass {
