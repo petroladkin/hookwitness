@@ -21,7 +21,12 @@ reply, template variables; every request records its outcome. Authorization
 checks (GitHub, Stripe, Standard Webhooks/Svix, generic HMAC, bearer, basic)
 give each request pass / fail / n/v verdicts, optionally enforced, with
 re-check; their secrets are write-only (signing keys sealed, tokens hashed).
-No JSON Schema verdicts, reports, REST API or MCP yet. `hookwitness version`
+The REST API core (`<prefix>/api/v1`: endpoints list/create/read,
+behaviour GET/PUT with ETag/If-Match, write-only secrets, request lists with
+long-poll `wait`, one request) has the UI's access rules; docs in
+`docs/api.md`, an agent skill in `skills/hookwitness`. No JSON Schema
+verdicts, reports, the rest of the API (rename/delete, clear, raw body,
+actions, Unmatched list, filters, OpenAPI) or MCP yet. `hookwitness version`
 prints the build identity; `hookwitness health` probes `/healthz` (the
 container's health check). A container image (distroless, non-root, data in
 the `/data` volume) is built, smoke-tested and published to GHCR by CI.
@@ -61,6 +66,11 @@ that makes it false.
   holds (timeout) or resets (drop, SO_LINGER 0); holds end on shutdown.
 - `internal/live` — wake-ups for live feeds; feeds read what they missed from
   the store, so nothing is lost or repeated.
+- `internal/api` — the JSON API under `<prefix>/api/v1`, mounted by
+  `internal/web` behind its host check and cross-origin protection; one
+  error shape, unknown fields refused, behaviour replaced with If-Match
+  (store compare-and-set), secrets sealed by `emulate.SealSecret`, request
+  lists wait on `internal/live`. Secret values never reach an answer or log.
 - `internal/web` — the UI: templ components (`views.templ`, generated
   `views_templ.go` is committed), handlers, SSE feed, embedded `static/`
   (our `app.css`, `app.js`; vendored htmx, htmx-ext-sse and fonts under
@@ -76,7 +86,11 @@ that makes it false.
   web assets.
 - `scripts/hooks` — git hooks; `scripts/notices.sh` — notices generator;
   `scripts/docker-smoke.sh` — the container scenario (README's `docker run`,
-  health, persistence of data and sealed secrets, graceful stop, read-only).
+  health, persistence of data and sealed secrets, graceful stop, read-only);
+  `scripts/api-smoke.sh` — the API scenario (the Basic-credentials recipe
+  end to end) against a URL, a binary or an image.
+- `docs/api.md` — the API reference and recipes; `skills/hookwitness/SKILL.md`
+  — a Claude Code skill for testing webhook senders with hookwitness.
 - `Dockerfile`, `.dockerignore` — two-stage image: cross-compiling build
   stage through `make build`, distroless static nonroot final stage; the
   build context is an allowlist.
@@ -99,6 +113,8 @@ that makes it false.
 - `make hooks` — enable the git hooks.
 - `make image` — the container image `hookwitness:dev` (Docker); `make
   image-smoke` — the container scenario against it (Docker, curl, openssl).
+- `make api-smoke` — the API scenario against a freshly built binary (curl,
+  jq); `scripts/api-smoke.sh --image <image>` runs it against an image.
 
 ## Scope
 

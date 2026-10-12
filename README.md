@@ -4,8 +4,8 @@ Catch webhooks, get a verdict, attach the evidence. Self-hosted, single binary,
 MCP-ready.
 
 **Status: early development.** Catch endpoints with a live view, scripted
-responses and authorization verdicts work; JSON Schema verdicts, reports, the
-API and MCP come next.
+responses, authorization verdicts and the core of the REST API work; JSON
+Schema verdicts, reports, the rest of the API and MCP come next.
 
 ## What it is for
 
@@ -228,6 +228,37 @@ curl -s -d "$BODY" -H 'Authorization: Basic dTpw' $H                           #
 curl -s -d "$BODY" -u qa:pw_test $H                                            # pass
 curl -s -d "$BODY" -u qa:wrong $H                                              # fail: user or password does not match
 ```
+
+## REST API
+
+Tests and AI agents drive hookwitness through a JSON API under
+`/admin/api/v1`: create endpoints, script their behaviour, set write-only
+secrets, wait for webhooks and read them with their verdicts. One session —
+require Basic credentials, send a JSON event, wait for it, read its verdict:
+
+```sh
+API=http://localhost:8080/admin/api/v1
+ID=$(curl -s -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/orders/events"}' | jq .id)
+curl -s -X PUT $API/endpoints/$ID/secrets/ORDERS_PASSWORD -H 'Content-Type: application/json' \
+  -d '{"kind":"token","value":"test-password"}'
+TAG=$(curl -sI $API/endpoints/$ID/behaviour | tr -d '\r' | awk 'tolower($1)=="etag:"{print $2}')
+curl -s -X PUT $API/endpoints/$ID/behaviour -H 'Content-Type: application/json' -H "If-Match: $TAG" \
+  -d '{"checks":[{"kind":"basic","secret":"ORDERS_PASSWORD","user":"orders","enforce":true}]}'
+
+curl -s -u orders:test-password -H 'Content-Type: application/json' -d '{"order":42}' \
+  http://localhost:8080/orders/events                      # the sender under test: 200
+
+curl -s "$API/endpoints/$ID/requests?after=0&wait=30s" | jq -c '.requests[] | {id, status, verdict}'
+# {"id":1,"status":200,"verdict":"pass"}
+```
+
+`wait` holds the call until a request arrives (up to 60 s), so a test needs
+no polling loop. The API has the UI's access rules: it answers on IP
+addresses, `localhost` and `-admin-hosts` names, and writes must be JSON.
+Every route, the behaviour document, errors and more recipes:
+[docs/api.md](docs/api.md). A Claude Code skill that teaches an agent to test
+a webhook sender with hookwitness in Docker:
+[skills/hookwitness](skills/hookwitness/SKILL.md).
 
 ## Build from source
 
