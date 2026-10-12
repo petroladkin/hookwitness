@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/petroladkin/hookwitness/internal/api"
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/config"
 	"github.com/petroladkin/hookwitness/internal/live"
@@ -118,6 +119,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 		"version", version.Version, "commit", version.Commit,
 		"addr", ln.Addr().String(), "db", cfg.DBPath, "schema", schema,
 		"ui", "http://"+ln.Addr().String()+cfg.AdminPrefix+"/",
+		"api", "http://"+ln.Addr().String()+api.Base(cfg.AdminPrefix),
 		"max_body", cfg.MaxBody, "retention", cfg.Retention, "secret_key", keySource)
 
 	broker := live.New()
