@@ -8,7 +8,7 @@ LDFLAGS := -s -w -X $(MODULE)/internal/version.Version=$(VERSION) -X $(MODULE)/i
 
 IMAGE   ?= hookwitness:dev
 
-.PHONY: build image image-smoke check generate templ-check vet fmt-check staticcheck test notices hooks clean
+.PHONY: build image image-smoke api-smoke check generate templ-check vet fmt-check staticcheck test notices hooks clean
 
 ## build: one static binary in bin/ (no cgo)
 build:
@@ -21,6 +21,10 @@ image:
 ## image-smoke: run the container scenario against $(IMAGE) (Docker, curl, openssl)
 image-smoke:
 	scripts/docker-smoke.sh $(IMAGE)
+
+## api-smoke: run the API scenario against a freshly built binary (curl, jq)
+api-smoke: build
+	scripts/api-smoke.sh --binary bin/hookwitness
 
 ## check: everything a change must pass
 check: templ-check build vet fmt-check staticcheck test

@@ -5,7 +5,6 @@ package web
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -17,7 +16,6 @@ import (
 	"net/http"
 	"net/netip"
 	"path"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +23,8 @@ import (
 
 	"github.com/a-h/templ"
 
+	"github.com/petroladkin/hookwitness/internal/api"
+	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/secret"
@@ -52,6 +52,8 @@ type Handler struct {
 	hosts   map[string]bool
 	keys    *secret.Key
 	mux     http.Handler
+	csrf    *http.CrossOriginProtection
+	api     *api.Handler      // the JSON API under prefix/api/v1
 	assets  map[string]string // asset path -> content hash for cache busting
 
 	stopOnce sync.Once
@@ -102,7 +104,14 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 
 	// Browsers send Sec-Fetch-Site / Origin; a form posted from another site
 	// (cross-site request forgery against a local server) is refused.
-	h.mux = http.NewCrossOriginProtection().Handler(mux)
+	h.csrf = http.NewCrossOriginProtection()
+	h.mux = h.csrf.Handler(mux)
+
+	ao := api.Options{Prefix: prefix, MaxWait: h.maxWait, Stop: h.stop}
+	if o.Keys != nil {
+		ao.Keys = o.Keys // a nil *secret.Key must stay a nil Sealer
+	}
+	h.api = api.New(st, broker, log, ao)
 	return h
 }
 
@@ -115,10 +124,16 @@ const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 's
 	"connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	isAPI := api.Is(h.prefix, r.URL.Path)
 	if !h.allowedHost(r.Host) {
 		// A page on another site can point its own host name at this server
 		// (DNS rebinding) and then read the UI as same-origin.
 		h.log.Warn("web: request for an unknown host name refused", "host", r.Host)
+		if isAPI {
+			api.WriteError(w, http.StatusMisdirectedRequest, "wrong_host", fmt.Sprintf("hookwitness does not answer to the host name %q; "+
+				"call it by IP address or localhost, or allow the name with -admin-hosts / HOOKWITNESS_ADMIN_HOSTS", r.Host), "")
+			return
+		}
 		http.Error(w, fmt.Sprintf("The web UI does not answer to the host name %q. "+
 			"Open it by IP address or localhost, or allow the name with -admin-hosts.", r.Host), http.StatusMisdirectedRequest)
 		return
@@ -127,6 +142,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hd.Set("Content-Security-Policy", csp)
 	hd.Set("X-Content-Type-Options", "nosniff")
 	hd.Set("Referrer-Policy", "same-origin")
+	if isAPI {
+		if err := h.csrf.Check(r); err != nil {
+			api.WriteError(w, http.StatusForbidden, "cross_origin", "a request from a page on another site is refused", "")
+			return
+		}
+		h.api.ServeHTTP(w, r)
+		return
+	}
 	h.mux.ServeHTTP(w, r)
 }
 
@@ -213,56 +236,14 @@ func (h *Handler) showEndpoints(w http.ResponseWriter, r *http.Request, status i
 	h.render(w, r, status, endpointsPage(nav, creating, formPath, formErr))
 }
 
-// pathSegment is one segment of an endpoint path.
-var pathSegment = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
-
-// maxPathLen bounds an endpoint path.
-const maxPathLen = 512
-
 // checkPath validates an endpoint path; the message is for the person who
 // typed it.
-func (h *Handler) checkPath(p string) string {
-	if !strings.HasPrefix(p, "/") {
-		return `The path must start with "/", for example /stripe/webhooks.`
-	}
-	if len(p) > maxPathLen {
-		return fmt.Sprintf("The path is longer than %d characters.", maxPathLen)
-	}
-	if p != "/" {
-		segs := strings.Split(p[1:], "/")
-		for i, seg := range segs {
-			if seg == "" && i == len(segs)-1 {
-				break // a trailing slash is part of the path
-			}
-			if seg == "" {
-				return `The path has an empty segment ("//").`
-			}
-			if seg == "." || seg == ".." || !pathSegment.MatchString(seg) {
-				return fmt.Sprintf("The segment %q is not allowed: use letters, digits and . _ ~ - (not . or .. alone).", seg)
-			}
-		}
-	}
-	if p == "/healthz" || p == h.prefix || strings.HasPrefix(p, h.prefix+"/") {
-		return fmt.Sprintf("%s is reserved for hookwitness itself (health check and %s).", p, h.prefix)
-	}
-	return ""
-}
-
-// randomPath is a path nobody will guess or collide with.
-func randomPath() string {
-	const alphabet = "abcdefghijkmnpqrstuvwxyz23456789"
-	b := make([]byte, 12)
-	rand.Read(b)
-	for i := range b {
-		b[i] = alphabet[int(b[i])%len(alphabet)]
-	}
-	return "/" + string(b)
-}
+func (h *Handler) checkPath(p string) string { return catch.CheckPath(h.prefix, p) }
 
 func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimSpace(r.PostFormValue("path"))
 	if p == "" {
-		p = randomPath()
+		p = catch.RandomPath()
 	}
 	if msg := h.checkPath(p); msg != "" {
 		h.showEndpoints(w, r, http.StatusUnprocessableEntity, true, p, msg)
