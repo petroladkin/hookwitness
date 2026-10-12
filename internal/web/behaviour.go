@@ -1,8 +1,6 @@
 package web
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -121,10 +119,7 @@ var (
 
 // configVersion identifies a stored configuration, so an edit made on a page
 // loaded before another change is refused instead of hitting the wrong rule.
-func configVersion(stored string) string {
-	sum := sha256.Sum256([]byte(stored))
-	return hex.EncodeToString(sum[:6])
-}
+func configVersion(stored string) string { return emulate.Version(stored) }
 
 func (h *Handler) behaviourPage(w http.ResponseWriter, r *http.Request) {
 	id, ok := regID(r)
@@ -422,25 +417,10 @@ func formSecret(r *http.Request, keys *secret.Key) (emulate.Secret, error) {
 }
 
 func sealSecret(name, kind, value string, keys *secret.Key) (emulate.Secret, error) {
-	s := emulate.Secret{Name: name, Kind: kind}
-	switch {
-	case keys == nil:
-		return s, errors.New("no secret key is loaded")
-	case value == "":
-		return s, errors.New("enter the value")
-	case strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n"):
-		return s, errors.New("the value has spaces or line breaks at its ends; paste it exactly")
+	if keys == nil {
+		return emulate.SealSecret(name, kind, value, nil) // a nil *Key is not a nil Sealer
 	}
-	s.Fingerprint = keys.Fingerprint(value)
-	switch kind {
-	case emulate.SecretKey:
-		s.Sealed = keys.Seal(value)
-		_, err := auth.StandardKey(value)
-		s.Standard = err == nil && strings.HasPrefix(value, "whsec_")
-	case emulate.SecretToken:
-		s.Hash = keys.HashToken(value)
-	}
-	return s, nil
+	return emulate.SealSecret(name, kind, value, keys)
 }
 
 func formReply(r *http.Request, prefix string) (emulate.Reply, error) {
