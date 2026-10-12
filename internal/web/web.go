@@ -23,6 +23,7 @@ import (
 
 	"github.com/a-h/templ"
 
+	"github.com/petroladkin/hookwitness/internal/api"
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
@@ -51,6 +52,8 @@ type Handler struct {
 	hosts   map[string]bool
 	keys    *secret.Key
 	mux     http.Handler
+	csrf    *http.CrossOriginProtection
+	api     *api.Handler      // the JSON API under prefix/api/v1
 	assets  map[string]string // asset path -> content hash for cache busting
 
 	stopOnce sync.Once
@@ -101,7 +104,14 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 
 	// Browsers send Sec-Fetch-Site / Origin; a form posted from another site
 	// (cross-site request forgery against a local server) is refused.
-	h.mux = http.NewCrossOriginProtection().Handler(mux)
+	h.csrf = http.NewCrossOriginProtection()
+	h.mux = h.csrf.Handler(mux)
+
+	ao := api.Options{Prefix: prefix, MaxWait: h.maxWait, Stop: h.stop}
+	if o.Keys != nil {
+		ao.Keys = o.Keys // a nil *secret.Key must stay a nil Sealer
+	}
+	h.api = api.New(st, broker, log, ao)
 	return h
 }
 
@@ -114,10 +124,16 @@ const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 's
 	"connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	isAPI := api.Is(h.prefix, r.URL.Path)
 	if !h.allowedHost(r.Host) {
 		// A page on another site can point its own host name at this server
 		// (DNS rebinding) and then read the UI as same-origin.
 		h.log.Warn("web: request for an unknown host name refused", "host", r.Host)
+		if isAPI {
+			api.WriteError(w, http.StatusMisdirectedRequest, "wrong_host", fmt.Sprintf("hookwitness does not answer to the host name %q; "+
+				"call it by IP address or localhost, or allow the name with -admin-hosts / HOOKWITNESS_ADMIN_HOSTS", r.Host), "")
+			return
+		}
 		http.Error(w, fmt.Sprintf("The web UI does not answer to the host name %q. "+
 			"Open it by IP address or localhost, or allow the name with -admin-hosts.", r.Host), http.StatusMisdirectedRequest)
 		return
@@ -126,6 +142,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hd.Set("Content-Security-Policy", csp)
 	hd.Set("X-Content-Type-Options", "nosniff")
 	hd.Set("Referrer-Policy", "same-origin")
+	if isAPI {
+		if err := h.csrf.Check(r); err != nil {
+			api.WriteError(w, http.StatusForbidden, "cross_origin", "a request from a page on another site is refused", "")
+			return
+		}
+		h.api.ServeHTTP(w, r)
+		return
+	}
 	h.mux.ServeHTTP(w, r)
 }
 
