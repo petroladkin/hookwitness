@@ -214,6 +214,10 @@ check, the build, `go vet`, the gofmt check, staticcheck and the tests. The
 HTML components are [templ](https://templ.guide) files; after editing one, run
 `make generate` and commit the generated `*_templ.go` with it.
 
+## Security
+
+Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes.
+
 ## License
 
 [Apache License 2.0](LICENSE). Third-party licenses of the modules compiled
