@@ -392,3 +392,25 @@ func TestDecideIsExactUnderConcurrency(t *testing.T) {
 		t.Fatalf("%d stored, %d rule matches; want 99 and 33", len(rs), rule)
 	}
 }
+
+func TestSetConfigIf(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	ep, err := s.CreateEndpoint(ctx, "/cas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two writers that both read the same (empty) configuration: one wins.
+	ok1, err1 := s.SetConfigIf(ctx, ep.ID, "", `{"default":{"status":201}}`)
+	ok2, err2 := s.SetConfigIf(ctx, ep.ID, "", `{"default":{"status":202}}`)
+	if err1 != nil || err2 != nil || !ok1 || ok2 {
+		t.Fatalf("first %v %v, second %v %v", ok1, err1, ok2, err2)
+	}
+	got, _ := s.Endpoint(ctx, ep.ID)
+	if got.Config != `{"default":{"status":201}}` {
+		t.Fatalf("config %q", got.Config)
+	}
+	if _, err := s.SetConfigIf(ctx, 999, "", "{}"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing endpoint: %v", err)
+	}
+}

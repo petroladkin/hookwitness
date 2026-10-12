@@ -173,6 +173,27 @@ func (s *Store) SetConfig(ctx context.Context, id int64, config string) error {
 	return s.updateEndpoint(ctx, `UPDATE endpoints SET config = ? WHERE id = ?`, config, id)
 }
 
+// SetConfigIf replaces an endpoint's configuration only while it is still
+// old, and reports whether it did: two clients that read the same version
+// cannot both save over it.
+func (s *Store) SetConfigIf(ctx context.Context, id int64, old, config string) (bool, error) {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	res, err := s.db.ExecContext(ctx, `UPDATE endpoints SET config = ? WHERE id = ? AND config = ?`, config, id, old)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n == 1 {
+		return true, nil
+	}
+	var one int
+	err = s.db.QueryRowContext(ctx, `SELECT 1 FROM endpoints WHERE id = ?`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return false, err
+}
+
 // ResetCounter starts an endpoint's request count again from zero.
 func (s *Store) ResetCounter(ctx context.Context, id int64) error {
 	return s.updateEndpoint(ctx, `UPDATE endpoints SET counter = 0 WHERE id = ?`, id)
