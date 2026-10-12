@@ -40,6 +40,10 @@ type Handler struct {
 	o     Options
 	base  string
 	mux   *http.ServeMux
+
+	// beforeSave, when set (tests), runs between reading a behaviour and
+	// saving its replacement: the window another client can change it in.
+	beforeSave func()
 }
 
 // New returns the API.

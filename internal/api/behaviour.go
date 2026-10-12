@@ -116,6 +116,9 @@ func (h *Handler) putBehaviour(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusUnprocessableEntity, "invalid", err.Error(), fieldOf(err))
 		return
 	}
+	if h.beforeSave != nil {
+		h.beforeSave()
+	}
 	saved, err := h.store.SetConfigIf(r.Context(), ep.ID, ep.Config, cfg.String())
 	if err != nil {
 		h.fail(w, "save behaviour", err)

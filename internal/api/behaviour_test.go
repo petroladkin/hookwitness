@@ -173,3 +173,20 @@ func TestConcurrentPutsOneWins(t *testing.T) {
 		t.Fatalf("%d puts with the same ETag succeeded, want 1", won)
 	}
 }
+
+// TestPutBehaviourChangedMeanwhile: a change saved by someone else after the
+// If-Match check and before the save is not overwritten.
+func TestPutBehaviourChangedMeanwhile(t *testing.T) {
+	e := newEnv(t)
+	ep := e.endpoint(t, "/hooks")
+	_, tag := e.behaviour(t, ep.ID)
+	e.h.beforeSave = func() {
+		if err := e.st.SetConfig(context.Background(), ep.ID, `{"default":{"status":418}}`); err != nil {
+			t.Error(err)
+		}
+	}
+	wantError(t, e.putBehaviour(ep.ID, tag, `{"default":{"status":202}}`), http.StatusPreconditionFailed, "stale_version", "")
+	if got := e.stored(t, ep.ID).Default.Status; got != 418 {
+		t.Fatalf("the other change was overwritten: status %d", got)
+	}
+}
