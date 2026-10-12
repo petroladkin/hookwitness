@@ -21,15 +21,17 @@ reply, template variables; every request records its outcome. Authorization
 checks (GitHub, Stripe, Standard Webhooks/Svix, generic HMAC, bearer, basic)
 give each request pass / fail / n/v verdicts, optionally enforced, with
 re-check; their secrets are write-only (signing keys sealed, tokens hashed).
-The REST API core (`<prefix>/api/v1`: endpoints list/create/read,
-behaviour GET/PUT with ETag/If-Match, write-only secrets, request lists with
-long-poll `wait`, one request) has the UI's access rules; docs in
-`docs/api.md`, an agent skill in `skills/hookwitness`. No JSON Schema
-verdicts, reports, the rest of the API (rename/delete, clear, raw body,
-actions, Unmatched list, filters, OpenAPI) or MCP yet. `hookwitness version`
-prints the build identity; `hookwitness health` probes `/healthz` (the
-container's health check). A container image (distroless, non-root, data in
-the `/data` volume) is built, smoke-tested and published to GHCR by CI.
+JSON Schema checks validate bodies against the endpoint's schemas (one, or
+picked by a body pointer or header; verdicts pass / fail with problems / n/v /
+n/c; offending paths marked in the body view). The REST API core
+(`<prefix>/api/v1`: endpoints list/create/read, behaviour GET/PUT with
+ETag/If-Match, write-only secrets, request lists with long-poll `wait`, one
+request) has the UI's access rules; docs in `docs/api.md`, an agent skill in
+`skills/hookwitness`. No reports, the rest of the API (rename/delete, clear,
+raw body, actions, Unmatched list, filters, OpenAPI) or MCP yet. `hookwitness
+version` prints the build identity; `hookwitness health` probes `/healthz`
+(the container's health check). A container image (distroless, non-root, data
+in the `/data` volume) is built, smoke-tested and published to GHCR by CI.
 This section must describe what is true now — update it in the same change
 that makes it false.
 
@@ -56,6 +58,11 @@ that makes it false.
 - `internal/auth` — pure verifiers of signatures and credentials, one-line
   reasons, constant-time compares; golden vectors in `testdata/auth`
   (published by the providers or computed with openssl — protected).
+- `internal/schema` — pure, offline JSON Schema validation
+  (santhosh-tekuri/jsonschema): an endpoint's schemas compiled together and
+  referable by name, a loader that refuses every URL (the library would read
+  local files), `format` asserted, problems as JSON pointers; compiled sets
+  cached by content. Scenario fixtures in `testdata/schema` (protected).
 - `internal/secret` — the secret key (`HOOKWITNESS_SECRET_KEY` or `<db>.key`,
   0600), sealing signing keys (AES-256-GCM), hashing tokens (PBKDF2-SHA256),
   keyed fingerprints. Plain secret values never reach the store, the logs or

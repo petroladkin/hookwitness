@@ -59,6 +59,11 @@ curl -s -X PUT $API/endpoints/$ID/behaviour -H 'Content-Type: application/json' 
 
 Check kinds: `basic` (+`user`), `bearer` (token secrets); `github`, `stripe`,
 `standard` (`whsec_` key), `hmac` (+`header`, `algo`, `encoding`) (key secrets).
+To check the payload's shape, add JSON Schemas and a `schema` check in the same
+PUT: `"schemas":[{"name":"OrderPaid","text":"<schema JSON as a string>"}]`,
+`"checks":[{"kind":"schema","schema":"OrderPaid"}]`, or pick the schema by the
+event type with `"select":{"from":"body","key":"/type","map":[{"value":"order.paid","schema":"OrderPaid"}]}`.
+A failed schema verdict lists `problems` (`path`, `keyword`, `message`).
 `enforce: true` refuses failures with 401; without it the request gets the
 normal reply and only its `verdict` says `fail` — use that first to observe a
 sender without breaking it.
