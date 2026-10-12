@@ -571,7 +571,7 @@ templ checkList(b behaviourView) {
 			for i, ch := range b.Config.Checks {
 				<li id={ "check-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "check-"+strconv.Itoa(i)) }>
 					<span class="no">{ strconv.Itoa(i + 1) }</span>
-					if ch.IsAuth() {
+					if ch.GivesVerdict() {
 						<span class="what"><b>{ ch.Label() }</b> · { checkSummary(ch) }</span>
 					} else {
 						<span class="what"><b>{ ch.Header }</b> { checkSummary(ch) }</span>

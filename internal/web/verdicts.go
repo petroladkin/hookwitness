@@ -40,7 +40,7 @@ func (h *Handler) verdictsView(r *http.Request, ep store.Endpoint) (verdictsView
 	}
 	v := verdictsView{Rechecked: r.URL.Query().Get("rechecked")}
 	for _, ch := range cfg.Checks {
-		v.On = v.On || ch.IsAuth()
+		v.On = v.On || ch.GivesVerdict()
 	}
 	counts, err := h.store.VerdictCounts(r.Context(), ep.ID)
 	if err != nil {

@@ -18,6 +18,8 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
+
+	"github.com/petroladkin/hookwitness/internal/auth"
 )
 
 // Base is the base URI of an endpoint's schemas: the schema named Order is
@@ -33,12 +35,8 @@ type Doc struct {
 	Text string `json:"text"`
 }
 
-// Problem is one reason a body does not match.
-type Problem struct {
-	Path    string `json:"path"`    // JSON pointer into the body; "" for the whole body
-	Keyword string `json:"keyword"` // the failing keyword, e.g. required, type, format
-	Message string `json:"message"`
-}
+// Problem is one reason a body does not match, as verdicts record it.
+type Problem = auth.Problem
 
 // Set is an endpoint's schemas, compiled.
 type Set struct {

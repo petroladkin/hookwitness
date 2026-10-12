@@ -383,7 +383,7 @@ func formCheck(r *http.Request) (emulate.Check, error) {
 	if ch.Kind == emulate.KindHeader {
 		ch.Kind = "" // stored as before authorization checks
 	}
-	if !ch.IsAuth() {
+	if !ch.GivesVerdict() {
 		ch.Header, ch.Match, ch.Value = v("header"), r.PostFormValue("match"), r.PostFormValue("value")
 		return ch, nil
 	}
@@ -562,7 +562,7 @@ func refusalLabel(c emulate.Check) string {
 	switch {
 	case c.Error != nil:
 		return strconv.Itoa(c.Error.Status) + " (own reply)"
-	case c.IsAuth():
+	case c.GivesVerdict():
 		return "401"
 	}
 	return "400 naming the header"
@@ -570,7 +570,7 @@ func refusalLabel(c emulate.Check) string {
 
 // checkSummary describes a check in its list row, after its label.
 func checkSummary(c emulate.Check) string {
-	if !c.IsAuth() {
+	if !c.GivesVerdict() {
 		return matchLabel(c) + " · else " + refusalLabel(c)
 	}
 	parts := []string{"secret " + c.Secret}
