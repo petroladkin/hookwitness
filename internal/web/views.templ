@@ -822,7 +822,7 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 					<option value="header" selected?={ ch.Select != nil && ch.Select.From == "header" }>a header</option>
 				</select>
 			</label>
-			<label>
+			<label class="for-schema">
 				Schema
 				<select name="schema">
 					<option value="">choose…</option>
@@ -832,10 +832,12 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 				</select>
 			</label>
 		</div>
-		<label>Pointer or header <input name="select_key" value={ selectKey(ch) } spellcheck="false" autocomplete="off" placeholder="/type or X-GitHub-Event"/></label>
-		<label for="check-map">Values to schemas, one per line as <code>value = SchemaName</code></label>
-		<textarea id="check-map" name="select_map" rows="3" spellcheck="false" placeholder="order.paid = OrderPaid">{ formatMapping(ch.Select) }</textarea>
-		<p class="help">With a pointer or a header, its value picks the schema from these lines and the Schema field is not used. A value without a line gets the verdict <b>n/c</b> (not checked) and is never refused.</p>
+		<div class="for-select">
+			<label>Pointer or header <input name="select_key" value={ selectKey(ch) } spellcheck="false" autocomplete="off" placeholder="/type or X-GitHub-Event"/></label>
+			<label for="check-map">Values to schemas, one per line as <code>value = SchemaName</code></label>
+			<textarea id="check-map" name="select_map" rows="3" spellcheck="false" placeholder="order.paid = OrderPaid">{ formatMapping(ch.Select) }</textarea>
+			<p class="help">The value at the pointer, or of the header, picks the schema from these lines. A value without a line gets the verdict <b>n/c</b> (not checked) and is never refused.</p>
+		</div>
 	</div>
 	<label class="kinded k-header k-hmac">Header <input name="header" value={ ch.Header } spellcheck="false" autocomplete="off" placeholder="X-Signature"/></label>
 	<div class="grid2 kinded k-header">
