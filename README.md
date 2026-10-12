@@ -44,6 +44,55 @@ Endpoints answer `200` with an empty body until you script them (below); a
 body over the limit gets `413` and is recorded without its body. Each endpoint keeps its newest requests up
 to the retention limit. The same body delivered again is marked as a retry.
 
+## Docker
+
+```sh
+docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
+  ghcr.io/petroladkin/hookwitness:edge
+```
+
+The UI is at <http://localhost:8080/admin/>; webhooks go to any other path of
+port 8080. `:edge` follows the development branch; released versions are
+tagged `:X.Y.Z`, `:X.Y` and `:latest`. Images are built for linux/amd64 and
+linux/arm64.
+
+- **Data** lives in the `/data` volume: the database and, unless you set
+  `HOOKWITNESS_SECRET_KEY`, the key that seals the endpoints' secrets
+  (`/data/hookwitness.db.key`). Back them up together; a database restored
+  without its key keeps the requests but loses the secrets. With a host
+  directory instead of a named volume, give it to the image user
+  (`chown 65532:65532 <dir>`) or run with `--user "$(id -u):$(id -g)"`.
+- **Settings** are the `HOOKWITNESS_*` variables (see
+  [Build from source](#build-from-source)), e.g. `-e HOOKWITNESS_RETENTION=5000`.
+- **Reaching it from other machines:** `127.0.0.1:` above keeps it on this
+  host. Publish wider with `-p 8080:8080`, or put a reverse proxy in front;
+  the UI answers only to IP addresses and localhost, so add the proxy's host
+  name with `-e HOOKWITNESS_ADMIN_HOSTS=hooks.example.com`. The UI has no login
+  yet: where strangers can reach the server, publish only the catch paths, not
+  `/admin`.
+- **Hardening:** the image runs as a non-root user without a shell and works
+  with `--read-only --tmpfs /tmp`.
+- **Health:** the image has a health check (`hookwitness health`, which asks
+  `/healthz`); `docker ps` shows it.
+- **Provenance:** every published image carries a signed build provenance and
+  an SBOM: `gh attestation verify oci://ghcr.io/petroladkin/hookwitness:edge --owner petroladkin`.
+
+Compose:
+
+```yaml
+services:
+  hookwitness:
+    image: ghcr.io/petroladkin/hookwitness:edge
+    ports: ["127.0.0.1:8080:8080"]
+    volumes: ["hookwitness:/data"]
+    restart: unless-stopped
+volumes:
+  hookwitness:
+```
+
+Build the image yourself with `make image`; `make image-smoke` runs the
+scenario CI runs against it.
+
 ## Response emulation
 
 Senders have to cope with receivers that are slow, time out, crash or fail now

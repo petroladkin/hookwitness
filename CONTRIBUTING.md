@@ -26,6 +26,8 @@ To fix a missing sign-off: `git commit --amend -s`, or
 - Branch names: `feature/<name>`, `fix/<name>`; `release/x.y` and
   `hotfix/<name>` are for maintainers.
 - One branch, one concern. A fix and a refactor are two pull requests.
+- CI runs `make check` and the container smoke test on every pull request;
+  both must pass.
 
 Enable the repository's git hooks once per clone:
 
