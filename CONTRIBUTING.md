@@ -47,6 +47,5 @@ root.
 ## Reporting a problem
 
 Bugs go to the issue tracker: what you did, what you saw, what you expected.
-Please do not report security problems in public issues; contact the
-maintainer privately (a SECURITY.md with the channel will be added before the
-first release).
+Please do not report security problems in public issues; report them
+privately as [SECURITY.md](SECURITY.md) describes.
