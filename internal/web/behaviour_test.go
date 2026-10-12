@@ -346,7 +346,7 @@ func TestSecretsWriteOnly(t *testing.T) {
 		}
 	}
 	page := e.do("GET", base+"?tab=secrets", nil).Body.String()
-	if !strings.Contains(page, "<b>WEBHOOK_SECRET</b> · signing key · fingerprint <code>"+c.Secrets[0].Fingerprint+"</code> · not used") {
+	if !strings.Contains(page, "<b>WEBHOOK_SECRET</b> · signing key · fingerprint <code>"+c.Secrets[0].Fingerprint+"</code>") || !strings.Contains(page, "not used: <a ") {
 		t.Errorf("secrets list lacks the row")
 	}
 	// A refused save does not echo the value back either.
@@ -414,5 +414,30 @@ func TestAuthCheckEditor(t *testing.T) {
 	}
 	if ch := e.config(t, ep.ID).Checks[1]; ch.Kind != "" || ch.Header != "X-Env" || ch.Secret != "" {
 		t.Fatalf("header check stored as %+v", ch)
+	}
+}
+
+// TestUnusedSecretLeadsToACheck: a secret alone does nothing; saving one
+// that no check uses says so and links to a new check that uses it.
+func TestUnusedSecretLeadsToACheck(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/ping")
+	e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"new"}, "name": {"PING_TOKEN"}, "secret_kind": {"token"}, "value": {"tok_test"}})
+	base := "/admin/e/" + id(ep.ID) + "/behaviour"
+	link := `href="` + base + `?tab=checks&amp;edit=check-new&amp;secret=PING_TOKEN"`
+	page := e.do("GET", base+"?tab=secrets&saved=secret-0", nil).Body.String()
+	if !strings.Contains(page, "It does nothing until a check uses it") || !strings.Contains(page, link) {
+		t.Fatal("no hint after saving an unused secret")
+	}
+	if page := e.do("GET", base+"?tab=secrets", nil).Body.String(); !strings.Contains(page, "not used: <a "+link+">add a check</a>") {
+		t.Fatal("the row does not offer a check")
+	}
+	dialog := e.do("GET", base+"?tab=checks&edit=check-new&secret=PING_TOKEN", nil).Body.String()
+	if !strings.Contains(dialog, `<option value="bearer" selected>`) || !strings.Contains(dialog, `<option value="PING_TOKEN" selected>`) {
+		t.Fatal("the new check does not start from the secret")
+	}
+	e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"bearer"}, "secret": {"PING_TOKEN"}, "enforce": {"on"}})
+	if page := e.do("GET", base+"?tab=secrets&saved=secret-0", nil).Body.String(); strings.Contains(page, "It does nothing") || !strings.Contains(page, "used by check 1 (Bearer token)") {
+		t.Fatal("a used secret still reads as unused")
 	}
 }

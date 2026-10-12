@@ -523,6 +523,11 @@ templ toolbar(b behaviourView, edit, label string) {
 	</div>
 	if b.Error != "" && b.Editor == nil {
 		<p class="error banner" role="alert">Not saved: { b.Error }</p>
+	} else if name := unusedSaved(b); name != "" {
+		<p class="saved banner" role="status">
+			Secret saved. It does nothing until a check uses it:
+			<a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=check-new&secret=" + name) }>add a check that uses { name }</a>.
+		</p>
 	} else if b.Saved != "" {
 		<p class="saved banner" role="status">{ savedText(b.Saved) }</p>
 	}
@@ -602,7 +607,14 @@ templ secretList(b behaviourView) {
 			for i, sc := range b.Config.Secrets {
 				<li id={ "secret-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "secret-"+strconv.Itoa(i)) }>
 					<span class="no">{ strconv.Itoa(i + 1) }</span>
-					<span class="what"><b>{ sc.Name }</b> · { secretKindTitle(sc.Kind) } · fingerprint <code>{ sc.Fingerprint }</code> · { secretUse(b.Config, sc.Name) }</span>
+					<span class="what">
+						<b>{ sc.Name }</b> · { secretKindTitle(sc.Kind) } · fingerprint <code>{ sc.Fingerprint }</code> · 
+						if len(b.Config.SecretUsers(sc.Name)) == 0 {
+							not used: <a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=check-new&secret=" + sc.Name) }>add a check</a>
+						} else {
+							{ secretUse(b.Config, sc.Name) }
+						}
+					</span>
 					<form class="acts" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
 						<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
 						<input type="hidden" name="v" value={ b.Version }/>
@@ -793,7 +805,7 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 	<label class="kinded k-hmac" for="check-content">Signed content: a template, empty means the raw body</label>
 	<textarea class="kinded k-hmac" id="check-content" name="content" rows="2" spellcheck="false" placeholder="{{.Body}}">{ ch.Content }</textarea>
 	<label class="check kinded k-stripe k-standard"><input type="checkbox" name="ignore_timestamp" checked?={ ch.IgnoreTimestamp }/> Accept any timestamp (replayed captures)</label>
-	<label class="check kinded k-github k-stripe k-standard k-hmac k-bearer k-basic"><input type="checkbox" name="enforce" checked?={ ch.Enforce }/> Enforce: refuse a failing request (otherwise record the verdict only)</label>
+	<label class="check kinded k-github k-stripe k-standard k-hmac k-bearer k-basic"><input type="checkbox" name="enforce" checked?={ ch.Enforce }/> Enforce: refuse a request that does not pass (otherwise it gets the usual reply and only the verdict is recorded)</label>
 	<label class="check"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header, or 401)</label>
 	<div class="reply-fields">
 		@replyFields(b, "check", "error_", errorOrStandard(ch))

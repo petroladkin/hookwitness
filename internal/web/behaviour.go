@@ -150,6 +150,12 @@ func (h *Handler) behaviourPage(w http.ResponseWriter, r *http.Request) {
 	v := h.behaviourView(ep, cfg)
 	if q.Has("edit") {
 		v.Editor = openEditor(cfg, q.Get("edit"))
+		// "Add a check that uses it" from a secret: start from that secret.
+		if e := v.Editor; e != nil && e.Kind == "check" && e.I == "new" {
+			if sc, ok := cfg.SecretByName(q.Get("secret")); ok {
+				e.Check = checkFor(sc)
+			}
+		}
 	}
 	v.Tab = q.Get("tab")
 	if !slices.Contains(behaviourTabs, v.Tab) {
@@ -640,6 +646,26 @@ func secretKindTitle(k string) string {
 		return "token or password"
 	}
 	return "signing key"
+}
+
+// checkFor is a new check that uses a secret: a bearer check for a token, a
+// GitHub signature check for a signing key; the kind can be changed.
+func checkFor(sc emulate.Secret) emulate.Check {
+	if sc.Kind == emulate.SecretToken {
+		return emulate.Check{Kind: emulate.KindBearer, Secret: sc.Name}
+	}
+	return emulate.Check{Kind: emulate.KindGitHub, Secret: sc.Name}
+}
+
+// unusedSaved is the name of the secret the last edit saved when no check
+// uses it yet, else "".
+func unusedSaved(b behaviourView) string {
+	n, ok := strings.CutPrefix(b.Saved, "secret-")
+	i, err := strconv.Atoi(n)
+	if !ok || err != nil || i >= len(b.Config.Secrets) || len(b.Config.SecretUsers(b.Config.Secrets[i].Name)) > 0 {
+		return ""
+	}
+	return b.Config.Secrets[i].Name
 }
 
 // secretUse says which checks use a secret, for its list row.
