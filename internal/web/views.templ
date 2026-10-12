@@ -157,7 +157,7 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 	@layout(nav, title(reg)) {
 		<section class="strip" aria-label="Arrivals over the last two minutes">
 			<canvas id="trace" aria-hidden="true"></canvas>
-			<div class="legend"><b>Last 2 min</b> · height = body size · red: not 2xx · dashed: timeout · ×: dropped · red bar under the line: failed authorization · same body bracketed</div>
+			<div class="legend"><b>Last 2 min</b> · height = body size · red: not 2xx · dashed: timeout · ×: dropped · red bar under the line: a failed check · same body bracketed</div>
 		</section>
 		<main class="desk">
 			<section class="register" aria-label="Caught requests">
@@ -175,16 +175,19 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 				</div>
 				if reg.Verdicts.On {
 					<div class="verdict-counts">
-						<span>Authorization</span>
+						<span>Verdicts</span>
 						<b class="v-pass">{ strconv.Itoa(reg.Verdicts.Pass) } pass</b>
 						<b class="v-fail">{ strconv.Itoa(reg.Verdicts.Fail) } fail</b>
 						<b class="v-nv">{ strconv.Itoa(reg.Verdicts.NV) } n/v</b>
-						<form method="post" action={ templ.SafeURL(reg.Base + "/recheck") } data-confirm={ "Re-check the " + strconv.Itoa(reg.Count) + " kept requests with the current checks and secrets? Their replies stay as sent." }>
+						if reg.Verdicts.NC > 0 {
+							<b class="v-nv">{ strconv.Itoa(reg.Verdicts.NC) } n/c</b>
+						}
+						<form method="post" action={ templ.SafeURL(reg.Base + "/recheck") } data-confirm={ "Re-check the " + strconv.Itoa(reg.Count) + " kept requests with the current checks, secrets and schemas? Their replies stay as sent." }>
 							<button class="btn quiet" type="submit">Re-check { strconv.Itoa(reg.Count) }</button>
 						</form>
 					</div>
 					if reg.Verdicts.Rechecked != "" {
-						<p class="saved banner" role="status">Re-checked { reg.Verdicts.Rechecked } requests with the current checks and secrets.</p>
+						<p class="saved banner" role="status">Re-checked { reg.Verdicts.Rechecked } requests with the current checks, secrets and schemas.</p>
 					}
 				}
 				<ol
@@ -267,7 +270,7 @@ templ row(r rowView) {
 			<span class="m">
 				{ r.Method } <em>{ size(r.Size) }</em>
 				if r.Verdict != "" {
-					<span class={ "tag", "verdict-" + verdictClass(r.Verdict) }>auth { r.Verdict }</span>
+					<span class={ "tag", "verdict-" + verdictClass(r.Verdict) }>checks { r.Verdict }</span>
 				}
 			</span>
 			<span class="t">{ clock(r.At) }</span>
@@ -338,12 +341,15 @@ templ exhibit(x exhibitView) {
 			case bodyEmpty:
 				<p class="note">No body.</p>
 			case bodyJSON:
+				if x.BadPaths > 0 {
+					<p class="note">Marked in the body: where a schema check found problems.</p>
+				}
 				<pre class="body json">
 					for _, t := range x.Body.JSON {
-						if t.Class == "" {
+						if t.Class == "" && !t.Bad {
 							{ t.Text }
 						} else {
-							<span class={ t.Class }>{ t.Text }</span>
+							<span class={ t.Class, templ.KV("bad", t.Bad) }>{ t.Text }</span>
 						}
 					}
 				</pre>
@@ -402,12 +408,26 @@ templ notFoundPage(nav navView, msg string) {
 // answer is what Hookwitness did with the request.
 templ verdicts(x exhibitView) {
 	if len(x.Verdicts) > 0 {
-		<h2>Authorization</h2>
+		<h2>Verdicts</h2>
 		<div class="verdicts">
 			for _, v := range x.Verdicts {
 				<div class={ "verdict", "verdict-" + verdictClass(string(v.Result)) }>
-					<div class="vstamp">{ v.Label }: { resultLabel(v.Result) }</div>
+					<div class="vstamp">{ vstamp(v) }</div>
 					<p class="note">{ v.Reason }<span class="when">{ " · check " + strconv.Itoa(v.Check) + " · checked " + fullTime(v.At) }</span></p>
+					if len(v.Problems) > 0 {
+						<div class="scroll">
+							<table class="kv problems">
+								<tbody>
+									for _, pr := range v.Problems {
+										<tr><th>{ problemPath(pr.Path) }</th><td><code>{ pr.Keyword }</code> { pr.Message }</td></tr>
+									}
+								</tbody>
+							</table>
+						</div>
+						if v.Total > len(v.Problems) {
+							<p class="note">… and { strconv.Itoa(v.Total - len(v.Problems)) } more ({ strconv.Itoa(v.Total) } in all).</p>
+						}
+					}
 					if v.Expected != "" || v.Received != "" {
 						<div class="scroll">
 							<table class="kv">
@@ -477,7 +497,7 @@ templ behaviourPage(nav navView, b behaviourView) {
 			switch b.Tab {
 				case "checks":
 					@toolbar(b, "check-new", "New check") {
-						<p class="note">Required headers refuse a request without them. Authorization checks record a verdict on every request and refuse only when enforced. Refused requests are not counted.</p>
+						<p class="note">Required headers refuse a request without them. Authorization and JSON Schema checks record a verdict on every request and refuse only when enforced. Refused requests are not counted.</p>
 					}
 					@checkList(b)
 				case "default":
@@ -490,6 +510,11 @@ templ behaviourPage(nav navView, b behaviourView) {
 						<p class="note">Signing keys and tokens for authorization checks. Write-only: a saved value is never shown again, only its fingerprint. Test and staging secrets only.</p>
 					}
 					@secretList(b)
+				case "schemas":
+					@toolbar(b, "schema-new", "New schema") {
+						<p class="note">JSON Schemas for schema checks (draft-04 to 2020-12; 2020-12 when <code>$schema</code> is absent). A schema refers to another one by name, as <code>{ `{"$ref": "Address"}` }</code>; nothing is ever fetched.</p>
+					}
+					@schemaList(b)
 				case "vars":
 					@toolbar(b, "var-new", "New variable") {
 						<p class="note">Test values for templates, as <code>{ "{{.Var.NAME}}" }</code>. Stored in plain text: never real secrets.</p>
@@ -627,6 +652,29 @@ templ secretList(b behaviourView) {
 	}
 }
 
+templ schemaList(b behaviourView) {
+	if len(b.Config.Schemas) == 0 {
+		<p class="empty">No schemas. A JSON Schema check needs one.</p>
+	} else {
+		<ol class="items">
+			for i, sc := range b.Config.Schemas {
+				<li id={ "schema-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "schema-"+strconv.Itoa(i)) }>
+					<span class="no">{ strconv.Itoa(i + 1) }</span>
+					<span class="what">
+						<b>{ sc.Name }</b> · { schemaDraft(sc.Text) } · { size(int64(len(sc.Text))) } ·
+						if len(b.Config.SchemaUsers(sc.Name)) == 0 {
+							not used: <a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=check-new&schema=" + sc.Name) }>add a check</a>
+						} else {
+							{ schemaUse(b.Config, sc.Name) }
+						}
+					</span>
+					@rowActions(b, "schema", i, len(b.Config.Schemas), false)
+				</li>
+			}
+		</ol>
+	}
+}
+
 templ replySummary(r emulate.Reply) {
 	<dl class="summary">
 		<dt>Status</dt>
@@ -656,7 +704,7 @@ templ replySummary(r emulate.Reply) {
 // back to it.
 templ editorDialog(b behaviourView, e *editor) {
 	<dialog class="modal" data-modal data-close={ b.Base + "/behaviour?tab=" + b.Tab } open aria-labelledby="dialog-title">
-		<form class="card" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+		<form class="card" method="post" action={ templ.SafeURL(b.Base + "/behaviour") } enctype={ formEnctype(e) }>
 			<div class="modal-head">
 				<h2 id="dialog-title">{ editorTitle(e) }</h2>
 				<a class="close" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + b.Tab) } aria-label="Close">×</a>
@@ -678,6 +726,10 @@ templ editorDialog(b behaviourView, e *editor) {
 					<input type="hidden" name="op" value="secret-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
 					@secretFields(e)
+				case "schema":
+					<input type="hidden" name="op" value="schema-save"/>
+					<input type="hidden" name="i" value={ e.I }/>
+					@schemaFields(e)
 				case "var":
 					<input type="hidden" name="op" value="var-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
@@ -694,7 +746,7 @@ templ editorDialog(b behaviourView, e *editor) {
 				<button class="btn solid" type="submit">{ editorSave(e) }</button>
 				<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + b.Tab) }>Cancel</a>
 			</div>
-			if e.Kind != "var" && e.Kind != "secret" {
+			if e.Kind != "var" && e.Kind != "secret" && e.Kind != "schema" {
 				@templateRef()
 			}
 		</form>
@@ -757,8 +809,34 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 			for _, k := range emulate.AuthKinds {
 				<option value={ k } selected?={ checkKind(ch) == k }>{ kindTitle(k) }</option>
 			}
+			<option value="schema" selected?={ checkKind(ch) == "schema" }>{ kindTitle("schema") }</option>
 		</select>
 	</label>
+	<div class="kinded k-schema">
+		<div class="grid2">
+			<label>
+				Pick the schema by
+				<select name="select_from">
+					<option value="" selected?={ ch.Select == nil }>nothing: always one schema</option>
+					<option value="body" selected?={ ch.Select != nil && ch.Select.From == "body" }>a value in the body (JSON pointer)</option>
+					<option value="header" selected?={ ch.Select != nil && ch.Select.From == "header" }>a header</option>
+				</select>
+			</label>
+			<label>
+				Schema
+				<select name="schema">
+					<option value="">choose…</option>
+					for _, sc := range b.Config.Schemas {
+						<option value={ sc.Name } selected?={ ch.Schema == sc.Name }>{ sc.Name }</option>
+					}
+				</select>
+			</label>
+		</div>
+		<label>Pointer or header <input name="select_key" value={ selectKey(ch) } spellcheck="false" autocomplete="off" placeholder="/type or X-GitHub-Event"/></label>
+		<label for="check-map">Values to schemas, one per line as <code>value = SchemaName</code></label>
+		<textarea id="check-map" name="select_map" rows="3" spellcheck="false" placeholder="order.paid = OrderPaid">{ formatMapping(ch.Select) }</textarea>
+		<p class="help">With a pointer or a header, its value picks the schema from these lines and the Schema field is not used. A value without a line gets the verdict <b>n/c</b> (not checked) and is never refused.</p>
+	</div>
 	<label class="kinded k-header k-hmac">Header <input name="header" value={ ch.Header } spellcheck="false" autocomplete="off" placeholder="X-Signature"/></label>
 	<div class="grid2 kinded k-header">
 		<label>
@@ -805,8 +883,8 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 	<label class="kinded k-hmac" for="check-content">Signed content: a template, empty means the raw body</label>
 	<textarea class="kinded k-hmac" id="check-content" name="content" rows="2" spellcheck="false" placeholder="{{.Body}}">{ ch.Content }</textarea>
 	<label class="check kinded k-stripe k-standard"><input type="checkbox" name="ignore_timestamp" checked?={ ch.IgnoreTimestamp }/> Accept any timestamp (replayed captures)</label>
-	<label class="check kinded k-github k-stripe k-standard k-hmac k-bearer k-basic"><input type="checkbox" name="enforce" checked?={ ch.Enforce }/> Enforce: refuse a request that does not pass (otherwise it gets the usual reply and only the verdict is recorded)</label>
-	<label class="check"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header, or 401)</label>
+	<label class="check kinded k-github k-stripe k-standard k-hmac k-bearer k-basic k-schema"><input type="checkbox" name="enforce" checked?={ ch.Enforce }/> Enforce: refuse a request that does not pass (otherwise it gets the usual reply and only the verdict is recorded)</label>
+	<label class="check"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header, 401, or 400 listing the schema problems)</label>
 	<div class="reply-fields">
 		@replyFields(b, "check", "error_", errorOrStandard(ch))
 	</div>
@@ -829,4 +907,12 @@ templ secretFields(e *editor) {
 	}
 	<label>Value <input type="password" name="value" value="" required autocomplete="new-password" spellcheck="false"/></label>
 	<p class="help">Stored sealed (signing keys) or as a salted hash (tokens and passwords) and never shown again. Use test and staging secrets only: whoever can open this page can use them to sign requests.</p>
+}
+
+templ schemaFields(e *editor) {
+	<label>Name <input name="name" value={ e.Schema.Name } required spellcheck="false" autocomplete="off" autofocus placeholder="OrderPaid"/></label>
+	<label for="schema-text">Schema (JSON)</label>
+	<textarea id="schema-text" name="text" rows="14" spellcheck="false" placeholder="{&#34;type&#34;: &#34;object&#34;}">{ e.Schema.Text }</textarea>
+	<label>Or upload a file <input type="file" name="file" accept=".json,application/json,application/schema+json"/></label>
+	<p class="help">A file replaces the text above; up to 1 MiB. Refer to this endpoint's other schemas by name (<code>{ `"$ref": "Address"` }</code>); any other reference is refused.</p>
 }

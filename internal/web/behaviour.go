@@ -1,8 +1,10 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -40,11 +42,12 @@ type editor struct {
 	Check  emulate.Check
 	Var    emulate.Var
 	Secret emulate.Secret // never with a value: secrets are write-only
-	Reply  emulate.Reply  // the default reply
+	Schema emulate.Schema
+	Reply  emulate.Reply // the default reply
 }
 
 // behaviourTabs in the order a request meets them.
-var behaviourTabs = []string{"checks", "rules", "default", "vars", "secrets"}
+var behaviourTabs = []string{"checks", "rules", "default", "vars", "secrets", "schemas"}
 
 // tabOf is the tab that holds a section ("rule-2", "checks", "var-new",
 // ...); rules when unknown.
@@ -56,6 +59,8 @@ func tabOf(section string) string {
 		return "vars"
 	case strings.HasPrefix(section, "secret"):
 		return "secrets"
+	case strings.HasPrefix(section, "schema"):
+		return "schemas"
 	case section == "default":
 		return "default"
 	}
@@ -105,6 +110,12 @@ func openEditor(cfg emulate.Config, which string) *editor {
 		} else {
 			return nil
 		}
+	case "schema":
+		if i != "new" && n >= len(cfg.Schemas) {
+			return nil
+		} else if i != "new" {
+			e.Schema = cfg.Schemas[n]
+		}
 	default:
 		return nil
 	}
@@ -149,6 +160,9 @@ func (h *Handler) behaviourPage(w http.ResponseWriter, r *http.Request) {
 		if e := v.Editor; e != nil && e.Kind == "check" && e.I == "new" {
 			if sc, ok := cfg.SecretByName(q.Get("secret")); ok {
 				e.Check = checkFor(sc)
+			}
+			if name := q.Get("schema"); name != "" {
+				e.Check = emulate.Check{Kind: emulate.KindSchema, Schema: name}
 			}
 		}
 	}
@@ -356,6 +370,28 @@ func applyEdit(cfg *emulate.Config, op string, r *http.Request, keys *secret.Key
 			cfg.Secrets = append(cfg.Secrets, s)
 		}
 		return fmt.Sprintf("secret-%d", i), err
+	case "schema-save", "schema-del":
+		i, err := at(len(cfg.Schemas), act == "save")
+		if err != nil {
+			return "schemas", err
+		}
+		if act == "del" {
+			if users := cfg.SchemaUsers(cfg.Schemas[i].Name); len(users) > 0 {
+				return "schemas", fmt.Errorf("%s is used by %s; change or delete those checks first", cfg.Schemas[i].Name, strings.Join(users, ", "))
+			}
+			cfg.Schemas = slices.Delete(cfg.Schemas, i, i+1)
+			return "schemas", nil
+		}
+		sc, err := formSchema(r)
+		if i == len(cfg.Schemas) {
+			cfg.Schemas = append(cfg.Schemas, sc)
+		} else {
+			if old := cfg.Schemas[i].Name; old != sc.Name && len(cfg.SchemaUsers(old)) > 0 && err == nil {
+				err = fmt.Errorf("%s is used by %s; a used schema keeps its name", old, strings.Join(cfg.SchemaUsers(old), ", "))
+			}
+			cfg.Schemas[i] = sc
+		}
+		return fmt.Sprintf("schema-%d", i), err
 	case "var-save", "var-del":
 		i, err := at(len(cfg.Vars), act == "save")
 		if err != nil {
@@ -396,6 +432,14 @@ func formCheck(r *http.Request) (emulate.Check, error) {
 		ch.Prefix, ch.Content = r.PostFormValue("prefix"), r.PostFormValue("content")
 	case emulate.KindBasic:
 		ch.User = v("user")
+	case emulate.KindSchema:
+		ch.Secret = ""
+		if from := v("select_from"); from != "" {
+			ch.Select = &emulate.Select{From: from, Key: v("select_key")}
+			ch.Select.Map, err = parseMapping(r.PostFormValue("select_map"))
+		} else {
+			ch.Schema = v("schema")
+		}
 	case emulate.KindStripe, emulate.KindStandard:
 		ch.IgnoreTimestamp = r.PostFormValue("ignore_timestamp") == "on"
 		if s := v("tolerance_s"); s != "" {
@@ -406,6 +450,64 @@ func formCheck(r *http.Request) (emulate.Check, error) {
 		}
 	}
 	return ch, err
+}
+
+// maxSchema bounds a schema pasted or uploaded.
+const maxSchema = 1 << 20
+
+// formSchema reads a schema editor: the name, and the text pasted or the
+// file uploaded (a file wins).
+func formSchema(r *http.Request) (emulate.Schema, error) {
+	sc := emulate.Schema{Name: strings.TrimSpace(r.PostFormValue("name")), Text: r.PostFormValue("text")}
+	if f, hdr, err := r.FormFile("file"); err == nil {
+		defer f.Close()
+		if hdr.Size > maxSchema {
+			return sc, fmt.Errorf("the file is over %d KiB", maxSchema>>10)
+		}
+		b, err := io.ReadAll(io.LimitReader(f, maxSchema+1))
+		if err != nil {
+			return sc, fmt.Errorf("the file could not be read: %v", err)
+		}
+		if len(b) > 0 {
+			sc.Text = string(b)
+		}
+	}
+	if strings.TrimSpace(sc.Text) == "" {
+		return sc, errors.New("paste the schema or choose a file")
+	}
+	if len(sc.Text) > maxSchema {
+		return sc, fmt.Errorf("the schema is over %d KiB", maxSchema>>10)
+	}
+	return sc, nil
+}
+
+// parseMapping reads "value = Schema" lines.
+func parseMapping(text string) ([]emulate.Mapping, error) {
+	var out []emulate.Mapping
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		i := strings.LastIndex(line, "=")
+		if i < 0 {
+			return out, fmt.Errorf("mapping line %q: write it as value = SchemaName", line)
+		}
+		out = append(out, emulate.Mapping{Value: strings.TrimSpace(line[:i]), Schema: strings.TrimSpace(line[i+1:])})
+	}
+	return out, nil
+}
+
+// formatMapping is the editor text of a mapping.
+func formatMapping(s *emulate.Select) string {
+	if s == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, m := range s.Map {
+		b.WriteString(m.Value + " = " + m.Schema + "\n")
+	}
+	return b.String()
 }
 
 // formSecret reads a new secret and seals or hashes its value at once; the
@@ -497,6 +599,8 @@ func tabTitle(tab string) string {
 		return "Variables"
 	case "secrets":
 		return "Secrets"
+	case "schemas":
+		return "Schemas"
 	}
 	return "Rules"
 }
@@ -512,6 +616,8 @@ func tabCount(c emulate.Config, tab string) string {
 		return strconv.Itoa(len(c.Vars))
 	case "secrets":
 		return strconv.Itoa(len(c.Secrets))
+	case "schemas":
+		return strconv.Itoa(len(c.Schemas))
 	}
 	return ""
 }
@@ -530,6 +636,11 @@ func editorTitle(e *editor) string {
 			return "New secret"
 		}
 		return "Replace " + e.Secret.Name
+	case "schema":
+		if e.I == "new" {
+			return "New schema"
+		}
+		return "Schema " + e.Schema.Name
 	}
 	if e.I == "new" {
 		return "New " + e.Kind
@@ -546,6 +657,8 @@ func editorSave(e *editor) string {
 		return "Save variable"
 	case "secret":
 		return "Save secret"
+	case "schema":
+		return "Save schema"
 	}
 	return "Save " + e.Kind
 }
@@ -562,6 +675,8 @@ func refusalLabel(c emulate.Check) string {
 	switch {
 	case c.Error != nil:
 		return strconv.Itoa(c.Error.Status) + " (own reply)"
+	case c.Kind == emulate.KindSchema:
+		return "400 listing the problems"
 	case c.GivesVerdict():
 		return "401"
 	}
@@ -574,6 +689,15 @@ func checkSummary(c emulate.Check) string {
 		return matchLabel(c) + " · else " + refusalLabel(c)
 	}
 	parts := []string{"secret " + c.Secret}
+	if c.Kind == emulate.KindSchema {
+		parts = nil
+		if c.Select != nil {
+			for _, m := range c.Select.Map {
+				parts = append(parts, strconv.Quote(m.Value)+" → "+m.Schema)
+			}
+			parts = []string{strings.Join(parts, ", "), "other values not checked"}
+		}
+	}
 	switch c.Kind {
 	case emulate.KindBasic:
 		parts = append(parts, "user "+c.User)
@@ -610,6 +734,8 @@ func kindTitle(k string) string {
 		return "Standard Webhooks / Svix signature"
 	case emulate.KindHMAC:
 		return "Generic HMAC signature"
+	case emulate.KindSchema:
+		return "JSON Schema"
 	}
 	return emulate.Check{Kind: k}.Label()
 }
@@ -648,6 +774,38 @@ func unusedSaved(b behaviourView) string {
 	return b.Config.Secrets[i].Name
 }
 
+// schemaUse says which checks use a schema, for its list row.
+func schemaUse(c emulate.Config, name string) string {
+	users := c.SchemaUsers(name)
+	if len(users) == 0 {
+		return "not used"
+	}
+	return "used by " + strings.Join(users, ", ")
+}
+
+// schemaDraft names the draft a schema declares, "2020-12" by default.
+func schemaDraft(text string) string {
+	var head struct {
+		Schema string `json:"$schema"`
+	}
+	json.Unmarshal([]byte(text), &head)
+	switch {
+	case head.Schema == "":
+		return "2020-12"
+	case strings.Contains(head.Schema, "draft-07"):
+		return "draft-07"
+	case strings.Contains(head.Schema, "2019-09"):
+		return "2019-09"
+	case strings.Contains(head.Schema, "draft-06"):
+		return "draft-06"
+	case strings.Contains(head.Schema, "draft-04"):
+		return "draft-04"
+	case strings.Contains(head.Schema, "2020-12"):
+		return "2020-12"
+	}
+	return head.Schema
+}
+
 // secretUse says which checks use a secret, for its list row.
 func secretUse(c emulate.Config, name string) string {
 	users := c.SecretUsers(name)
@@ -683,8 +841,10 @@ func savedText(section string) string {
 		return "Default reply saved. It applies to the next request."
 	case section == "rules", section == "checks", section == "vars":
 		return "Deleted. It applies to the next request."
-	case section == "secrets":
+	case section == "secrets", section == "schemas":
 		return "Deleted."
+	case strings.HasPrefix(section, "schema-"):
+		return "Schema saved. Checks that use it apply it to the next request."
 	case strings.HasPrefix(section, "secret-"):
 		return "Secret saved. Its value is not shown again."
 	case strings.HasPrefix(section, "rule-"), strings.HasPrefix(section, "check-"), strings.HasPrefix(section, "var-"):
@@ -816,4 +976,20 @@ func answerText(o emulate.Outcome) string {
 		s += " · request " + i64(o.Counter) + " since the counter reset"
 	}
 	return s + "."
+}
+
+// selectKey is the discriminator's pointer or header, for the editor.
+func selectKey(ch emulate.Check) string {
+	if ch.Select == nil {
+		return ""
+	}
+	return ch.Select.Key
+}
+
+// formEnctype lets the schema editor upload a file.
+func formEnctype(e *editor) string {
+	if e.Kind == "schema" {
+		return "multipart/form-data"
+	}
+	return "application/x-www-form-urlencoded"
 }

@@ -514,6 +514,14 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
 		Verdicts: parseVerdicts(req.Verdicts),
 	}
+	if bad := badPaths(v.Verdicts); len(bad) > 0 && v.Body.Kind == bodyJSON {
+		markBad(v.Body.JSON, bad)
+		for _, t := range v.Body.JSON {
+			if t.Bad {
+				v.BadPaths++
+			}
+		}
+	}
 	return v, nil
 }
 

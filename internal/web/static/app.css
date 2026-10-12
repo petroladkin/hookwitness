@@ -247,7 +247,8 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
 .card:has(select[name=kind] option[value=standard]:checked) .kinded:not(.k-standard),
 .card:has(select[name=kind] option[value=hmac]:checked) .kinded:not(.k-hmac),
 .card:has(select[name=kind] option[value=bearer]:checked) .kinded:not(.k-bearer),
-.card:has(select[name=kind] option[value=basic]:checked) .kinded:not(.k-basic){display:none}
+.card:has(select[name=kind] option[value=basic]:checked) .kinded:not(.k-basic),
+.card:has(select[name=kind] option[value=schema]:checked) .kinded:not(.k-schema){display:none}
 .reply-fields{display:flex;flex-direction:column;gap:8px}
 .big{font:400 28px/1 var(--f-stamp);color:var(--ink);margin-right:6px;vertical-align:-3px}
 .banner{border:1px dashed var(--alarm);padding:10px 14px;max-width:72ch;margin:0 0 14px}
@@ -305,3 +306,10 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 .verdict-nv .vstamp{color:var(--muted)}
 .verdict .note{margin:4px 0}
 .verdict .when{color:var(--muted)}
+.verdict.verdict-nc{border-left:3px dotted var(--muted)}
+.verdict-nc .vstamp{color:var(--muted)}
+.row .m .tag.verdict-nc{color:var(--muted)}
+.problems th{font-family:var(--f-data);white-space:nowrap}
+.problems code{color:var(--alarm)}
+/* Where a schema check found a problem, inside the pretty body. */
+.json .bad{background:color-mix(in srgb,var(--alarm) 14%,transparent);box-shadow:inset 0 -2px 0 var(--alarm);border-radius:2px}

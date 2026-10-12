@@ -43,6 +43,27 @@ func (s Select) Label() string {
 	return s.Key
 }
 
+// SchemaUsers names the checks that use a schema, for refusing its
+// deletion or rename.
+func (c Config) SchemaUsers(name string) []string {
+	var out []string
+	for i, ch := range c.Checks {
+		if ch.kind() != KindSchema {
+			continue
+		}
+		used := ch.Select == nil && ch.Schema == name
+		if ch.Select != nil {
+			for _, m := range ch.Select.Map {
+				used = used || m.Schema == name
+			}
+		}
+		if used {
+			out = append(out, fmt.Sprintf("check %d (%s)", i+1, ch.Label()))
+		}
+	}
+	return out
+}
+
 // compiled is the endpoint's schemas compiled (and remembered).
 func (c Config) compiled() (*schema.Set, error) { return schema.Cached(c.Schemas) }
 
