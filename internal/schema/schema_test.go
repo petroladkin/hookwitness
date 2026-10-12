@@ -87,3 +87,16 @@ func TestCachedReusesTheSet(t *testing.T) {
 		t.Fatal("a compile error is not remembered as success")
 	}
 }
+
+// TestNoFileIsRead: a $ref to a readable file holding a valid schema is
+// refused; the library's default loader would read it.
+func TestNoFileIsRead(t *testing.T) {
+	path := t.TempDir() + "/valid.json"
+	if err := os.WriteFile(path, []byte(`{"type":"string"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Compile([]Doc{{Name: "Local", Text: `{"$ref":"file://` + path + `"}`}})
+	if err == nil || !strings.Contains(err.Error(), "never fetched") {
+		t.Fatalf("a $ref to a local file compiled: %v", err)
+	}
+}
