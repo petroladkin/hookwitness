@@ -34,6 +34,8 @@ type Handler struct {
 	// MaxWait caps a timeout's hold (delays are capped when configured).
 	// Zero means DefaultMaxWait.
 	MaxWait time.Duration
+	// Keys opens signing keys and matches tokens of authorization checks.
+	Keys emulate.Keyring
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -111,6 +113,7 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	if errors.Is(err, store.ErrNotFound) {
 		// The endpoint was deleted after the lookup: the path is unknown now.
 		req.EndpointID = store.Unmatched
+		req.Verdict, req.Verdicts = "", "" // the endpoint's checks no longer apply
 		plan = h.plan(req, "")
 		err = h.Store.AddRequest(ctx, req, h.Retention, nil)
 	}
@@ -154,23 +157,24 @@ func (h *Handler) plan(req *store.Request, cfgText string) *plan {
 		pl.closing = req.TooLarge
 		return pl
 	}
-	if req.TooLarge {
-		pl.out = emulate.Outcome{Source: emulate.FromLimit, Action: emulate.ActReply, Status: http.StatusRequestEntityTooLarge}
-		req.Status, req.Outcome = pl.out.Status, pl.out.String()
-		pl.closing = true
-		return pl
-	}
 	cfg, err := emulate.Parse(cfgText)
 	if err != nil {
 		h.Log.Error("catch: endpoint behaviour unreadable; using the default reply", "path", req.Path, "err", err)
 		cfg = emulate.DefaultConfig()
 	}
 	pl.cfg = cfg
-	er := emulate.Request{Method: req.Method, Path: req.Path, RawQuery: req.RawQuery, Body: req.Body}
-	for _, hd := range req.Headers {
-		er.Headers = append(er.Headers, emulate.Header{Name: hd.Name, Value: hd.Value})
+	er := EmulateRequest(*req)
+	// Every authorization check gives its verdict, also on a request whose
+	// body was not kept (those that need it say "not verifiable").
+	verdicts, f := cfg.Verify(er, req.ReceivedAt, !req.TooLarge, h.Keys)
+	req.Verdict, req.Verdicts = emulate.Overall(verdicts), emulate.VerdictsJSON(verdicts)
+	if req.TooLarge {
+		pl.out = emulate.Outcome{Source: emulate.FromLimit, Action: emulate.ActReply, Status: http.StatusRequestEntityTooLarge}
+		req.Status, req.Outcome = pl.out.Status, pl.out.String()
+		pl.closing = true
+		return pl
 	}
-	if f := cfg.RunChecks(er); f != nil {
+	if f != nil {
 		pl.data = emulate.NewData(er, cfg.Vars, 0)
 		pl.reply, pl.render = f.Refusal(), true
 		pl.out = emulate.Outcome{Source: emulate.FromCheck, Check: f.Describe(), Action: emulate.ActRefused, Status: pl.reply.Status}
@@ -191,6 +195,15 @@ func (h *Handler) plan(req *store.Request, cfgText string) *plan {
 		return pl.out.Status, pl.out.String()
 	}
 	return pl
+}
+
+// EmulateRequest is what checks and templates see of a stored request.
+func EmulateRequest(r store.Request) emulate.Request {
+	er := emulate.Request{Method: r.Method, Path: r.Path, RawQuery: r.RawQuery, Body: r.Body}
+	for _, hd := range r.Headers {
+		er.Headers = append(er.Headers, emulate.Header{Name: hd.Name, Value: hd.Value})
+	}
+	return er
 }
 
 // carryOut answers the request as planned and reports whether the outcome

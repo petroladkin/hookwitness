@@ -141,7 +141,8 @@ func TestTimeout(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond) // the handler notices the sender left
 	r, o := lastOutcome(t, st, ep)
-	if o.Action != emulate.ActTimeout || r.Status != 0 || o.WaitedMs < 140 || o.WaitedMs > 300 {
+	// The client's 150 ms include connecting, so the handler sees a bit less.
+	if o.Action != emulate.ActTimeout || r.Status != 0 || o.WaitedMs < 100 || o.WaitedMs > 300 {
 		t.Fatalf("sender gave up: status %d, outcome %+v", r.Status, o)
 	}
 

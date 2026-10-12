@@ -7,16 +7,19 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"io"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/config"
 	"github.com/petroladkin/hookwitness/internal/live"
+	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/server"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/version"
@@ -83,6 +86,23 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	}
 	defer st.Close()
 
+	// Endpoint secrets are sealed or hashed with this key; a database copied
+	// without it reveals none of them.
+	keys, err := secret.Load(getenv("HOOKWITNESS_SECRET_KEY"), cfg.DBPath+".key")
+	if err != nil {
+		log.Error("cannot load the secret key", "err", err)
+		return 1
+	}
+	keySource := "HOOKWITNESS_SECRET_KEY"
+	if getenv("HOOKWITNESS_SECRET_KEY") == "" {
+		keySource = cfg.DBPath + ".key"
+	}
+	if same, err := st.KeyCheck(ctx, keys.Check()); err == nil && !same {
+		log.Warn("this secret key is not the one this database was used with: sealed signing keys cannot be opened and stored tokens never match; "+
+			"start with the original key (HOOKWITNESS_SECRET_KEY or the .key file next to the database), or replace the secrets", "secret_key", keySource)
+	}
+	warnUnreadableSecrets(ctx, st, keys, log)
+
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
 		log.Error("cannot listen", "addr", cfg.Addr, "err", err)
@@ -93,12 +113,12 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 		"version", version.Version, "commit", version.Commit,
 		"addr", ln.Addr().String(), "db", cfg.DBPath, "schema", schema,
 		"ui", "http://"+ln.Addr().String()+cfg.AdminPrefix+"/",
-		"max_body", cfg.MaxBody, "retention", cfg.Retention)
+		"max_body", cfg.MaxBody, "retention", cfg.Retention, "secret_key", keySource)
 
 	broker := live.New()
-	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, Retention: cfg.Retention, MaxWait: cfg.MaxWait}
+	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, Retention: cfg.Retention, MaxWait: cfg.MaxWait, Keys: keys}
 	ui := web.New(st, broker, log, web.Options{
-		Prefix: cfg.AdminPrefix, MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait,
+		Prefix: cfg.AdminPrefix, MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
 	})
 	root := server.New(server.Options{
 		DB:          st,
@@ -115,6 +135,35 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	}
 	log.Info("stopped")
 	return 0
+}
+
+// warnUnreadableSecrets logs the endpoints whose signing keys this key cannot
+// open (the database came without its key file, or the key changed): their
+// checks will say "not verifiable" until the secrets are replaced.
+func warnUnreadableSecrets(ctx context.Context, st *store.Store, keys *secret.Key, log *slog.Logger) {
+	eps, err := st.Endpoints(ctx)
+	if err != nil {
+		return
+	}
+	for _, e := range eps {
+		cfg, err := emulate.Parse(e.Config)
+		if err != nil {
+			continue
+		}
+		var bad []string
+		for _, s := range cfg.Secrets {
+			if s.Kind != emulate.SecretKey {
+				continue
+			}
+			if _, err := keys.Open(s.Sealed); err != nil {
+				bad = append(bad, s.Name)
+			}
+		}
+		if len(bad) > 0 {
+			log.Warn("secrets cannot be decrypted with this secret key; replace them or use the key they were saved with",
+				"path", e.Path, "secrets", strings.Join(bad, ","))
+		}
+	}
 }
 
 func newLogger(format string, w io.Writer) *slog.Logger {

@@ -58,6 +58,8 @@ type Request struct {
 	TooLarge   bool
 	Status     int    // what hookwitness answered with; 0 when nothing was sent
 	Outcome    string // what it did, as JSON (internal/emulate.Outcome)
+	Verdict    string // overall authorization verdict: pass, fail, n/v, or "" without checks
+	Verdicts   string // per check, as JSON (internal/auth.Verdict)
 }
 
 // Decide is called by AddRequest inside its transaction with the request's
@@ -199,6 +201,90 @@ func (s *Store) UpdateOutcome(ctx context.Context, id int64, status int, outcome
 	return err
 }
 
+// KeyCheck records the check value of the secret key the first time and
+// reports whether a later key gives the same one; a database used with
+// another key cannot open its secrets.
+func (s *Store) KeyCheck(ctx context.Context, check string) (same bool, err error) {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO settings (key, value) VALUES ('secret.key_check', ?)`, check); err != nil {
+		return false, err
+	}
+	var stored string
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'secret.key_check'`).Scan(&stored); err != nil {
+		return false, err
+	}
+	return stored == check, nil
+}
+
+// SetVerdicts replaces a stored request's verdicts (a re-check); the status
+// and outcome, what the sender saw, stay as they are.
+func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts string) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	_, err := s.db.ExecContext(ctx, `UPDATE requests SET verdict = ?, verdicts = ?, changed_at = ? WHERE id = ?`,
+		verdict, verdicts, millis(time.Now()), id)
+	return err
+}
+
+// VerdictCounts counts an endpoint's kept requests by overall verdict;
+// requests without one are left out.
+func (s *Store) VerdictCounts(ctx context.Context, endpointID int64) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT verdict, COUNT(*) FROM requests
+		WHERE endpoint_id IS ? AND verdict <> '' GROUP BY verdict`, register(endpointID))
+	if err != nil {
+		return nil, fmt.Errorf("count verdicts: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var v string
+		var n int
+		if err := rows.Scan(&v, &n); err != nil {
+			return nil, err
+		}
+		out[v] = n
+	}
+	return out, rows.Err()
+}
+
+// EachRequest calls fn with every kept request of a register, with its
+// body, oldest first, reading 200 at a time; an error from fn stops it.
+func (s *Store) EachRequest(ctx context.Context, endpointID int64, fn func(Request) error) error {
+	const page = 200
+	var after int64
+	for {
+		rows, err := s.db.QueryContext(ctx, `SELECT `+requestColumns+`, body FROM requests
+			WHERE endpoint_id IS ? AND id > ? ORDER BY id LIMIT ?`, register(endpointID), after, page)
+		if err != nil {
+			return fmt.Errorf("read requests: %w", err)
+		}
+		var batch []Request
+		for rows.Next() {
+			r, err := scanRequest(rows, true)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			batch = append(batch, r)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		for _, r := range batch {
+			if err := fn(r); err != nil {
+				return err
+			}
+			after = r.ID
+		}
+		if len(batch) < page {
+			return nil
+		}
+	}
+}
+
 // RequestsChanged lists a register's requests up to upToID whose outcome
 // was updated at or after since (unix ms), oldest first, without bodies.
 func (s *Store) RequestsChanged(ctx context.Context, endpointID, upToID, since int64) ([]Request, error) {
@@ -303,10 +389,10 @@ func (s *Store) AddRequest(ctx context.Context, r *Request, keep int, decide Dec
 	}
 
 	res, err := tx.ExecContext(ctx, `INSERT INTO requests
-		(endpoint_id, no, received_at, method, path, raw_query, proto, remote_addr, headers, body, body_sha256, size, too_large, status, outcome)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(endpoint_id, no, received_at, method, path, raw_query, proto, remote_addr, headers, body, body_sha256, size, too_large, status, outcome, verdict, verdicts)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		register(r.EndpointID), no, millis(r.ReceivedAt), r.Method, r.Path, r.RawQuery, r.Proto, r.RemoteAddr,
-		string(headers), body, sum, r.Size, r.TooLarge, r.Status, r.Outcome)
+		string(headers), body, sum, r.Size, r.TooLarge, r.Status, r.Outcome, r.Verdict, r.Verdicts)
 	if err != nil {
 		return fmt.Errorf("store request: %w", err)
 	}
@@ -337,7 +423,7 @@ func pairs(hs []Header) [][2]string {
 }
 
 const requestColumns = `id, endpoint_id, no, received_at, method, path, raw_query, proto, remote_addr,
-	headers, body_sha256, size, too_large, status, outcome`
+	headers, body_sha256, size, too_large, status, outcome, verdict, verdicts`
 
 func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, error) {
 	var r Request
@@ -345,7 +431,7 @@ func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, er
 	var at int64
 	var headers string
 	dst := []any{&r.ID, &ep, &r.No, &at, &r.Method, &r.Path, &r.RawQuery, &r.Proto, &r.RemoteAddr,
-		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome}
+		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts}
 	if withBody {
 		dst = append(dst, &r.Body)
 	}

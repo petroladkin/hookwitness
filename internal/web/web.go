@@ -27,6 +27,7 @@ import (
 
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
+	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -49,6 +50,7 @@ type Handler struct {
 	keep    int   // retention per register, so the page can drop pruned rows
 	maxWait time.Duration
 	hosts   map[string]bool
+	keys    *secret.Key
 	mux     http.Handler
 	assets  map[string]string // asset path -> content hash for cache busting
 
@@ -63,11 +65,12 @@ type Options struct {
 	Retention int           // requests kept per register
 	MaxWait   time.Duration // longest delay an endpoint may configure
 	Hosts     []string      // host names the UI answers to besides IP addresses and localhost
+	Keys      *secret.Key   // seals and hashes endpoint secrets; verifies on re-check
 }
 
 // New returns the UI.
 func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Handler {
-	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention, maxWait: o.MaxWait,
+	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention, maxWait: o.MaxWait, keys: o.Keys,
 		hosts: map[string]bool{}, stop: make(chan struct{})}
 	if h.maxWait == 0 {
 		h.maxWait = 5 * time.Minute
@@ -91,6 +94,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("GET "+p+"/e/{reg}/events", h.events)
 	mux.HandleFunc("POST "+p+"/e/{reg}/clear", h.clear)
 	mux.HandleFunc("POST "+p+"/e/{reg}/delete", h.deleteEndpoint)
+	mux.HandleFunc("POST "+p+"/e/{reg}/recheck", h.recheck)
 	mux.HandleFunc("GET "+p+"/e/{reg}/behaviour", h.behaviourPage)
 	mux.HandleFunc("POST "+p+"/e/{reg}/behaviour", h.editBehaviour)
 	mux.HandleFunc("GET "+p+"/r/{id}/body", h.downloadBody)
@@ -383,7 +387,15 @@ func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "register", err)
 		return
 	}
+	var verdicts verdictsView
+	if reg != store.Unmatched {
+		if verdicts, err = h.verdictsView(r, ep); err != nil {
+			h.fail(w, "register", err)
+			return
+		}
+	}
 	h.render(w, r, http.StatusOK, registerPage(nav, registerView{
+		Verdicts: verdicts,
 		ID:       reg,
 		Path:     ep.Path,
 		Count:    ep.Count,
@@ -446,6 +458,7 @@ func (h *Handler) row(ctx context.Context, req store.Request, fresh bool) (rowVi
 		Href:     h.regPath(req.EndpointID) + "/r/" + strconv.FormatInt(req.ID, 10),
 		Fresh:    fresh,
 		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
+		Verdict:  req.Verdict,
 	}
 	if len(req.BodySHA256) > 0 {
 		v.Group = hex.EncodeToString(req.BodySHA256[:6])
@@ -518,6 +531,7 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		Unmatch:  req.EndpointID == store.Unmatched,
 		Limit:    h.limit,
 		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
+		Verdicts: parseVerdicts(req.Verdicts),
 	}
 	return v, nil
 }

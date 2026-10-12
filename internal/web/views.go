@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/petroladkin/hookwitness/internal/auth"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
@@ -32,6 +33,7 @@ type registerView struct {
 	Base     string
 	Selected int64
 	Keep     int // retention: the register never holds more
+	Verdicts verdictsView
 }
 
 // rowView is one line of the register.
@@ -48,6 +50,7 @@ type rowView struct {
 	Href     string
 	Fresh    bool // arrived on the live feed
 	Outcome  emulate.Outcome
+	Verdict  string // overall authorization verdict, "" without checks
 }
 
 // exhibitView is one request in full.
@@ -70,6 +73,7 @@ type exhibitView struct {
 	Unmatch  bool
 	Limit    int64
 	Outcome  emulate.Outcome
+	Verdicts []auth.Verdict
 }
 
 func id(n int64) string { return strconv.FormatInt(n, 10) }

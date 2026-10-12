@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/live"
+	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -33,8 +34,12 @@ func newEnv(t *testing.T) env {
 	}
 	t.Cleanup(func() { st.Close() })
 	lv := live.New()
+	keys, err := secret.Load("", filepath.Join(t.TempDir(), "hw.db.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	return env{New(st, lv, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Options{Prefix: "/admin", MaxBody: 10 << 20, Retention: 1000, Hosts: []string{"hooks.example.test", "example.com"}}), st, lv}
+		Options{Prefix: "/admin", MaxBody: 10 << 20, Retention: 1000, Hosts: []string{"hooks.example.test", "example.com"}, Keys: keys}), st, lv}
 }
 
 func (e env) do(method, target string, form url.Values, hdr ...string) *httptest.ResponseRecorder {

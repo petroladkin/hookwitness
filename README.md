@@ -3,8 +3,9 @@
 Catch webhooks, get a verdict, attach the evidence. Self-hosted, single binary,
 MCP-ready.
 
-**Status: early development.** Catch endpoints with a live view and scripted
-responses work; verdicts, reports, the API and MCP come next.
+**Status: early development.** Catch endpoints with a live view, scripted
+responses and authorization verdicts work; JSON Schema verdicts, reports, the
+API and MCP come next.
 
 ## What it is for
 
@@ -47,7 +48,7 @@ to the retention limit. The same body delivered again is marked as a retry.
 
 Senders have to cope with receivers that are slow, time out, crash or fail now
 and then. Each endpoint's **Behaviour** page sets how it answers, one tab per
-part (checks, rules, default reply, variables):
+part (checks, rules, default reply, variables, secrets):
 
 - **Checks** run first. A required header (present, equal to a value, or
   matching a regular expression) refuses a request that lacks it, with a `400`
@@ -97,6 +98,88 @@ opened by IP address or `localhost` (so a hostile web page cannot reach it by
 pointing its own domain at your server); allow other host names with
 `-admin-hosts`.
 
+## Authorization checks
+
+Is this webhook correctly signed? An authorization check answers it on every
+request with a verdict: **pass**, **fail** with a one-line reason, or **n/v**
+(not verifiable: the body was over the size limit and not kept, or the
+secret cannot be decrypted). Add checks on the Behaviour page's Checks tab:
+
+| Check | What it verifies |
+|---|---|
+| GitHub signature | `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the raw body>` |
+| Stripe signature | `Stripe-Signature: t=<unix>,v1=<hex HMAC-SHA256 of "<t>.<body>">`; any `v1` may match; the timestamp within a tolerance |
+| Standard Webhooks / Svix | `webhook-id`, `webhook-timestamp`, `webhook-signature` (or `svix-…`): `v1,<base64 HMAC-SHA256 of "<id>.<timestamp>.<body>">` under the `whsec_` base64 key; the timestamp within a tolerance |
+| Generic HMAC | any header: sha1, sha256 or sha512, hex or base64, an optional prefix (`sha1=` covers GitHub's legacy `X-Hub-Signature`), signed content as a template (the raw body by default, or e.g. `{{.Header "X-Id"}}.{{.Body}}`) |
+| Bearer token | `Authorization: Bearer <token>` |
+| Basic credentials | `Authorization: Basic base64(user:password)` |
+
+A check records its verdict and lets the request through (the reply is the
+usual one). Switch on **enforce** and a request that does not pass is refused
+before the rules (and not counted) — also when the check cannot verify it,
+e.g. its secret cannot be decrypted: `401` with the reason, `WWW-Authenticate` for bearer
+and basic, or your own reply. A failed signature shows the signature received
+in full and the first 8 characters of the expected one, enough to tell a
+wrong secret from wrong content, not enough to forge a signature. Signed
+timestamps are judged against the time the request arrived (default
+tolerance 300 s; it can be ignored for replayed captures).
+
+The register shows pass / fail / n/v counts, each row its verdict and the
+strip a red bar under failed ones. After changing a secret, **Re-check**
+recomputes the verdicts of every kept request; their replies stay as they
+were sent.
+
+**Secrets** have their own tab and are write-only: once saved, a value is
+never shown again, only a fingerprint. Signing keys are stored encrypted
+(AES-256-GCM); tokens and passwords only as salted PBKDF2 hashes. The key
+is `HOOKWITNESS_SECRET_KEY` (32 bytes in base64: `openssl rand -base64 32`)
+or, when that is not set, a key file created next to the database
+(`hookwitness.db.key`, mode 0600). A copy of the database without the key
+reveals no secret; keep the key file with the database when you move it.
+Use test and staging secrets only: whoever can open the admin UI can make
+the server verify with them. Note that a caught request keeps its headers as
+evidence, so a bearer token or basic password a sender sent is visible in
+that request.
+
+Examples, against an endpoint `/hooks` (create it, add the secret and the
+check on its Behaviour page, then run the pair):
+
+```sh
+H=http://127.0.0.1:8080/hooks
+BODY='{"action":"opened","number":7}'
+
+# GitHub — secret GH_SECRET (signing key) = gh_test_secret; check: GitHub signature
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac gh_test_secret | awk '{print $2}')
+curl -s -d "$BODY" -H "X-Hub-Signature-256: sha256=$SIG" $H                  # pass
+curl -s -d "$BODY" -H "X-Hub-Signature-256: sha256=$(printf '0%.0s' {1..64})" $H  # fail: signature does not match
+
+# Stripe — secret STRIPE_SECRET (signing key) = whsec_test_stripe; check: Stripe signature
+T=$(date +%s)
+V1=$(printf '%s.%s' "$T" "$BODY" | openssl dgst -sha256 -hmac whsec_test_stripe | awk '{print $2}')
+curl -s -d "$BODY" -H "Stripe-Signature: t=$T,v1=$V1" $H                       # pass
+OLD=$((T-600)); V0=$(printf '%s.%s' "$OLD" "$BODY" | openssl dgst -sha256 -hmac whsec_test_stripe | awk '{print $2}')
+curl -s -d "$BODY" -H "Stripe-Signature: t=$OLD,v1=$V0" $H                     # fail: timestamp 600 s old (tolerance 300 s)
+
+# Standard Webhooks — secret SW_SECRET (signing key) = whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw
+KEY=$(printf 'MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw' | base64 -d | xxd -p | tr -d '\n')
+SW=$(printf 'msg_1.%s.%s' "$T" "$BODY" | openssl dgst -sha256 -mac HMAC -macopt hexkey:$KEY -binary | base64)
+curl -s -d "$BODY" -H "webhook-id: msg_1" -H "webhook-timestamp: $T" -H "webhook-signature: v1,$SW" $H   # pass
+curl -s -d "$BODY" -H "webhook-id: msg_2" -H "webhook-timestamp: $T" -H "webhook-signature: v1,$SW" $H   # fail: signature does not match
+
+# Generic HMAC — secret HMAC_KEY (signing key) = hmac_test_key; check: header X-Signature, sha512, base64
+X=$(printf '%s' "$BODY" | openssl dgst -sha512 -hmac hmac_test_key -binary | base64)
+curl -s -d "$BODY" -H "X-Signature: $X" $H                                     # pass
+curl -s -d "$BODY" -H "X-Signature: not-base64!" $H                            # fail: signature is not base64
+
+# Bearer — secret API_TOKEN (token or password) = tok_test_123; check: Bearer token
+curl -s -d "$BODY" -H 'Authorization: Bearer tok_test_123' $H                  # pass
+curl -s -d "$BODY" -H 'Authorization: Basic dTpw' $H                           # fail: scheme is Basic, not Bearer
+
+# Basic — secret QA_PASSWORD (token or password) = pw_test; check: Basic credentials, user qa
+curl -s -d "$BODY" -u qa:pw_test $H                                            # pass
+curl -s -d "$BODY" -u qa:wrong $H                                              # fail: user or password does not match
+```
+
 ## Build from source
 
 Requires Go 1.27 or newer. `make check` also needs a C compiler for the
@@ -124,6 +207,7 @@ variable.
 | `-admin-prefix` | `HOOKWITNESS_ADMIN_PREFIX` | `/admin` |
 | `-admin-hosts` | `HOOKWITNESS_ADMIN_HOSTS` | none: host names, comma-separated |
 | `-max-wait` | `HOOKWITNESS_MAX_WAIT` | `5m`: longest reply delay or timeout hold (1s to 1h) |
+| — | `HOOKWITNESS_SECRET_KEY` | none: then the key file `<db>.key` (created, mode 0600). Environment only, so it does not show in the process list |
 
 Ctrl-C or SIGTERM stops the server gracefully. `make check` runs the templ
 check, the build, `go vet`, the gofmt check, staticcheck and the tests. The

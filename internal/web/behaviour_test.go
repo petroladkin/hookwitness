@@ -314,3 +314,130 @@ func TestNewEndpointDialog(t *testing.T) {
 		t.Fatalf("a refused path keeps the dialog open: %d", rec.Code)
 	}
 }
+
+// TestSecretsWriteOnly: a saved secret's value appears on no page, and the
+// stored configuration keeps it only sealed.
+func TestSecretsWriteOnly(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/sec")
+	if rec := e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"new"}, "name": {"WEBHOOK_SECRET"}, "secret_kind": {"key"}, "value": {"whsec_test_plain_1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: %d %s", rec.Code, errorOf(rec.Body.String()))
+	}
+	if rec := e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"new"}, "name": {"API_TOKEN"}, "secret_kind": {"token"}, "value": {"tok_test_plain_2"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save token: %d %s", rec.Code, errorOf(rec.Body.String()))
+	}
+	ep, _ = e.st.Endpoint(context.Background(), ep.ID)
+	for _, plain := range []string{"whsec_test_plain_1", "tok_test_plain_2"} {
+		if strings.Contains(ep.Config, plain) {
+			t.Fatalf("stored config holds %q", plain)
+		}
+	}
+	c := e.config(t, ep.ID)
+	if c.Secrets[0].Sealed == "" || c.Secrets[0].Hash != "" || c.Secrets[1].Hash == "" || c.Secrets[1].Sealed != "" || len(c.Secrets[0].Fingerprint) != 8 {
+		t.Fatalf("secrets %+v", c.Secrets)
+	}
+	base := "/admin/e/" + id(ep.ID) + "/behaviour"
+	for _, q := range []string{"", "?tab=secrets", "?tab=checks", "?tab=vars", "?edit=secret-0", "?edit=secret-1", "?edit=secret-new", "?edit=check-new", "?tab=secrets&saved=secret-0"} {
+		page := e.do("GET", base+q, nil).Body.String()
+		for _, plain := range []string{"whsec_test_plain_1", "tok_test_plain_2"} {
+			if strings.Contains(page, plain) {
+				t.Errorf("%s shows %q", q, plain)
+			}
+		}
+	}
+	page := e.do("GET", base+"?tab=secrets", nil).Body.String()
+	if !strings.Contains(page, "<b>WEBHOOK_SECRET</b> · signing key · fingerprint <code>"+c.Secrets[0].Fingerprint+"</code>") || !strings.Contains(page, "not used: <a ") {
+		t.Errorf("secrets list lacks the row")
+	}
+	// A refused save does not echo the value back either.
+	rec := e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"new"}, "name": {"1BAD"}, "secret_kind": {"key"}, "value": {"whsec_test_plain_3"}})
+	if rec.Code != http.StatusUnprocessableEntity || strings.Contains(rec.Body.String(), "whsec_test_plain_3") || !strings.Contains(rec.Body.String(), `<h2 id="dialog-title">New secret</h2>`) {
+		t.Errorf("refused secret: %d", rec.Code)
+	}
+	// A refused replacement shows the stored fingerprint, not the attempted one.
+	rec = e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"0"}, "value": {" padded "}})
+	if body := rec.Body.String(); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(body, "now <code>"+c.Secrets[0].Fingerprint+"</code>") {
+		t.Errorf("refused replace: %d %q", rec.Code, errorOf(body))
+	}
+	// Replacing keeps the name and kind, changes the value.
+	old := c.Secrets[0].Sealed
+	if rec := e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"0"}, "name": {"OTHER"}, "secret_kind": {"token"}, "value": {"whsec_test_plain_4"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("replace: %d %s", rec.Code, errorOf(rec.Body.String()))
+	}
+	c = e.config(t, ep.ID)
+	if c.Secrets[0].Name != "WEBHOOK_SECRET" || c.Secrets[0].Kind != "key" || c.Secrets[0].Sealed == old {
+		t.Fatalf("after replace %+v", c.Secrets[0])
+	}
+	if rec := e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"new"}, "name": {"EMPTY"}, "secret_kind": {"key"}, "value": {""}}); !strings.Contains(errorOf(rec.Body.String()), "enter the value") {
+		t.Errorf("empty value: %q", errorOf(rec.Body.String()))
+	}
+}
+
+func TestAuthCheckEditor(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/auth")
+	save := url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"stripe"}, "secret": {"WEBHOOK_SECRET"}, "tolerance_s": {"600"}, "enforce": {"on"}}
+	rec := e.edit(ep.ID, save)
+	if body := rec.Body.String(); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(errorOf(body), "secret WEBHOOK_SECRET does not exist") ||
+		!strings.Contains(body, `<h2 id="dialog-title">New check</h2>`) {
+		t.Fatalf("unknown secret: %d %q", rec.Code, errorOf(body))
+	}
+	e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"new"}, "name": {"WEBHOOK_SECRET"}, "secret_kind": {"key"}, "value": {"whsec_test_1"}})
+	save.Del("v") // edit filled in the version of that time
+	if rec := e.edit(ep.ID, save); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: %d %s", rec.Code, errorOf(rec.Body.String()))
+	}
+	c := e.config(t, ep.ID)
+	if ch := c.Checks[0]; ch.Kind != "stripe" || ch.Secret != "WEBHOOK_SECRET" || ch.ToleranceS != 600 || !ch.Enforce || ch.Header != "" {
+		t.Fatalf("stored check %+v", ch)
+	}
+	base := "/admin/e/" + id(ep.ID) + "/behaviour"
+	page := e.do("GET", base+"?tab=checks", nil).Body.String()
+	if !strings.Contains(page, "<b>Stripe signature</b> · secret WEBHOOK_SECRET · tolerance 600 s · enforced · else 401") {
+		t.Errorf("checks list lacks the row")
+	}
+	rec = e.edit(ep.ID, url.Values{"op": {"secret-del"}, "i": {"0"}})
+	if !strings.Contains(errorOf(rec.Body.String()), "WEBHOOK_SECRET is used by check 1 (Stripe signature)") {
+		t.Errorf("deleting a used secret: %q", errorOf(rec.Body.String()))
+	}
+	dialog := e.do("GET", base+"?edit=check-new", nil).Body.String()
+	if strings.Count(dialog, `<option value="`) < 7+1+3 || !strings.Contains(dialog, `<option value="WEBHOOK_SECRET">WEBHOOK_SECRET (signing key)</option>`) {
+		t.Errorf("check dialog lacks kinds or secrets")
+	}
+	// A bearer check refuses a signing key; a header check still saves as before.
+	e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"new"}, "name": {"TOKEN"}, "secret_kind": {"token"}, "value": {"tok_test"}})
+	if rec := e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"bearer"}, "secret": {"WEBHOOK_SECRET"}}); !strings.Contains(errorOf(rec.Body.String()), "is a signing key, not a token or password") {
+		t.Errorf("bearer with a key: %q", errorOf(rec.Body.String()))
+	}
+	if rec := e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"header"}, "header": {"X-Env"}, "match": {"present"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("header check: %d %s", rec.Code, errorOf(rec.Body.String()))
+	}
+	if ch := e.config(t, ep.ID).Checks[1]; ch.Kind != "" || ch.Header != "X-Env" || ch.Secret != "" {
+		t.Fatalf("header check stored as %+v", ch)
+	}
+}
+
+// TestUnusedSecretLeadsToACheck: a secret alone does nothing; saving one
+// that no check uses says so and links to a new check that uses it.
+func TestUnusedSecretLeadsToACheck(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/ping")
+	e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"new"}, "name": {"PING_TOKEN"}, "secret_kind": {"token"}, "value": {"tok_test"}})
+	base := "/admin/e/" + id(ep.ID) + "/behaviour"
+	link := `href="` + base + `?tab=checks&amp;edit=check-new&amp;secret=PING_TOKEN"`
+	page := e.do("GET", base+"?tab=secrets&saved=secret-0", nil).Body.String()
+	if !strings.Contains(page, "It does nothing until a check uses it") || !strings.Contains(page, link) {
+		t.Fatal("no hint after saving an unused secret")
+	}
+	if page := e.do("GET", base+"?tab=secrets", nil).Body.String(); !strings.Contains(page, "not used: <a "+link+">add a check</a>") {
+		t.Fatal("the row does not offer a check")
+	}
+	dialog := e.do("GET", base+"?tab=checks&edit=check-new&secret=PING_TOKEN", nil).Body.String()
+	if !strings.Contains(dialog, `<option value="bearer" selected>`) || !strings.Contains(dialog, `<option value="PING_TOKEN" selected>`) {
+		t.Fatal("the new check does not start from the secret")
+	}
+	e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"bearer"}, "secret": {"PING_TOKEN"}, "enforce": {"on"}})
+	if page := e.do("GET", base+"?tab=secrets&saved=secret-0", nil).Body.String(); strings.Contains(page, "It does nothing") || !strings.Contains(page, "used by check 1 (Bearer token)") {
+		t.Fatal("a used secret still reads as unused")
+	}
+}

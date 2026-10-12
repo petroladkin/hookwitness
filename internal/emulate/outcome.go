@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // Outcome sources: what decided the answer.
@@ -96,6 +97,19 @@ func (o Outcome) Why() string {
 		return "default reply"
 	}
 	return ""
+}
+
+// StampWhy is Why short enough for a stamp: an authorization refusal names
+// the check, not its reason ("check 1: Stripe signature"); the reason is in
+// the Answer and Authorization sections.
+func (o Outcome) StampWhy() string {
+	w := o.Why()
+	if o.Source == FromCheck {
+		if parts := strings.SplitN(w, ": ", 3); len(parts) == 3 {
+			return parts[0] + ": " + parts[1]
+		}
+	}
+	return w
 }
 
 // Good reports a 2xx answer; the strip marks the rest.
