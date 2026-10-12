@@ -11,10 +11,12 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/config"
@@ -30,6 +32,7 @@ const usage = `Usage: hookwitness <command> [flags]
 
 Commands:
   serve     start the server (hookwitness serve -h for its flags)
+  health    exit 0 when the server at -addr / HOOKWITNESS_ADDR answers /healthz
   version   print the version and exit
 `
 
@@ -52,6 +55,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	switch args[0] {
 	case "serve":
 		return serve(ctx, args[1:], getenv, stderr)
+	case "health":
+		return health(ctx, args[1:], getenv, stderr)
 	case "version", "--version", "-version":
 		fmt.Fprintln(stdout, "hookwitness", version.String())
 		return 0
@@ -135,6 +140,56 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	}
 	log.Info("stopped")
 	return 0
+}
+
+// health asks a running server's /healthz and exits 0 when it answers 200:
+// the probe of a container's HEALTHCHECK, since the image has no curl. It
+// reads the same flags and environment as serve, so -addr and
+// HOOKWITNESS_ADDR mean the same thing to both.
+func health(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer) int {
+	cfg, err := config.Parse(args, getenv, stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "hookwitness:", err)
+		return 2
+	}
+	url := "http://" + probeAddr(cfg.Addr) + "/healthz"
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		fmt.Fprintln(stderr, "hookwitness: unhealthy:", err)
+		return 1
+	}
+	// Never through a proxy from the environment: the server is local.
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintln(stderr, "hookwitness: unhealthy:", err)
+		return 1
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(stderr, "hookwitness: unhealthy: %s answered %d\n", url, resp.StatusCode)
+		return 1
+	}
+	return 0
+}
+
+// probeAddr turns a listen address into one to connect to: a server
+// listening on all interfaces (":8080", "0.0.0.0:8080", "[::]:8080") is
+// reached on the IPv4 loopback.
+func probeAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
 }
 
 // warnUnreadableSecrets logs the endpoints whose signing keys this key cannot

@@ -6,11 +6,21 @@ VERSION ?= $(shell git describe --tags --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 LDFLAGS := -s -w -X $(MODULE)/internal/version.Version=$(VERSION) -X $(MODULE)/internal/version.Commit=$(COMMIT)
 
-.PHONY: build check generate templ-check vet fmt-check staticcheck test notices hooks clean
+IMAGE   ?= hookwitness:dev
+
+.PHONY: build image image-smoke check generate templ-check vet fmt-check staticcheck test notices hooks clean
 
 ## build: one static binary in bin/ (no cgo)
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/hookwitness ./cmd/hookwitness
+
+## image: the container image for this machine's platform (needs Docker)
+image:
+	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
+
+## image-smoke: run the container scenario against $(IMAGE) (Docker, curl, openssl)
+image-smoke:
+	scripts/docker-smoke.sh $(IMAGE)
 
 ## check: everything a change must pass
 check: templ-check build vet fmt-check staticcheck test

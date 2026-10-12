@@ -22,12 +22,15 @@ checks (GitHub, Stripe, Standard Webhooks/Svix, generic HMAC, bearer, basic)
 give each request pass / fail / n/v verdicts, optionally enforced, with
 re-check; their secrets are write-only (signing keys sealed, tokens hashed).
 No JSON Schema verdicts, reports, REST API or MCP yet. `hookwitness version`
-prints the build identity. This section must describe what is true now —
-update it in the same change that makes it false.
+prints the build identity; `hookwitness health` probes `/healthz` (the
+container's health check). A container image (distroless, non-root, data in
+the `/data` volume) is built, smoke-tested and published to GHCR by CI.
+This section must describe what is true now — update it in the same change
+that makes it false.
 
 ## Layout
 
-- `cmd/hookwitness` — the command: subcommands `serve`, `version`; signal
+- `cmd/hookwitness` — the command: subcommands `serve`, `health`, `version`; signal
   handling; logger setup; wiring of the parts below.
 - `internal/config` — `serve` settings from flags and `HOOKWITNESS_*` env.
 - `internal/store` — sqlite (modernc.org/sqlite, no cgo): pragmas, embedded
@@ -71,7 +74,18 @@ update it in the same change that makes it false.
   `guard:allow`, a file with `guard:allow-file` in its first line), and
   `THIRD-PARTY-NOTICES.md` matching the modules compiled in and the bundled
   web assets.
-- `scripts/hooks` — git hooks; `scripts/notices.sh` — notices generator.
+- `scripts/hooks` — git hooks; `scripts/notices.sh` — notices generator;
+  `scripts/docker-smoke.sh` — the container scenario (README's `docker run`,
+  health, persistence of data and sealed secrets, graceful stop, read-only).
+- `Dockerfile`, `.dockerignore` — two-stage image: cross-compiling build
+  stage through `make build`, distroless static nonroot final stage; the
+  build context is an allowlist.
+- `.github/workflows/ci.yml` — `make check`, then the amd64 image and its
+  smoke test on every PR and push; from `dev` (`:edge`) and `v*` tags the
+  amd64+arm64 image is pushed to GHCR with SBOM and provenance attestations
+  attached as referrers (not in the image index). Actions are pinned to
+  commit SHAs; `.github/dependabot.yml` updates them, the Go modules and the
+  base images weekly.
 
 ## Commands
 
@@ -83,6 +97,8 @@ update it in the same change that makes it false.
 - `make notices` — regenerate `THIRD-PARTY-NOTICES.md` after a dependency
   or vendored-asset change; only permissive licenses are accepted.
 - `make hooks` — enable the git hooks.
+- `make image` — the container image `hookwitness:dev` (Docker); `make
+  image-smoke` — the container scenario against it (Docker, curl, openssl).
 
 ## Scope
 
