@@ -29,9 +29,11 @@ until curl -fs $HW/healthz >/dev/null; do sleep 0.5; done
 
 ```sh
 EP=$(curl -s -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/orders/events"}')
-ID=$(echo "$EP" | jq .id); URL=$(echo "$EP" | jq -r .url)    # http://localhost:8080/orders/events
+ID=$(printf '%s\n' "$EP" | jq .id); URL=$(printf '%s\n' "$EP" | jq -r .url)    # http://localhost:8080/orders/events
 ```
 
+- Create the endpoint before triggering the sender: an unknown path is
+  answered `404` (and kept in the Unmatched register).
 - Reuse an existing one: `curl -s "$API/endpoints?path=/orders/events" | jq '.endpoints[0]'`.
 - Configure the app under test with the webhook URL:
   - app on the host → `$URL`;
@@ -74,25 +76,31 @@ LAST=0
 # ... trigger the app under test ...
 R=$(curl -s "$API/endpoints/$ID/requests?after=$LAST&wait=30s" | jq '.requests[0]')
 [ "$R" != null ] || echo "FAIL: no webhook within 30 s"
-LAST=$(echo "$R" | jq .id)
+LAST=$(printf '%s\n' "$R" | jq .id)
 ```
 
 `wait` returns as soon as a request arrives (at most 60 s; an empty list when
-the time is up). Several requests come oldest first; none is returned twice
-if you always pass the last id you saw.
+the time is up). With `after` the list is **oldest first**, and none is
+returned twice if you always pass the last id you saw; without `after` it is
+newest first (`limit`, `before=<id>` to page back).
 
 ## 5. Assert
 
 ```sh
-echo "$R" | jq '{status, verdict}'                      # what hookwitness answered; pass | fail | n/v | ""
-FULL=$(curl -s $API/requests/$LAST)
-echo "$FULL" | jq -r .body_text | jq -e '.order == 42'  # the JSON payload exactly as sent
-echo "$FULL" | jq -r '.headers[] | select(.[0]|ascii_downcase=="content-type") | .[1]'
-echo "$FULL" | jq '.verdicts[] | {label, result, reason}'   # why a check failed
+printf '%s\n' "$R" | jq '{status, verdict}'          # what hookwitness answered; pass | fail | n/v | ""
+curl -s $API/requests/$LAST > req.json                # the request in full
+jq -r .body_text req.json | jq -e '.type == "order.paid" and .order_id == 42'   # the JSON payload as sent
+jq -r '.headers[] | select(.[0]|ascii_downcase=="content-type") | .[1]' req.json
+jq -r '.headers[] | select(.[0]|ascii_downcase=="authorization") | .[1]' req.json \
+  | sed 's/^Basic //' | base64 -d; echo                # the exact user:password sent
+jq '.verdicts[] | {label, result, reason}' req.json  # why a check failed
+jq '.outcome | {source, action, status, check}' req.json   # what was done: default/rule/check, reply/timeout/drop/refused
 ```
 
 - `body_text` holds the body when it is UTF-8 (else `body_base64`).
-- `headers` are `[name, value]` pairs exactly as received (order, case, repeats).
+- `headers` are `[name, value]` pairs exactly as received (order, case, repeats);
+  the reply hookwitness sent is in `outcome` (`status`, `headers` as
+  `{name, value}`, `body`).
 - `status` `401` with `verdict` `fail` = refused by an enforced check;
   `verdicts[].reason` says why (wrong password, missing header, bad signature).
 
@@ -105,6 +113,9 @@ echo "$FULL" | jq '.verdicts[] | {label, result, reason}'   # why a check failed
   the parts you want to keep. Secrets are kept and set separately.
 - Secret values are never returned; to change one, PUT it again.
 - Errors are `{"error":{"code","message","field"}}` — read `message`.
+- Pipe JSON with `printf '%s\n' "$VAR"` or straight from `curl`, never
+  `echo "$VAR"`: zsh's `echo` turns `\n` inside JSON strings into newlines
+  and `jq` then fails.
 - A caught request shows the credentials the sender used (that is the evidence);
   use test secrets only.
 

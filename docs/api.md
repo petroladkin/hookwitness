@@ -218,8 +218,15 @@ One request adds:
 - `headers` are as received: in order, with their case, repeated names kept.
 - `body_text` when the body is valid UTF-8, else `body_base64`; neither when
   the body was not kept.
-- `outcome` says what was done (rule or default, status, delay, a refusing
-  check); `verdicts` has one entry per authorization check with its reason.
+- `outcome` says what was done: `source` (`default`, `rule` with `rule` and
+  `label`, `check` with the refusing `check`, `limit`), `action` (`reply`,
+  `timeout`, `drop`, `refused`, `error`), the reply sent (`status`, `headers`
+  as `{name, value}`, the first 64 KiB of `body`), `delay_ms`, `waited_ms`
+  for a timeout, `counter`.
+- `verdicts` has one entry per authorization check: `check` (its 1-based
+  position), `label`, `result`, `reason`, `at`.
+- In shell scripts pipe JSON from a variable with `printf '%s\n' "$VAR"`, not
+  `echo` (zsh's `echo` expands `\n` inside JSON strings).
 
 **Waiting without missing anything:** keep the id of the last request you have
 handled (0 at the start) and ask for `after=<that id>&wait=…`. Requests that
@@ -231,15 +238,15 @@ arrive between two calls are returned by the next one; none is returned twice.
 
 ```sh
 EP=$(curl -s -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/hooks"}')
-ID=$(echo "$EP" | jq .id); URL=$(echo "$EP" | jq -r .url)
+ID=$(printf '%s\n' "$EP" | jq .id); URL=$(printf '%s\n' "$EP" | jq -r .url)
 LAST=0
 
 # ... make the app under test send its webhook to $URL ...
 
 R=$(curl -s "$API/endpoints/$ID/requests?after=$LAST&wait=30s" | jq '.requests[0]')
 [ "$R" != null ] || { echo "no webhook within 30 s"; exit 1; }
-echo "$R" | jq '{status, verdict}'
-LAST=$(echo "$R" | jq .id)
+printf '%s\n' "$R" | jq '{status, verdict}'
+LAST=$(printf '%s\n' "$R" | jq .id)
 curl -s $API/requests/$LAST | jq -r .body_text | jq .   # the payload as sent
 ```
 
