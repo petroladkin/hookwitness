@@ -95,11 +95,11 @@ that makes it false.
   stage through `make build`, distroless static nonroot final stage; the
   build context is an allowlist.
 - `.github/workflows/ci.yml` — `make check`, then the amd64 image and its
-  smoke test on every PR and push; from `dev` (`:edge`) and `v*` tags the
-  amd64+arm64 image is pushed to GHCR with SBOM and provenance attestations
-  attached as referrers (not in the image index). Actions are pinned to
-  commit SHAs; `.github/dependabot.yml` updates them, the Go modules and the
-  base images weekly.
+  container and API smoke tests on every PR and push; from `dev` (`:edge`) and
+  `v*` tags the amd64+arm64 image is pushed to GHCR with SBOM and provenance
+  attestations attached as referrers (not in the image index). Actions are
+  pinned to commit SHAs; `.github/dependabot.yml` updates them, the Go modules
+  and the base images weekly.
 
 ## Commands
 
