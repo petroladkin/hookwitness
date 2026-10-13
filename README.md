@@ -4,8 +4,8 @@ Catch webhooks, get a verdict, attach the evidence. Self-hosted, single binary,
 MCP-ready.
 
 **Status: early development.** Catch endpoints with a live view, scripted
-responses, authorization verdicts and the core of the REST API work; JSON
-Schema verdicts, reports, the rest of the API and MCP come next.
+responses, authorization and JSON Schema verdicts and the core of the REST
+API work; reports, the rest of the API and MCP come next.
 
 ## What it is for
 
@@ -227,6 +227,50 @@ curl -s -d "$BODY" -H 'Authorization: Basic dTpw' $H                           #
 # Basic — secret QA_PASSWORD (token or password) = pw_test; check: Basic credentials, user qa
 curl -s -d "$BODY" -u qa:pw_test $H                                            # pass
 curl -s -d "$BODY" -u qa:wrong $H                                              # fail: user or password does not match
+```
+
+## JSON Schema checks
+
+Does the event keep its contract? A JSON Schema check validates each request's
+body and records a verdict next to the authorization ones: **pass**, **fail**
+with up to 20 problems (each a JSON pointer into the body, the failing keyword
+and a message), **n/v** when the body was not kept, or **n/c** (not checked)
+when no schema applies to the event.
+
+- Paste or upload schemas on the Behaviour page's **Schemas** tab. Drafts
+  follow `$schema` (draft-04 to 2020-12; 2020-12 when it is absent). An
+  invalid schema is refused at save with the reason.
+- Schemas refer to each other by name: `{"$ref": "Address"}`. Nothing is ever
+  fetched: a reference to any other URL or a file is refused at save.
+- `format` is asserted: a `date-time` of `"yesterday"` fails.
+- A check uses one schema, or picks it by a discriminator — a JSON pointer
+  into the body (`/type`) or a header (`X-GitHub-Event`) — with a mapping
+  `order.paid = OrderPaid`. A value without a mapping gets **n/c** and is
+  never refused.
+- A body that is not JSON fails with the parse error and its byte offset; an
+  empty body fails as such.
+- **Enforce** refuses a failing body with `400` listing the problems (or your
+  own reply) before the rules, so it is not counted.
+- The request's page stamps the verdict (`Schema: fail, 3 errors`), lists the
+  problems and marks the offending places in the body. After editing a
+  schema, **Re-check** recomputes the verdicts of every kept request.
+
+Example: schema `OrderPaid` and a check that picks it by `/type`:
+
+```json
+{"type":"object","required":["order_id","amount"],
+ "properties":{"order_id":{"type":"integer"},"amount":{"type":"integer","minimum":1},
+               "paid_at":{"type":"string","format":"date-time"}}}
+```
+
+```sh
+H=http://127.0.0.1:8080/orders/events
+curl -s -d '{"type":"order.paid","order_id":42,"amount":1999,"paid_at":"2026-10-12T17:28:07Z"}' $H  # pass
+curl -s -d '{"type":"order.paid","order_id":"42","paid_at":"yesterday"}' $H
+# fail, 3 errors: (body) required: missing property 'amount'
+#                 /order_id type: got string, want integer
+#                 /paid_at format: 'yesterday' is not valid date-time: …
+curl -s -d '{"type":"order.created","order_id":43}' $H                                              # n/c: no schema for /type "order.created"
 ```
 
 ## REST API

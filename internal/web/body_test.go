@@ -110,3 +110,32 @@ func TestSize(t *testing.T) {
 		}
 	}
 }
+
+func TestPrettyJSONPaths(t *testing.T) {
+	toks, err := prettyJSON([]byte(`{"a":{"b":[1,{"c~/d":true}]},"e":null}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, tk := range toks {
+		if tk.HasPath {
+			got[tk.Text] += tk.Path + " "
+		}
+	}
+	want := map[string]string{
+		`"a"`: "/a ", `"b"`: "/a/b ", `1`: "/a/b/0 ", `"c~/d"`: "/a/b/1/c~0~1d ", `true`: "/a/b/1/c~0~1d ",
+		`"e"`: "/e ", `null`: "/e ",
+		`{`: " /a /a/b/1 ", `}`: "/a/b/1 /a  ", `[`: "/a/b ", `]`: "/a/b ",
+	}
+	for text, paths := range want {
+		if got[text] != paths {
+			t.Errorf("%s at %q, want %q", text, got[text], paths)
+		}
+	}
+	markBad(toks, map[string]bool{"/a/b/0": true})
+	for _, tk := range toks {
+		if tk.Bad != (tk.Text == "1") {
+			t.Errorf("token %q bad=%v", tk.Text, tk.Bad)
+		}
+	}
+}

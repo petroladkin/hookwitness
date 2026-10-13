@@ -20,12 +20,15 @@ const (
 	KindHMAC     = "hmac"     // any HMAC signature header
 	KindBearer   = "bearer"   // Authorization: Bearer
 	KindBasic    = "basic"    // Authorization: Basic
+	KindSchema   = "schema"   // the body against a JSON Schema
 )
 
 // AuthKinds in the order the check editor offers them.
 var AuthKinds = []string{KindGitHub, KindStripe, KindStandard, KindHMAC, KindBearer, KindBasic}
 
-func knownKind(k string) bool { return k == KindHeader || slices.Contains(AuthKinds, k) }
+func knownKind(k string) bool {
+	return k == KindHeader || k == KindSchema || slices.Contains(AuthKinds, k)
+}
 
 func (ch Check) kind() string {
 	if ch.Kind == "" {
@@ -34,8 +37,9 @@ func (ch Check) kind() string {
 	return ch.Kind
 }
 
-// IsAuth reports whether the check is an authorization check.
-func (ch Check) IsAuth() bool { return ch.kind() != KindHeader }
+// GivesVerdict reports whether the check records a verdict on every
+// request: an authorization or a schema check (not a required header).
+func (ch Check) GivesVerdict() bool { return ch.kind() != KindHeader }
 
 // Label names the check for verdicts and messages.
 func (ch Check) Label() string {
@@ -54,6 +58,11 @@ func (ch Check) Label() string {
 		return "Basic credentials"
 	case KindHeader:
 		return "header " + ch.Header
+	case KindSchema:
+		if ch.Select != nil {
+			return "JSON Schema by " + ch.Select.Label()
+		}
+		return "JSON Schema " + ch.Schema
 	}
 	return ch.Kind
 }
@@ -104,7 +113,7 @@ func (c Config) SecretByName(name string) (Secret, bool) {
 func (c Config) SecretUsers(name string) []string {
 	var out []string
 	for i, ch := range c.Checks {
-		if ch.IsAuth() && ch.Secret == name {
+		if ch.GivesVerdict() && ch.Secret == name {
 			out = append(out, fmt.Sprintf("check %d (%s)", i+1, ch.Label()))
 		}
 	}
@@ -136,6 +145,9 @@ func (c Config) validateSecrets() error {
 func (c Config) validateAuth(ch Check, maxWait time.Duration) error {
 	if !knownKind(ch.kind()) {
 		return fmt.Errorf("unknown kind %q", ch.Kind)
+	}
+	if ch.kind() == KindSchema {
+		return c.validateSchemaCheck(ch, maxWait)
 	}
 	if ch.Secret == "" {
 		return errors.New("choose the secret")
@@ -200,7 +212,7 @@ func (c Config) Verify(r Request, received time.Time, hasBody bool, keys Keyring
 	var refuse *Failed
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	for i, ch := range c.Checks {
-		if !ch.IsAuth() {
+		if !ch.GivesVerdict() {
 			if refuse == nil {
 				if f := (Config{Checks: []Check{ch}}).RunChecks(r); f != nil {
 					f.Index = i + 1
@@ -215,14 +227,18 @@ func (c Config) Verify(r Request, received time.Time, hasBody bool, keys Keyring
 		// An enforced check lets through only what it could verify: a secret it
 		// cannot open (a lost key file) must not open the endpoint. A body that
 		// was not kept is answered 413 anyway.
-		if refuse == nil && ch.Enforce && v.Result != auth.Pass && (v.Result == auth.Fail || hasBody) {
-			refuse = &Failed{Index: i + 1, Check: ch, Why: v.Reason}
+		// A check that does not apply (no schema for this event) lets it through.
+		if refuse == nil && ch.Enforce && v.Result != auth.Pass && v.Result != auth.NotChecked && (v.Result == auth.Fail || hasBody) {
+			refuse = &Failed{Index: i + 1, Check: ch, Why: v.Reason, Problems: v.Problems, Total: v.Total}
 		}
 	}
 	return verdicts, refuse
 }
 
 func (c Config) verify(ch Check, r Request, in auth.Input, keys Keyring) auth.Verdict {
+	if ch.kind() == KindSchema {
+		return c.verifySchema(ch, r, in.HasBody)
+	}
 	s, ok := c.SecretByName(ch.Secret)
 	if !ok {
 		return auth.Verdict{Result: auth.NotVerifiable, Reason: "secret " + ch.Secret + " does not exist"}
@@ -283,20 +299,17 @@ func VerdictsJSON(vs []auth.Verdict) string {
 }
 
 // Overall is a request's verdict across its checks: fail if any failed,
-// else n/v if any could not be verified, else pass; "" without any.
+// else n/v if any could not be verified, else pass if any passed, else n/c
+// when none applied; "" without any.
 func Overall(vs []auth.Verdict) string {
-	out := ""
+	rank := map[auth.Result]int{auth.NotChecked: 1, auth.Pass: 2, auth.NotVerifiable: 3, auth.Fail: 4}
+	out := auth.Result("")
 	for _, v := range vs {
-		switch {
-		case v.Result == auth.Fail:
-			return string(auth.Fail)
-		case v.Result == auth.NotVerifiable:
-			out = string(auth.NotVerifiable)
-		case out == "":
-			out = string(auth.Pass)
+		if rank[v.Result] > rank[out] {
+			out = v.Result
 		}
 	}
-	return out
+	return string(out)
 }
 
 // literal makes text safe as a reply template: a reason can quote the
@@ -306,6 +319,9 @@ func literal(s string) string { return strings.ReplaceAll(s, "{{", `{{"{{"}}`) }
 // authRefusal is the standard reply to a request refused by an
 // authorization check: 401, with WWW-Authenticate for bearer and basic.
 func (f Failed) authRefusal() Reply {
+	if f.Check.kind() == KindSchema {
+		return f.schemaRefusal()
+	}
 	r := Reply{
 		Status:  401,
 		Headers: []Header{{Name: "Content-Type", Value: "text/plain; charset=utf-8"}},

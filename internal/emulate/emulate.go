@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/petroladkin/hookwitness/internal/auth"
 )
 
 // Header is one response header line.
@@ -86,6 +88,9 @@ type Check struct {
 	Content         string `json:"content,omitempty"`          // KindHMAC: template of the signed content; "" = the raw body
 	ToleranceS      int64  `json:"tolerance_s,omitempty"`      // KindStripe, KindStandard; 0 = auth.DefaultTolerance
 	IgnoreTimestamp bool   `json:"ignore_timestamp,omitempty"` // KindStripe, KindStandard
+
+	Schema string  `json:"schema,omitempty"` // KindSchema: the schema's name, when there is no Select
+	Select *Select `json:"select,omitempty"` // KindSchema: pick the schema by a value of the request
 }
 
 // Var is an endpoint variable: a test value in plain text, never a secret.
@@ -101,6 +106,7 @@ type Config struct {
 	Checks  []Check  `json:"checks,omitempty"`
 	Vars    []Var    `json:"vars,omitempty"`
 	Secrets []Secret `json:"secrets,omitempty"` // sealed or hashed; never template data
+	Schemas []Schema `json:"schemas,omitempty"` // JSON Schemas for schema checks
 }
 
 // DefaultConfig is what a new endpoint does: 200 with an empty body.
@@ -151,6 +157,11 @@ func (c Config) Validate(maxWait time.Duration) error {
 	}
 	if err := c.validateSecrets(); err != nil {
 		return err
+	}
+	if len(c.Schemas) > 0 {
+		if _, err := c.compiled(); err != nil {
+			return err
+		}
 	}
 	if err := c.Default.validate(maxWait); err != nil {
 		return fmt.Errorf("default reply: %w", err)
@@ -319,6 +330,9 @@ type Failed struct {
 	Index int // 1-based
 	Check Check
 	Why   string // a header check: "missing" or "has a wrong value"; an authorization check: the verdict's reason
+
+	Problems []auth.Problem // a schema check: the first problems found
+	Total    int            // a schema check: all problems found
 }
 
 // Describe names the failed check for the record and the standard error.

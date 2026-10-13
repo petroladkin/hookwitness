@@ -133,6 +133,9 @@ The document (fields left out take their zero value; `default.status` 0 means 20
     {"kind": "github", "secret": "GH_KEY"}                                      // enforce off: verdict only
   ],
   "vars": [{"name": "TEAM", "value": "qa"}],  // template values {{.Var.TEAM}}, plain text
+  "schemas": [                      // JSON Schemas for schema checks, by name
+    {"name": "OrderPaid", "text": "{\"type\":\"object\",\"required\":[\"order_id\"]}"}
+  ],
   "secrets": []                     // read-only here: set them on the secrets route
 }
 ```
@@ -153,6 +156,17 @@ The document (fields left out take their zero value; `default.status` 0 means 20
 | `hmac` | any signature header | key | `header`, `algo` (sha1/sha256/sha512), `encoding` (hex/base64), `prefix`, `content` (template; raw body when empty) |
 | `bearer` | `Authorization: Bearer` | token | — |
 | `basic` | `Authorization: Basic` | token (the password) | `user` |
+
+- **JSON Schema** checks (`"kind": "schema"`) validate the body against one of
+  the endpoint's `schemas`: `"schema": "OrderPaid"`, or picked by a
+  discriminator, `"select": {"from": "body", "key": "/type", "map": [{"value":
+  "order.paid", "schema": "OrderPaid"}]}` (`from` is `body` with a JSON
+  pointer or `header` with a header name). A value without a mapping gets the
+  verdict `n/c` (not checked) and is never refused; enforced failures are
+  refused with `400` listing the problems. Schemas follow `$schema` (2020-12
+  when absent), refer to each other by name (`{"$ref": "Address"}`), are never
+  fetched from anywhere, and assert `format`. An invalid schema is a `422`
+  with field `schemas`.
 
 - Templates: `{{.Header "X-Id"}}`, `{{.Query "x"}}`, `{{.JSON "a.b.0"}}`,
   `{{.Var.NAME}}`, `{{.N}}`, `{{.Method}}`, `{{.Path}}`, `{{.Body}}`.
@@ -201,8 +215,9 @@ A list item:
 ```
 
 - `status` is what hookwitness answered (`0` while a timeout still holds it).
-- `verdict` is the overall verdict of the authorization checks: `pass`,
-  `fail`, `n/v`, or `""` when the endpoint has none.
+- `verdict` is the overall verdict of the authorization and schema checks:
+  `fail` if any failed, else `n/v` if any could not verify, else `pass` if any
+  passed, else `n/c` when none applied; `""` when the endpoint has none.
 - `body_kept` is false when the body was over `-max-body` (answered `413`).
 
 One request adds:
@@ -223,8 +238,10 @@ One request adds:
   `timeout`, `drop`, `refused`, `error`), the reply sent (`status`, `headers`
   as `{name, value}`, the first 64 KiB of `body`), `delay_ms`, `waited_ms`
   for a timeout, `counter`.
-- `verdicts` has one entry per authorization check: `check` (its 1-based
-  position), `label`, `result`, `reason`, `at`.
+- `verdicts` has one entry per authorization or schema check: `check` (its
+  1-based position), `label`, `result`, `reason`, `at`; a failed schema check
+  adds `problems` (up to 20 of `{path, keyword, message}`, `path` a JSON
+  pointer into the body) and `total`.
 - In shell scripts pipe JSON from a variable with `printf '%s\n' "$VAR"`, not
   `echo` (zsh's `echo` expands `\n` inside JSON strings).
 

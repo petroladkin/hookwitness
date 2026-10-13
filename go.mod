@@ -2,12 +2,16 @@ module github.com/petroladkin/hookwitness
 
 go 1.27
 
-require modernc.org/sqlite v1.60.1
+require (
+	github.com/a-h/templ v0.3.1020
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	golang.org/x/text v0.42.0
+	modernc.org/sqlite v1.60.1
+)
 
 require (
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
 	github.com/a-h/parse v0.0.0-20250122154542-74294addb73e // indirect
-	github.com/a-h/templ v0.3.1020 // indirect
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cli/browser v1.3.0 // indirect

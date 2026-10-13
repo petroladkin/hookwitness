@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -29,9 +30,14 @@ const (
 )
 
 // token is a piece of pretty-printed JSON with its highlight class
-// ("k" key, "s" string, "n" number/literal, "" punctuation and space).
+// ("k" key, "s" string, "n" number/literal, "" punctuation and space) and,
+// for keys, values and brackets, the JSON pointer of the value it belongs
+// to (a key: its member's value), so schema problems can be marked.
 type token struct {
 	Class, Text string
+	Path        string
+	HasPath     bool
+	Bad         bool // a schema check found a problem at Path
 }
 
 // bodyView is a body prepared for the page.
@@ -85,7 +91,10 @@ func prettyJSON(b []byte) ([]token, error) {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()
 	var out []token
-	emit := func(class, text string) { out = append(out, token{class, text}) }
+	emit := func(class, text string) { out = append(out, token{Class: class, Text: text}) }
+	emitAt := func(class, text, path string) {
+		out = append(out, token{Class: class, Text: text, Path: path, HasPath: true})
+	}
 	indent := func(depth int) { emit("", "\n"+strings.Repeat("  ", depth)) }
 
 	var stack []jsonFrame
@@ -103,7 +112,7 @@ func prettyJSON(b []byte) ([]token, error) {
 			if f.count > 0 {
 				indent(len(stack))
 			}
-			emit("", string(d))
+			emitAt("", string(d), f.path)
 			afterValue(stack)
 			continue
 		}
@@ -120,24 +129,33 @@ func prettyJSON(b []byte) ([]token, error) {
 		}
 		if n := len(stack); n > 0 && stack[n-1].object && stack[n-1].key {
 			k, _ := t.(string)
-			emit("k", quote(k))
+			stack[n-1].member = stack[n-1].path + "/" + pointerToken(k)
+			emitAt("k", quote(k), stack[n-1].member)
 			emit("", ": ")
 			stack[n-1].key = false
 			continue
 		}
+		path := ""
+		if n := len(stack); n > 0 {
+			if f := stack[n-1]; f.object {
+				path = f.member
+			} else {
+				path = f.path + "/" + strconv.Itoa(f.count-1)
+			}
+		}
 		switch v := t.(type) {
 		case json.Delim:
-			emit("", string(v))
-			stack = append(stack, jsonFrame{object: v == '{', key: v == '{'})
+			emitAt("", string(v), path)
+			stack = append(stack, jsonFrame{object: v == '{', key: v == '{', path: path})
 			continue
 		case string:
-			emit("s", quote(v))
+			emitAt("s", quote(v), path)
 		case json.Number:
-			emit("n", v.String())
+			emitAt("n", v.String(), path)
 		case bool:
-			emit("n", fmt.Sprint(v))
+			emitAt("n", fmt.Sprint(v), path)
 		case nil:
-			emit("n", "null")
+			emitAt("n", "null", path)
 		}
 		afterValue(stack)
 	}
@@ -146,8 +164,22 @@ func prettyJSON(b []byte) ([]token, error) {
 // jsonFrame is an open object or array while pretty-printing.
 type jsonFrame struct {
 	object bool
-	count  int  // members written
-	key    bool // in an object: the next token is a key
+	count  int    // members written
+	key    bool   // in an object: the next token is a key
+	path   string // JSON pointer of this object or array
+	member string // in an object: the pointer of the member being written
+}
+
+// pointerToken escapes a key for a JSON pointer (RFC 6901).
+func pointerToken(k string) string { return strings.NewReplacer("~", "~0", "/", "~1").Replace(k) }
+
+// markBad flags the tokens at the given JSON pointers.
+func markBad(toks []token, paths map[string]bool) {
+	for i := range toks {
+		if toks[i].HasPath && paths[toks[i].Path] {
+			toks[i].Bad = true
+		}
+	}
 }
 
 // afterValue marks that the next token in an enclosing object is a key.

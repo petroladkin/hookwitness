@@ -24,22 +24,22 @@ func TestExhibitVerdicts(t *testing.T) {
 	r := e.add(t, ep.ID, "{}", func(r *store.Request) { r.Verdict, r.Verdicts = "fail", vs })
 	page := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(r.ID), nil).Body.String()
 	for _, want := range []string{
-		"<h2>Authorization</h2>",
+		"<h2>Verdicts</h2>",
 		`<div class="verdict verdict-fail"><div class="vstamp">Stripe signature: fail</div>`,
 		"timestamp 412 s old (tolerance 300 s)",
 		"timestamp 412 s old (tolerance 300 s)<span class=\"when\"> · check 1 · checked 2026-10-11 20:13:02.000 UTC</span>",
 		"<tr><th>expected</th><td>t=1,v1=c4bcbd5f…</td></tr>",
 		`<div class="verdict verdict-pass"><div class="vstamp">Bearer token: pass</div>`,
 		`data-verdict="fail"`,
-		`<span class="tag verdict-fail">auth fail</span>`,
+		`<span class="tag verdict-fail">checks fail</span>`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page lacks %q", want)
 		}
 	}
 	plain := e.add(t, ep.ID, "{}", nil)
-	if page := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(plain.ID), nil).Body.String(); strings.Contains(page, "<h2>Authorization</h2>") {
-		t.Error("a request without verdicts shows an Authorization section")
+	if page := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(plain.ID), nil).Body.String(); strings.Contains(page, "<h2>Verdicts</h2>") {
+		t.Error("a request without verdicts shows a Verdicts section")
 	}
 }
 

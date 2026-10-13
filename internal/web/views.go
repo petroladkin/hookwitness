@@ -74,6 +74,7 @@ type exhibitView struct {
 	Limit    int64
 	Outcome  emulate.Outcome
 	Verdicts []auth.Verdict
+	BadPaths int // body tokens marked by schema problems
 }
 
 func id(n int64) string { return strconv.FormatInt(n, 10) }

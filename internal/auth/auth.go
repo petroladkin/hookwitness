@@ -25,6 +25,7 @@ const (
 	Pass          Result = "pass"
 	Fail          Result = "fail"
 	NotVerifiable Result = "n/v" // the request lacks what the check needs (a body not kept)
+	NotChecked    Result = "n/c" // the check does not apply: no schema for the event's type
 )
 
 // Verdict is the result of one check on one request.
@@ -35,7 +36,16 @@ type Verdict struct {
 	Reason   string    `json:"reason"`
 	Expected string    `json:"expected,omitempty"` // signatures only, truncated (Short)
 	Received string    `json:"received,omitempty"` // signatures only, as received
+	Problems []Problem `json:"problems,omitempty"` // schema checks: the first problems found
+	Total    int       `json:"total,omitempty"`    // schema checks: all problems found
 	At       time.Time `json:"at"`                 // when it was computed
+}
+
+// Problem is one way a body breaks its schema.
+type Problem struct {
+	Path    string `json:"path"`    // JSON pointer into the body; "" for the whole body
+	Keyword string `json:"keyword"` // the failing keyword: required, type, format... or json
+	Message string `json:"message"`
 }
 
 // Header is one request header line as received.
