@@ -40,7 +40,7 @@ func TestNoticesCoverEveryModule(t *testing.T) {
 	}
 	listed := map[string]bool{}
 	for h := range listedModules(string(notices)) {
-		if !strings.HasPrefix(h, assetDir) {
+		if !isAsset(h) {
 			listed[h] = true
 		}
 	}
@@ -66,29 +66,41 @@ func TestNoticesCoverEveryModule(t *testing.T) {
 	}
 }
 
-// assetDir holds the vendored web assets, one directory each.
-const assetDir = "internal/web/static/vendor/"
+// assetDirs hold the vendored assets compiled in, one directory each: the
+// web UI's scripts and fonts, and the fonts of the PDF reports.
+var assetDirs = []string{"internal/web/static/vendor/", "internal/report/fonts/"}
 
-// TestNoticesCoverEveryBundledAsset checks the bundled web assets the same
+func isAsset(heading string) bool {
+	for _, d := range assetDirs {
+		if strings.HasPrefix(heading, d) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestNoticesCoverEveryBundledAsset checks the bundled assets the same
 // way: each vendored directory carries its LICENSE and SOURCE and has a
 // section in THIRD-PARTY-NOTICES.md, and no section outlives its directory.
 func TestNoticesCoverEveryBundledAsset(t *testing.T) {
 	root := moduleRoot(t)
-	entries, err := os.ReadDir(filepath.Join(root, assetDir))
-	if err != nil {
-		t.Fatal(err)
-	}
 	dirs := map[string]bool{}
-	for _, e := range entries {
-		if !e.IsDir() {
-			t.Errorf("%s%s: vendored files go in a directory with their LICENSE and SOURCE", assetDir, e.Name())
-			continue
+	for _, assetDir := range assetDirs {
+		entries, err := os.ReadDir(filepath.Join(root, assetDir))
+		if err != nil {
+			t.Fatal(err)
 		}
-		dir := assetDir + e.Name()
-		dirs[dir] = true
-		for _, f := range []string{"LICENSE", "SOURCE"} {
-			if _, err := os.Stat(filepath.Join(root, dir, f)); err != nil {
-				t.Errorf("%s has no %s", dir, f)
+		for _, e := range entries {
+			if !e.IsDir() {
+				t.Errorf("%s%s: vendored files go in a directory with their LICENSE and SOURCE", assetDir, e.Name())
+				continue
+			}
+			dir := assetDir + e.Name()
+			dirs[dir] = true
+			for _, f := range []string{"LICENSE", "SOURCE"} {
+				if _, err := os.Stat(filepath.Join(root, dir, f)); err != nil {
+					t.Errorf("%s has no %s", dir, f)
+				}
 			}
 		}
 	}
@@ -98,7 +110,7 @@ func TestNoticesCoverEveryBundledAsset(t *testing.T) {
 	}
 	listed := map[string]bool{}
 	for h := range listedModules(string(notices)) {
-		if strings.HasPrefix(h, assetDir) {
+		if isAsset(h) {
 			listed[h] = true
 		}
 	}

@@ -2,8 +2,9 @@
 # Writes THIRD-PARTY-NOTICES.md to stdout: every module compiled into the
 # hookwitness binary, its version, its license, and the full text of every
 # license and notice file at the module's root (BSD and MIT require the text
-# to travel with binary distributions); then every web asset bundled under
-# internal/web/static/vendor/<name>/ (a LICENSE and a SOURCE file beside it).
+# to travel with binary distributions); then every asset bundled under
+# internal/web/static/vendor/<name>/ and internal/report/fonts/<name>/ (a
+# LICENSE and a SOURCE file beside it).
 #
 # Fails when a module's license is not one of the permissive licenses this
 # project accepts, so a copyleft dependency cannot slip in unnoticed.
@@ -78,14 +79,14 @@ done
 
 cat <<'ASSETS'
 
-# Bundled web assets
+# Bundled assets
 
-The web UI embeds these files in the binary. In the source tree each
-directory holds the files, their LICENSE and a SOURCE note (package, version,
-origin).
+The web UI and the PDF reports embed these files in the binary. In the
+source tree each directory holds the files, their LICENSE and a SOURCE note
+(package, version, origin).
 ASSETS
 
-for dir in $(ls -d internal/web/static/vendor/*/ | LC_ALL=C sort); do
+for dir in $(ls -d internal/web/static/vendor/*/ internal/report/fonts/*/ | LC_ALL=C sort); do
   dir=${dir%/}
   if [ ! -f "$dir/LICENSE" ] || [ ! -f "$dir/SOURCE" ]; then
     echo "notices: $dir needs a LICENSE and a SOURCE file" >&2

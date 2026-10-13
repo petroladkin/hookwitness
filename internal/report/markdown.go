@@ -231,5 +231,7 @@ func mdText(s string) string {
 }
 
 func oneLine(s string) string {
-	return strings.NewReplacer("\r\n", " ⏎ ", "\n", " ⏎ ", "\r", " ⏎ ").Replace(s)
+	return lineBreaks.Replace(s)
 }
+
+var lineBreaks = strings.NewReplacer("\r\n", " ⏎ ", "\n", " ⏎ ", "\r", " ⏎ ")
