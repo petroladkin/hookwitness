@@ -545,20 +545,22 @@ func (p *pdfWriter) item(it Item) error {
 		}
 		top = append(top, p.kv(rows, masked)...)
 	}
-	var pics []block // after the headers, before the body
-	if len(it.Images) > 0 {
-		pics = append(pics, gapBlock(3), p.caption("Images"))
-		for _, img := range it.Images {
-			col := cMuted
-			if img.Error != "" {
-				col = cAlarm
-			}
-			pics = append(pics, p.monoLines(margin, contentW, 7.5, cText, true, imageLabel(img.Found))...)
-			pics = append(pics, p.monoLines(margin, contentW, 7, col, false, imageNote(img.Found))...)
-			if b, ok := p.picture(img); ok {
-				pics = append(pics, b)
-			}
+	var pics [][]block // after the headers, before the body; each image with its caption
+	for i, img := range it.Images {
+		var g []block
+		if i == 0 {
+			g = append(g, gapBlock(3), p.caption("Images"))
 		}
+		col := cMuted
+		if img.Error != "" {
+			col = cAlarm
+		}
+		g = append(g, p.monoLines(margin, contentW, 7.5, cText, true, imageLabel(img.Found))...)
+		g = append(g, p.monoLines(margin, contentW, 7, col, false, imageNote(img.Found))...)
+		if b, ok := p.picture(img); ok {
+			g = append(g, b)
+		}
+		pics = append(pics, g)
 	}
 	note := wrapRunes(bodyNote(it.Body), p.cols(7, contentW-30))
 	bodyStart := []block{gapBlock(3), {float64(len(note))*10 + 4, func(y float64) {
@@ -578,8 +580,8 @@ func (p *pdfWriter) item(it Item) error {
 		p.together(append(top, bodyStart...))
 	} else {
 		p.together(top)
-		for _, b := range pics {
-			p.place(b)
+		for _, g := range pics {
+			p.together(g)
 		}
 		p.together(bodyStart)
 	}
@@ -666,6 +668,9 @@ func (p *pdfWriter) bodyLines(b Body) []block {
 				if part != "" {
 					lines[len(lines)-1] = append(lines[len(lines)-1], seg{part, col})
 				}
+			}
+			if t.Elided != "" {
+				lines[len(lines)-1] = append(lines[len(lines)-1], seg{t.Elided, cMuted})
 			}
 		}
 	case BodyText:

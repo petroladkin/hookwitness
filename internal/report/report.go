@@ -483,12 +483,26 @@ func (h *Head) item(r store.Request) Item {
 				break
 			}
 		}
+		paths := map[string]bool{}
 		for _, f := range picture.Find(r.Body, ct, it.Verdicts) {
 			img := ItemImage{Found: f}
 			if !h.noImages && f.Error == "" && picture.Decodable(f.Type) {
 				img.Data, _ = picture.At(r.Body, f.Path)
 			}
 			it.Images = append(it.Images, img)
+			paths[f.Path] = true
+		}
+		if it.Body.Kind == BodyJSON && len(paths) > 0 {
+			// The images are listed with their digests; their base64 would
+			// fill pages of the body, so it is shortened there.
+			payload.MarkImages(it.Body.Tokens, paths)
+			payload.ElideImages(it.Body.Tokens, 48)
+			var sb strings.Builder
+			for _, t := range it.Body.Tokens {
+				sb.WriteString(t.Text)
+				sb.WriteString(t.Elided)
+			}
+			it.Body.Text = sb.String()
 		}
 	}
 	for i, v := range it.Verdicts {
