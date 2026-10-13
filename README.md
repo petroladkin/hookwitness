@@ -4,8 +4,9 @@ Catch webhooks, get a verdict, attach the evidence. Self-hosted, single binary,
 MCP-ready.
 
 **Status: early development.** Catch endpoints with a live view, scripted
-responses, authorization and JSON Schema verdicts and the core of the REST
-API work; reports, the rest of the API and MCP come next.
+responses, authorization and JSON Schema verdicts, reports (Markdown, HTML,
+PDF) and the core of the REST API work; the rest of the API and MCP come
+next.
 
 ## What it is for
 
@@ -273,6 +274,63 @@ curl -s -d '{"type":"order.paid","order_id":"42","paid_at":"yesterday"}' $H
 curl -s -d '{"type":"order.created","order_id":43}' $H                                              # n/c: no schema for /type "order.created"
 ```
 
+## Reports
+
+Attach the evidence to a ticket: **Report** on an endpoint's page (or on one
+request) downloads its caught requests as **Markdown**, one self-contained
+**HTML** file or an A4 **PDF**:
+
+- **What:** all kept requests, those received in a time range (UTC), or picked
+  by number (`3, 5-9`); from a request's page, that request.
+- **On top:** the endpoint, the range, when and by which version it was
+  written; answers by class (2xx, 4xx, 5xx, timeout, drop, refused by a
+  check), verdicts per check (pass, fail, not checked, not verifiable), the
+  bodies delivered more than once with the gaps between deliveries, and the
+  recorder strip of the range.
+- **Each request:** number, time, method, path and query, sender, headers,
+  the body (pretty JSON; binary as size and SHA-256; cut at 64 KiB with its
+  full size and SHA-256), what Hookwitness answered, every verdict with its
+  reason and schema problems.
+- **Masking** is off by default (test values). Tick `Authorization`,
+  `Cookie`, `Set-Cookie`, the signature headers of the endpoint's checks or
+  name others: their values become `•••• 71 chars`, signatures taken from
+  them in verdicts too, and the report says which headers were masked.
+- Times are UTC with milliseconds. The HTML report embeds its fonts and makes
+  no network requests; it follows the light or dark setting and prints
+  cleanly. The PDF is drawn by the server (no browser), with a running header
+  and page numbers; a request is never split before the end of its headers.
+- The same requests and options always give the same Markdown and HTML,
+  apart from the generation time.
+
+![An HTML report: header, strip of the range, summary and the first request](docs/images/report-html.png)
+
+An excerpt of the Markdown report, which renders in GitHub and GitLab
+issues:
+
+````markdown
+## Summary
+
+**Answers**
+
+| 2xx | 4xx | 5xx | timeout | drop | refused by a check |
+|---:|---:|---:|---:|---:|---:|
+| 5 | 1 | 0 | 2 | 1 | 1 |
+
+**Verdicts**
+
+| Check | pass | fail | not checked | not verifiable |
+|---|---:|---:|---:|---:|
+| 1 · GitHub signature | 6 | 3 | 0 | 1 |
+| 2 · JSON Schema by header X-GitHub-Event | 5 | 1 | 3 | 1 |
+
+### #4 · POST `/orders/events?source=shop`
+
+| | |
+|---|---|
+| Received | 2026-10-13T16:58:47.468Z from `203.0.113.5:54587` · HTTP/1.1 |
+| Answer | 400 refused · check 2: JSON Schema by header X-GitHub-Event: 3 errors against OrderPaid |
+````
+
 ## REST API
 
 Tests and AI agents drive hookwitness through a JSON API under
@@ -345,5 +403,5 @@ Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes.
 ## License
 
 [Apache License 2.0](LICENSE). Third-party licenses of the modules compiled
-into the binary and of the bundled web assets (htmx, fonts) are in
+into the binary and of the bundled assets (htmx, fonts) are in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

@@ -62,6 +62,8 @@ type pdfWriter struct {
 	pages int
 	err   error
 	adv   map[float64]float64 // mono advance per font size
+
+	pending []block // drawn with the next request
 }
 
 func newPDF(w io.Writer) (writer, error) {
@@ -367,13 +369,14 @@ func (p *pdfWriter) head(h *Head) error {
 			p.place(b)
 		}
 	}
-	p.place(gapBlock(10))
-	p.place(block{24, func(y float64) {
+	// The heading goes with the first request, never alone at a page end.
+	p.pending = []block{gapBlock(10), {24, func(y float64) {
 		p.font(fSans, true, 11, cInk)
 		p.text(margin, y+6, "REQUESTS")
-	}})
+	}}}
 	if h.Count == 0 {
-		p.place(p.plain("No requests in the selection."))
+		p.together(append(p.pending, p.plain("No requests in the selection.")))
+		p.pending = nil
 	}
 	return p.err
 }
@@ -467,7 +470,8 @@ func circle(x, y, r float64) []gopdf.Point {
 }
 
 func (p *pdfWriter) item(it Item) error {
-	var top []block // kept together: title to the end of the headers
+	top := p.pending // kept together: title to the end of the headers
+	p.pending = nil
 
 	stampText := strings.ToUpper(it.Answer.Stamp)
 	stampCol := cInk

@@ -294,7 +294,7 @@ th,td{text-align:left;padding:4px 12px 4px 0;border-bottom:1px solid var(--rule)
 .problems{margin-top:4px}
 .problems th{font:400 12px var(--f-data)}
 .more{font-size:12px;color:var(--muted)}
-.note{font:400 12px/1.4 var(--f-data);text-transform:none;letter-spacing:0;color:var(--muted)}
+.note{font:400 12px/1.4 var(--f-data);text-transform:none;letter-spacing:0;color:var(--muted);overflow-wrap:anywhere}
 pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var(--rule);font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .json .k{color:var(--ink)}.json .s{color:var(--text)}.json .n{color:var(--ink-soft)}
 .json .bad{color:var(--alarm);text-decoration:underline wavy var(--alarm);text-underline-offset:3px}

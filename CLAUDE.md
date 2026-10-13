@@ -27,8 +27,12 @@ n/c; offending paths marked in the body view). The REST API core
 (`<prefix>/api/v1`: endpoints list/create/read, behaviour GET/PUT with
 ETag/If-Match, write-only secrets, request lists with long-poll `wait`, one
 request) has the UI's access rules; docs in `docs/api.md`, an agent skill in
-`skills/hookwitness`. No reports, the rest of the API (rename/delete, clear,
-raw body, actions, Unmatched list, filters, OpenAPI) or MCP yet. `hookwitness
+`skills/hookwitness`. Reports: a register's requests (all, a time range or
+picked by number) download from the UI as Markdown, self-contained HTML or a
+native PDF, with a summary (answers by class, verdicts per check, retry
+groups, the strip of the range) and optional header masking. No report API
+route, the rest of the API (rename/delete, clear, raw body, actions,
+Unmatched list, filters, OpenAPI) or MCP yet. `hookwitness
 version` prints the build identity; `hookwitness health` probes `/healthz`
 (the container's health check). A container image (distroless, non-root, data
 in the `/data` volume) is built, smoke-tested and published to GHCR by CI.
@@ -63,6 +67,17 @@ that makes it false.
   referable by name, a loader that refuses every URL (the library would read
   local files), `format` asserted, problems as JSON pointers; compiled sets
   cached by content. Scenario fixtures in `testdata/schema` (protected).
+- `internal/payload` — a body and a query prepared for people: JSON
+  pretty-printed with tokens tagged (class, JSON pointer), the text test, the
+  hex dump, query pairs; shared by the UI and the reports.
+- `internal/report` — reports of caught requests: Markdown, one HTML file
+  (inline CSS, the UI's fonts as data URIs, a CSP that forbids requests, an
+  SVG strip) and PDF (signintech/gopdf; Martian Mono and Atkinson
+  Hyperlegible TTFs vendored in `internal/report/fonts/<name>/` with LICENSE
+  and SOURCE). Requests come through a Source read twice (summary, then
+  streamed with bodies); Markdown and HTML are byte-identical for the same
+  input apart from the generation time — golden files in `testdata/report`
+  (protected; `go test ./internal/report -update` after an intended change).
 - `internal/secret` — the secret key (`HOOKWITNESS_SECRET_KEY` or `<db>.key`,
   0600), sealing signing keys (AES-256-GCM), hashing tokens (PBKDF2-SHA256),
   keyed fingerprints. Plain secret values never reach the store, the logs or
@@ -78,7 +93,7 @@ that makes it false.
   error shape, unknown fields refused, behaviour replaced with If-Match
   (store compare-and-set), secrets sealed by `emulate.SealSecret`, request
   lists wait on `internal/live`. Secret values never reach an answer or log.
-- `internal/web` — the UI: templ components (`views.templ`, generated
+- `internal/web` — the UI (and its report dialog and download, `report.go`): templ components (`views.templ`, generated
   `views_templ.go` is committed), handlers, SSE feed, embedded `static/`
   (our `app.css`, `app.js`; vendored htmx, htmx-ext-sse and fonts under
   `static/vendor/<name>/` with `LICENSE` and `SOURCE`). Strict CSP: no
@@ -90,7 +105,7 @@ that makes it false.
   addresses or home-directory paths in tracked files (exempt a line with
   `guard:allow`, a file with `guard:allow-file` in its first line), and
   `THIRD-PARTY-NOTICES.md` matching the modules compiled in and the bundled
-  web assets.
+  assets (web vendor files and report fonts).
 - `scripts/hooks` — git hooks; `scripts/notices.sh` — notices generator;
   `scripts/docker-smoke.sh` — the container scenario (README's `docker run`,
   health, persistence of data and sealed secrets, graceful stop, read-only);
