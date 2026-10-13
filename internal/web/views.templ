@@ -256,6 +256,13 @@ templ reportDialog(v exportView) {
 					</select>
 				</label>
 			</div>
+			<label>
+				Images in the requests
+				<select name="images">
+					<option value="shown" selected?={ v.Images == "shown" }>Shown (HTML and PDF), listed (Markdown)</option>
+					<option value="listed" selected?={ v.Images == "listed" }>Listed only: a smaller file</option>
+				</select>
+			</label>
 			<div class="grid2 even for-range">
 				<label>From, UTC <input type="datetime-local" name="from" step="0.001" value={ v.From } aria-invalid?={ v.Field == "from" }/></label>
 				<label>To, UTC <input type="datetime-local" name="to" step="0.001" value={ v.To } aria-invalid?={ v.Field == "to" }/></label>

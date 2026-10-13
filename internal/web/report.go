@@ -35,6 +35,7 @@ type exportView struct {
 	From   string // datetime-local, UTC
 	To     string
 	Pick   string // "3, 5-9"
+	Images string // shown, listed
 	Masks  []maskOption
 	Other  string // more header names to mask, comma-separated
 	Error  string
@@ -49,7 +50,7 @@ type maskOption struct {
 // exportDefaults is the dialog as first opened: HTML of the whole
 // register, or of the request on show; nothing masked.
 func (h *Handler) exportDefaults(reg int64, ep store.Endpoint, ex *exhibitView, closeURL string) *exportView {
-	v := &exportView{Action: h.regPath(reg) + "/report", Close: closeURL, Count: ep.Count, Format: "html", Scope: "all"}
+	v := &exportView{Action: h.regPath(reg) + "/report", Close: closeURL, Count: ep.Count, Format: "html", Scope: "all", Images: "shown"}
 	if ex != nil {
 		v.Scope, v.Pick = "picked", strconv.FormatInt(ex.No, 10)
 	}
@@ -84,6 +85,9 @@ func (h *Handler) readExport(q url.Values, v *exportView) (store.Selection, []st
 	var sel store.Selection
 	v.Format, v.Scope = q.Get("format"), q.Get("scope")
 	v.From, v.To, v.Pick, v.Other = q.Get("from"), q.Get("to"), q.Get("pick"), q.Get("mask_other")
+	if v.Images = q.Get("images"); v.Images != "listed" {
+		v.Images = "shown"
+	}
 	masked := q["mask"]
 	for i := range v.Masks {
 		v.Masks[i].On = slices.Contains(masked, v.Masks[i].Name)
@@ -261,6 +265,7 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
 		Mask:      mask,
 		Version:   version.Version,
 		Generated: now,
+		NoImages:  v.Images == "listed",
 	}
 	if format == report.HTML {
 		o.Fonts, _ = fs.Sub(staticFS, "static")

@@ -137,6 +137,18 @@ func (m *mdWriter) item(it Item) error {
 		m.p("\n")
 	}
 
+	if len(it.Images) > 0 {
+		m.p("**Images**\n\n| Where | Image | SHA-256 |\n|---|---|---|\n")
+		for _, img := range it.Images {
+			sum := "—"
+			if img.SHA256 != "" {
+				sum = mdCode(img.SHA256[:16] + "…")
+			}
+			m.p("| ", mdCode(imageLabel(img.Found)), " | ", mdCell(imageNote(img.Found)), " | ", sum, " |\n")
+		}
+		m.p("\n")
+	}
+
 	m.p("**Body** · ", mdText(bodyNote(it.Body)), "\n")
 	if it.Body.Kind == BodyJSON || it.Body.Kind == BodyText {
 		lang := ""

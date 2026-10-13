@@ -316,5 +316,52 @@
   "proto": "HTTP/1.1",
   "size": 300,
   "body_sha256": "0d4e2ca9e9cbced7a7a5380eb29e1a3783b9b6d0db72de36a1051038e1c1fbc7"
+ },
+ {
+  "id": 19,
+  "no": 8,
+  "received_at": "2026-10-11T12:01:05.500Z",
+  "method": "POST",
+  "path": "/orders",
+  "raw_query": "",
+  "remote_addr": "198.51.100.7:51010",
+  "headers": [
+   [
+    "Content-Type",
+    "application/json"
+   ]
+  ],
+  "body": "{\"type\":\"avatar.updated\",\"user_id\":77,\"avatar\":\"iVBORw0KGgoAAAANSUhEUgAAABgAAAAQCAIAAACDRijCAAAAIklEQVR4nGNUMehhoAZgooopDKMGEQNGDSIMRg0iDAafQQBJpAEAFvi3hAAAAABJRU5ErkJggg==\",\"badge\":\"data:image/gif;base64,R0lGODdhCAAIAIEAAMIzHwAAAAAAAAAAACwAAAAACAAIAAAIDwABCBxIsKDBgwgTKkwYEAA7\"}",
+  "status": 200,
+  "outcome": {
+   "source": "default",
+   "action": "reply",
+   "status": 200
+  },
+  "verdict": "pass",
+  "verdicts": [
+   {
+    "check": 2,
+    "label": "JSON Schema by /type",
+    "result": "pass",
+    "reason": "matches Avatar",
+    "images": [
+     {
+      "path": "/avatar",
+      "declared": "image/png",
+      "type": "image/png",
+      "size": 91,
+      "width": 24,
+      "height": 16,
+      "sha256": "6e67d5560e2bf3b3c001ee0db0ce4cd55c87f8ec75f74e872c0c7fea1a1af25c"
+     }
+    ],
+    "at": "2026-10-11T12:01:05.500Z"
+   }
+  ],
+  "endpoint_id": 3,
+  "proto": "HTTP/1.1",
+  "size": 279,
+  "body_sha256": "1e03aca15365834447cbe88a8bf7ad82a2fea7d3a0930e251609766146be52b5"
  }
 ]
