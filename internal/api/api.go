@@ -62,6 +62,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	h.mux.HandleFunc("DELETE "+b+"/endpoints/{id}/secrets/{name}", h.deleteSecret)
 	h.mux.HandleFunc("GET "+b+"/endpoints/{id}/requests", h.listRequests)
 	h.mux.HandleFunc("GET "+b+"/requests/{id}", h.getRequest)
+	h.mux.HandleFunc("GET "+b+"/requests/{id}/image", h.getImage)
 	h.mux.HandleFunc(b+"/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no route %s %s", r.Method, r.URL.Path), "")
 	})

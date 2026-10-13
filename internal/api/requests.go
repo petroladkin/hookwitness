@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/petroladkin/hookwitness/internal/auth"
+	"github.com/petroladkin/hookwitness/internal/picture"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -47,6 +50,15 @@ type requestJSON struct {
 	BodyBase64 *string         `json:"body_base64,omitempty"`
 	Outcome    json.RawMessage `json:"outcome"`  // what was done with it
 	Verdicts   json.RawMessage `json:"verdicts"` // one per authorization check
+	Images     []imageJSON     `json:"images"`   // pictures in the body; bytes at /requests/{id}/image?path=
+}
+
+// imageJSON is an image a request carries: declared by a schema check, a
+// data:image URL in a JSON body, or the body itself (path "").
+type imageJSON struct {
+	auth.Image
+	Source string `json:"source"` // schema, data URL, body
+	URL    string `json:"url"`    // the decoded bytes, when they are an image
 }
 
 func summaryView(req store.Request) summaryJSON {
@@ -65,7 +77,7 @@ func summaryView(req store.Request) summaryJSON {
 	return v
 }
 
-func requestView(req store.Request) requestJSON {
+func requestView(req store.Request, base string) requestJSON {
 	v := requestJSON{summaryJSON: summaryView(req), Proto: req.Proto, RemoteAddr: req.RemoteAddr,
 		Headers: make([][2]string, len(req.Headers)), Outcome: json.RawMessage("null"), Verdicts: json.RawMessage("[]")}
 	for i, hd := range req.Headers {
@@ -86,7 +98,56 @@ func requestView(req store.Request) requestJSON {
 	if json.Valid([]byte(req.Verdicts)) {
 		v.Verdicts = json.RawMessage(req.Verdicts)
 	}
+	v.Images = []imageJSON{}
+	if !req.TooLarge {
+		var vs []auth.Verdict
+		json.Unmarshal([]byte(req.Verdicts), &vs)
+		for _, f := range picture.Find(req.Body, v.ContentType, vs) {
+			img := imageJSON{Image: f.Image, Source: f.Source}
+			if f.Type != "" {
+				img.URL = base + "/requests/" + strconv.FormatInt(req.ID, 10) + "/image?path=" + url.QueryEscape(f.Path)
+			}
+			v.Images = append(v.Images, img)
+		}
+	}
 	return v
+}
+
+// getImage returns the decoded bytes of an image in a request, typed by
+// what they are (never by what the sender claimed).
+func (h *Handler) getImage(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		WriteError(w, http.StatusNotFound, "not_found", "no request "+r.PathValue("id"), "")
+		return
+	}
+	req, err := h.store.Request(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		WriteError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no request %d", id), "")
+		return
+	}
+	if err != nil {
+		h.fail(w, "image", err)
+		return
+	}
+	if req.TooLarge {
+		WriteError(w, http.StatusNotFound, "not_found", "the body of this request was not kept (over the limit)", "")
+		return
+	}
+	b, err := picture.At(req.Body, r.URL.Query().Get("path"))
+	if err != nil {
+		WriteError(w, http.StatusNotFound, "not_found", err.Error(), "path")
+		return
+	}
+	t := picture.Sniff(b)
+	if t == "" {
+		WriteError(w, http.StatusUnprocessableEntity, "not_an_image", "the value is not a PNG, JPEG, GIF, WebP, HEIC or AVIF image", "path")
+		return
+	}
+	w.Header().Set("Content-Type", t)
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Write(b)
 }
 
 func (h *Handler) getRequest(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +165,7 @@ func (h *Handler) getRequest(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "request", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, requestView(req))
+	writeJSON(w, http.StatusOK, requestView(req, h.base))
 }
 
 // listQuery is a request list's parameters.
