@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
+	"github.com/petroladkin/hookwitness/internal/payload"
 	"github.com/petroladkin/hookwitness/internal/picture"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
@@ -57,6 +58,7 @@ func (h *Handler) images(req store.Request, vs []auth.Verdict, body *bodyView) [
 	}
 	if body.Kind == bodyJSON {
 		markImages(body.JSON, paths)
+		payload.ElideImages(body.JSON, 48)
 	}
 	return out
 }

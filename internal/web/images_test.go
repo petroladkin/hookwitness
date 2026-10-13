@@ -45,6 +45,7 @@ func TestExhibitImages(t *testing.T) {
 		`/extra</code> <span class="note">PNG · 90 B · 6×4 px · a data URL, no schema`,
 		`not a PNG, JPEG, GIF, WebP, HEIC or AVIF image`,
 		`<span class="s img">`,
+		` more characters</span>`, // the picture's base64 is shortened in the body view
 		`<dialog class="viewer" id="viewer"`,
 	} {
 		if !strings.Contains(page, want) {

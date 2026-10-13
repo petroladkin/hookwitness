@@ -256,7 +256,8 @@ when no schema applies to the event.
   `data:image/...;base64,` URL is accepted too) must really be such an image:
   it is decoded completely, so a truncated or mislabelled picture, text or an
   SVG fails at its path. Up to 40 megapixels; HEIC and AVIF are recognised but
-  cannot be decoded here, so their verdict is n/v. The request's page shows
+  cannot be decoded here, so their verdict is n/v (an enforced check refuses
+  them, as it refuses anything it could not verify). The request's page shows
   the images under the body — declared ones, `data:image` strings and a body
   that is itself an image — with a full-size viewer and a download; reports
   carry them too.

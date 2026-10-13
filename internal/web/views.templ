@@ -392,6 +392,9 @@ templ exhibit(x exhibitView) {
 		}
 		<a class="btn" href={ templ.SafeURL(x.Self + "?report") }>Report</a>
 	</div>
+	if len(x.Images) > 0 {
+		@images(x)
+	}
 	<h2>Body</h2>
 	if x.TooLarge {
 		<div class="too">
@@ -417,6 +420,9 @@ templ exhibit(x exhibitView) {
 							{ t.Text }
 						} else {
 							<span class={ t.Class, templ.KV("bad", t.Bad), templ.KV("img", t.Image) }>{ t.Text }</span>
+							if t.Elided != "" {
+								<span class="elided">{ t.Elided }</span>
+							}
 						}
 					}
 				</pre>
@@ -433,9 +439,6 @@ templ exhibit(x exhibitView) {
 				<p class="note">Binary, { size(x.Size) }. The first bytes:</p>
 				<pre class="body hex">{ x.Body.Hex }</pre>
 		}
-	}
-	if len(x.Images) > 0 {
-		@images(x)
 	}
 	@verdicts(x)
 	@answer(x)
