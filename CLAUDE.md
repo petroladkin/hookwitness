@@ -23,7 +23,10 @@ give each request pass / fail / n/v verdicts, optionally enforced, with
 re-check; their secrets are write-only (signing keys sealed, tokens hashed).
 JSON Schema checks validate bodies against the endpoint's schemas (one, or
 picked by a body pointer or header; verdicts pass / fail with problems / n/v /
-n/c; offending paths marked in the body view). The REST API core
+n/c; offending paths marked in the body view); images in payloads declared
+with contentMediaType image/* are decoded and checked, recorded in the
+verdict, previewed under the body with a viewer, served by the API and shown
+in reports. The REST API core
 (`<prefix>/api/v1`: endpoints list/create/read, behaviour GET/PUT with
 ETag/If-Match, write-only secrets, request lists with long-poll `wait`, one
 request) has the UI's access rules; docs in `docs/api.md`, an agent skill in
@@ -66,7 +69,15 @@ that makes it false.
   (santhosh-tekuri/jsonschema): an endpoint's schemas compiled together and
   referable by name, a loader that refuses every URL (the library would read
   local files), `format` asserted, problems as JSON pointers; compiled sets
-  cached by content. Scenario fixtures in `testdata/schema` (protected).
+  cached by content; `contentMediaType` image/* asserted through
+  `internal/picture` and every declared image recorded (`images.go`, a walk
+  over the compiled schema and the body). Scenario fixtures in
+  `testdata/schema` (protected).
+- `internal/picture` — images a request carries: base64 / data URL
+  decoding, signature sniffing, full decode of PNG, JPEG, GIF, WebP
+  (golang.org/x/image), HEIC/AVIF recognised only, SVG refused, 40 MP limit;
+  finding them in a request (schema verdicts, data:image strings, an image
+  body) and reading one by JSON pointer.
 - `internal/payload` — a body and a query prepared for people: JSON
   pretty-printed with tokens tagged (class, JSON pointer), the text test, the
   hex dump, query pairs; shared by the UI and the reports.

@@ -75,3 +75,25 @@ func TestSchemaBodyNotKept(t *testing.T) {
 		t.Fatalf("verdict %q %s", r.Verdict, r.Verdicts)
 	}
 }
+
+func TestSchemaImageEnforced(t *testing.T) {
+	h, st, _ := setup(t, 1<<20)
+	url := serve(t, h)
+	ep := configure(t, st, "/avatars", emulate.Config{
+		Default: emulate.Reply{Status: 202},
+		Schemas: []emulate.Schema{{Name: "Avatar", Text: `{"type":"object","required":["image"],"properties":{"image":
+			{"type":"string","contentEncoding":"base64","contentMediaType":"image/png"}}}`}},
+		Checks: []emulate.Check{{Kind: emulate.KindSchema, Schema: "Avatar", Enforce: true}},
+	})
+	png1 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+	if resp, _, _ := do(t, http.DefaultClient, "POST", url+"/avatars", `{"image":"`+png1+`"}`); resp.StatusCode != 202 {
+		t.Fatalf("a PNG: %d", resp.StatusCode)
+	}
+	if r, _ := lastOutcome(t, st, ep); !strings.Contains(r.Verdicts, `"images":[{"path":"/image","declared":"image/png","type":"image/png","size":70,"width":1,"height":1`) {
+		t.Fatalf("verdict %s", r.Verdicts)
+	}
+	resp, body, _ := do(t, http.DefaultClient, "POST", url+"/avatars", `{"image":"aGVsbG8="}`)
+	if resp.StatusCode != 400 || !strings.Contains(body, "/image: not a valid image/png: not a PNG, JPEG, GIF, WebP, HEIC or AVIF image") {
+		t.Fatalf("not an image: %d %q", resp.StatusCode, body)
+	}
+}

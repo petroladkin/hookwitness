@@ -206,6 +206,7 @@ $ curl -X PUT $API/endpoints/1/secrets/ORDERS_PASSWORD -H 'Content-Type: applica
 | `GET /endpoints/{id}/requests?after=<id>` | the requests newer than `<id>`, **oldest first** |
 | `GET /endpoints/{id}/requests?after=<id>&wait=30s` | the same, but when there are none yet, wait until one arrives (at most `60s`; `wait=30` means seconds); an empty list when the time is up |
 | `GET /requests/{id}` | one request in full, Unmatched ones too |
+| `GET /requests/{id}/image?path=<pointer>` | the decoded bytes of an image in the body (`path=` empty for a body that is an image), typed by what they are; `404 not_found` without a value there, `422 not_an_image` when it is no image |
 
 A list item:
 
@@ -241,7 +242,19 @@ One request adds:
 - `verdicts` has one entry per authorization or schema check: `check` (its
   1-based position), `label`, `result`, `reason`, `at`; a failed schema check
   adds `problems` (up to 20 of `{path, keyword, message}`, `path` a JSON
-  pointer into the body) and `total`.
+  pointer into the body) and `total`; a schema check that declares images
+  adds `images` (see below).
+- `images` lists the pictures in the body: those a schema declares
+  (`source: "schema"`), `data:image/...` strings no schema declares
+  (`"data URL"`), and a body that is itself an image (`"body"`, `path` "").
+  Each has `path`, `declared` (the schema's type), `type` (what the bytes
+  are), `size`, `width`, `height`, `sha256`, `error` when it is not a valid
+  image of its declared type, and `url` for its bytes:
+
+  ```json
+  "images":[{"path":"/avatar","declared":"image/png","type":"image/png","size":4120,"width":64,"height":64,
+             "sha256":"6e67…","source":"schema","url":"/admin/api/v1/requests/7/image?path=%2Favatar"}]
+  ```
 - In shell scripts pipe JSON from a variable with `printf '%s\n' "$VAR"`, not
   `echo` (zsh's `echo` expands `\n` inside JSON strings).
 
