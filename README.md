@@ -261,6 +261,8 @@ when no schema applies to the event.
   the images under the body — declared ones, `data:image` strings and a body
   that is itself an image — with a full-size viewer and a download; reports
   carry them too.
+
+![A request with two images declared by its schema: thumbnails above the body, the base64 shortened in it](docs/images/payload-images.png)
 - **Enforce** refuses a failing body with `400` listing the problems (or your
   own reply) before the rules, so it is not counted.
 - The request's page stamps the verdict (`Schema: fail, 3 errors`), lists the
