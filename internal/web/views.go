@@ -34,6 +34,7 @@ type registerView struct {
 	Selected int64
 	Keep     int // retention: the register never holds more
 	Verdicts verdictsView
+	Export   *exportView // the report dialog, when open
 }
 
 // rowView is one line of the register.
@@ -56,6 +57,7 @@ type rowView struct {
 // exhibitView is one request in full.
 type exhibitView struct {
 	ID, No   int64
+	Self     string // the exhibit's own page
 	Method   string
 	Path     string
 	RawQuery string

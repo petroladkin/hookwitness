@@ -277,10 +277,11 @@ func (s *Store) EachRequest(ctx context.Context, endpointID int64, fn func(Reque
 }
 
 // Selection picks requests of a register: received within [From, To] (a
-// zero bound is open) and, when IDs is not empty, only those.
+// zero bound is open) and, when Nos is not empty, only the requests with
+// those numbers in the register.
 type Selection struct {
 	From, To time.Time
-	IDs      []int64
+	Nos      []int64
 }
 
 // EachSelected calls fn for the selected requests of a register, oldest
@@ -302,10 +303,10 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 		where += " AND received_at <= ?"
 		args = append(args, millis(sel.To))
 	}
-	if len(sel.IDs) > 0 {
-		where += " AND id IN (?" + strings.Repeat(",?", len(sel.IDs)-1) + ")"
-		for _, id := range sel.IDs {
-			args = append(args, id)
+	if len(sel.Nos) > 0 {
+		where += " AND no IN (?" + strings.Repeat(",?", len(sel.Nos)-1) + ")"
+		for _, n := range sel.Nos {
+			args = append(args, n)
 		}
 	}
 	query := `SELECT ` + cols + ` FROM requests WHERE ` + where + ` ORDER BY id LIMIT ` + strconv.Itoa(page)

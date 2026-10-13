@@ -172,6 +172,7 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 						@clearForm(nav, reg.ID, reg.Base, reg.Path)
 						<a class="btn" href={ templ.SafeURL(reg.Base + "/behaviour") }>Behaviour</a>
 					}
+					<a class="btn" href={ templ.SafeURL(reg.Base + "?report") }>Report</a>
 				</div>
 				if reg.Verdicts.On {
 					<div class="verdict-counts">
@@ -220,7 +221,65 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 				}
 			</article>
 		</main>
+		if reg.Export != nil {
+			@reportDialog(*reg.Export)
+		}
 	}
+}
+
+templ reportDialog(v exportView) {
+	<dialog class="modal" data-modal data-close={ v.Close } open aria-labelledby="dialog-title">
+		<form class="card" method="get" action={ templ.SafeURL(v.Action) }>
+			<div class="modal-head">
+				<h2 id="dialog-title">Report</h2>
+				<a class="close" href={ templ.SafeURL(v.Close) } aria-label="Close">×</a>
+			</div>
+			if v.Error != "" {
+				<p class="error banner" role="alert">No report: { v.Error }</p>
+			}
+			<p class="help">Evidence to attach to a ticket: the requests, what Hookwitness answered and every verdict, with a summary on top. Times are UTC.</p>
+			<div class="grid2 even">
+				<label>
+					Format
+					<select name="format" aria-invalid?={ v.Field == "format" }>
+						<option value="html" selected?={ v.Format == "html" }>HTML, one file</option>
+						<option value="md" selected?={ v.Format == "md" }>Markdown</option>
+						<option value="pdf" selected?={ v.Format == "pdf" }>PDF, A4</option>
+					</select>
+				</label>
+				<label>
+					Requests
+					<select name="scope" aria-invalid?={ v.Field == "scope" }>
+						<option value="all" selected?={ v.Scope == "all" }>All { strconv.Itoa(v.Count) } kept</option>
+						<option value="range" selected?={ v.Scope == "range" }>Received in a time range</option>
+						<option value="picked" selected?={ v.Scope == "picked" }>Picked by number</option>
+					</select>
+				</label>
+			</div>
+			<div class="grid2 even for-range">
+				<label>From, UTC <input type="datetime-local" name="from" step="0.001" value={ v.From } aria-invalid?={ v.Field == "from" }/></label>
+				<label>To, UTC <input type="datetime-local" name="to" step="0.001" value={ v.To } aria-invalid?={ v.Field == "to" }/></label>
+			</div>
+			<label class="for-picked">
+				Request numbers
+				<input name="pick" value={ v.Pick } placeholder="3, 5-9" spellcheck="false" autocomplete="off" aria-invalid?={ v.Field == "pick" }/>
+			</label>
+			<fieldset class="masks">
+				<legend>Mask header values</legend>
+				<p class="help">Masked values are replaced by their length, e.g. •••• 71 chars; signatures taken from them in verdicts too.</p>
+				<div class="mask-list">
+					for _, m := range v.Masks {
+						<label class="check"><input type="checkbox" name="mask" value={ m.Name } checked?={ m.On }/> <code>{ m.Name }</code></label>
+					}
+				</div>
+				<label>Other headers <input name="mask_other" value={ v.Other } placeholder="X-Api-Key, X-Session" spellcheck="false" autocomplete="off" aria-invalid?={ v.Field == "mask_other" }/></label>
+			</fieldset>
+			<div class="acts">
+				<button class="btn solid" type="submit">Download report</button>
+				<a class="btn quiet" href={ templ.SafeURL(v.Close) }>Close</a>
+			</div>
+		</form>
+	</dialog>
 }
 
 templ noExhibit(nav navView, reg registerView) {
@@ -320,11 +379,12 @@ templ exhibit(x exhibitView) {
 			}
 		</div>
 	</div>
-	if !x.TooLarge && x.Size > 0 {
-		<div class="ex-actions">
+	<div class="ex-actions">
+		if !x.TooLarge && x.Size > 0 {
 			<a class="btn" href={ templ.SafeURL(x.Download) } download>Download body</a>
-		</div>
-	}
+		}
+		<a class="btn" href={ templ.SafeURL(x.Self + "?report") }>Report</a>
+	</div>
 	<h2>Body</h2>
 	if x.TooLarge {
 		<div class="too">

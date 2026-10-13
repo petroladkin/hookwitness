@@ -97,6 +97,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("POST "+p+"/e/{reg}/clear", h.clear)
 	mux.HandleFunc("POST "+p+"/e/{reg}/delete", h.deleteEndpoint)
 	mux.HandleFunc("POST "+p+"/e/{reg}/recheck", h.recheck)
+	mux.HandleFunc("GET "+p+"/e/{reg}/report", h.report)
 	mux.HandleFunc("GET "+p+"/e/{reg}/behaviour", h.behaviourPage)
 	mux.HandleFunc("POST "+p+"/e/{reg}/behaviour", h.editBehaviour)
 	mux.HandleFunc("GET "+p+"/r/{id}/body", h.downloadBody)
@@ -349,6 +350,17 @@ func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var export *exportView
+	if r.URL.Query().Has("report") {
+		export = h.exportDefaults(reg, ep, ex, r.URL.Path)
+	}
+	h.showRegister(w, r, reg, ep, ex, export, http.StatusOK)
+}
+
+// showRegister renders a register page, with an exhibit and the report
+// dialog when given.
+func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64, ep store.Endpoint, ex *exhibitView, export *exportView, status int) {
+	ctx := r.Context()
 	reqs, err := h.store.Requests(ctx, reg, 0, pageSize+1)
 	if err != nil {
 		h.fail(w, "register", err)
@@ -375,7 +387,7 @@ func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.render(w, r, http.StatusOK, registerPage(nav, registerView{
+	h.render(w, r, status, registerPage(nav, registerView{
 		Verdicts: verdicts,
 		ID:       reg,
 		Path:     ep.Path,
@@ -386,6 +398,7 @@ func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 		Base:     h.regPath(reg),
 		Selected: selectedID(ex),
 		Keep:     h.keep,
+		Export:   export,
 	}, ex))
 }
 
@@ -509,6 +522,7 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		Query:    parseQuery(req.RawQuery),
 		Body:     viewBody(req.Body),
 		Download: h.prefix + "/r/" + strconv.FormatInt(req.ID, 10) + "/body",
+		Self:     h.regPath(req.EndpointID) + "/r/" + strconv.FormatInt(req.ID, 10),
 		Unmatch:  req.EndpointID == store.Unmatched,
 		Limit:    h.limit,
 		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),

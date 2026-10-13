@@ -421,7 +421,7 @@ func TestEachSelected(t *testing.T) {
 	ep, _ := s.CreateEndpoint(ctx, "/sel")
 	other, _ := s.CreateEndpoint(ctx, "/other")
 	base := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
-	var ids []int64
+	var ids, nos []int64
 	for i := range 450 { // more than two pages
 		r := sample(ep.ID, fmt.Sprint(i))
 		r.ReceivedAt = base.Add(time.Duration(i) * time.Second)
@@ -429,6 +429,7 @@ func TestEachSelected(t *testing.T) {
 			t.Fatal(err)
 		}
 		ids = append(ids, r.ID)
+		nos = append(nos, r.No)
 	}
 	s.AddRequest(ctx, sample(other.ID, "x"), 1000, nil)
 	collect := func(sel Selection, withBody bool) (got []Request) {
@@ -445,11 +446,11 @@ func TestEachSelected(t *testing.T) {
 	if len(r) != 11 || r[0].ID != ids[10] || r[10].ID != ids[20] || string(r[0].Body) != "10" {
 		t.Fatalf("range: %d", len(r))
 	}
-	picked := collect(Selection{IDs: []int64{ids[400], ids[3], ids[449]}}, false)
+	picked := collect(Selection{Nos: []int64{nos[400], nos[3], nos[449]}}, false)
 	if len(picked) != 3 || picked[0].ID != ids[3] || picked[2].ID != ids[449] {
 		t.Fatalf("picked: %+v", picked)
 	}
-	if got := collect(Selection{IDs: []int64{ids[3]}, From: base.Add(time.Minute)}, false); len(got) != 0 {
-		t.Fatal("ids and a range combine")
+	if got := collect(Selection{Nos: []int64{nos[3]}, From: base.Add(time.Minute)}, false); len(got) != 0 {
+		t.Fatal("numbers and a range combine")
 	}
 }
