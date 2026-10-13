@@ -100,3 +100,62 @@ func TestNoFileIsRead(t *testing.T) {
 		t.Fatalf("a $ref to a local file compiled: %v", err)
 	}
 }
+
+type wantImage struct {
+	Path, Type    string
+	Width, Height int
+	ErrorContains string `json:"error_contains"`
+}
+
+func TestImageFixtures(t *testing.T) {
+	b, err := os.ReadFile("../../testdata/schema/images.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		fixture
+		Images []wantImage
+	}
+	if err := json.Unmarshal(b, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			set, err := Compile(c.Schemas)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			got := set.Validate(c.Schema, []byte(c.Body))
+			if got.OK != c.Want.OK {
+				t.Fatalf("ok %v, want %v: %+v", got.OK, c.Want.OK, got.Problems)
+			}
+			if !c.Want.OK && got.Total != c.Want.Total {
+				t.Fatalf("total %d, want %d: %+v", got.Total, c.Want.Total, got.Problems)
+			}
+			for _, w := range c.Want.Problems {
+				found := false
+				for _, p := range got.Problems {
+					if p.Path == w.Path && p.Keyword == w.Keyword && strings.Contains(p.Message, w.MessageContains) {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("no problem %+v in %+v", w, got.Problems)
+				}
+			}
+			if len(got.Images) != len(c.Images) {
+				t.Fatalf("%d images, want %d: %+v", len(got.Images), len(c.Images), got.Images)
+			}
+			for i, w := range c.Images {
+				g := got.Images[i]
+				if g.Path != w.Path || g.Type != w.Type || g.Width != w.Width || g.Height != w.Height ||
+					(w.ErrorContains == "") != (g.Error == "") || !strings.Contains(g.Error, w.ErrorContains) {
+					t.Fatalf("image %d: %+v, want %+v", i, g, w)
+				}
+				if g.Error == "" && (len(g.SHA256) != 64 || g.Size == 0) {
+					t.Fatalf("image %d: no size or digest: %+v", i, g)
+				}
+			}
+		})
+	}
+}

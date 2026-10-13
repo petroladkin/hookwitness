@@ -38,6 +38,7 @@ type Verdict struct {
 	Received string    `json:"received,omitempty"` // signatures only, as received
 	Problems []Problem `json:"problems,omitempty"` // schema checks: the first problems found
 	Total    int       `json:"total,omitempty"`    // schema checks: all problems found
+	Images   []Image   `json:"images,omitempty"`   // schema checks: the images the schema declares, as found
 	At       time.Time `json:"at"`                 // when it was computed
 }
 
@@ -46,6 +47,19 @@ type Problem struct {
 	Path    string `json:"path"`    // JSON pointer into the body; "" for the whole body
 	Keyword string `json:"keyword"` // the failing keyword: required, type, format... or json
 	Message string `json:"message"`
+}
+
+// Image is a picture a schema declares in a body (a base64 string or a data
+// URL marked with contentMediaType image/...), as found there.
+type Image struct {
+	Path     string `json:"path"`            // JSON pointer of the string
+	Declared string `json:"declared"`        // the schema's contentMediaType
+	Type     string `json:"type,omitempty"`  // sniffed: image/png...; "" when not an image
+	Size     int    `json:"size"`            // decoded bytes
+	Width    int    `json:"width,omitempty"` // pixels; 0 when not decoded here
+	Height   int    `json:"height,omitempty"`
+	SHA256   string `json:"sha256,omitempty"` // of the decoded bytes
+	Error    string `json:"error,omitempty"`  // why it is not a valid image of its declared type
 }
 
 // Header is one request header line as received.

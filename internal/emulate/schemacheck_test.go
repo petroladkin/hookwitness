@@ -157,3 +157,23 @@ func TestSchemaCheckValidation(t *testing.T) {
 		t.Fatalf("valid: %v", err)
 	}
 }
+
+func TestSchemaCheckImages(t *testing.T) {
+	cfg := Config{Default: Reply{Status: 200}, Schemas: []Schema{{Name: "Upload", Text: `{"type":"object","properties":{"photo":
+		{"type":"string","contentEncoding":"base64","contentMediaType":"image/*"}}}`}},
+		Checks: []Check{{Kind: KindSchema, Schema: "Upload"}}}
+	// A 1×1 PNG.
+	png1 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+	v, _ := verifyOne(t, cfg, `{"photo":"`+png1+`"}`, true)
+	if v.Result != auth.Pass || len(v.Images) != 1 || v.Images[0].Type != "image/png" || v.Images[0].Width != 1 {
+		t.Fatalf("png: %+v", v)
+	}
+	heic := "AAAAGGZ0eXBoZWljAAAAAAAAAAAAAAAAAAAAAA=="
+	if v, _ := verifyOne(t, cfg, `{"photo":"`+heic+`"}`, true); v.Result != auth.NotVerifiable || !strings.Contains(v.Reason, "cannot be decoded here") {
+		t.Fatalf("heic: %+v", v)
+	}
+	v, _ = verifyOne(t, cfg, `{"photo":"aGVsbG8="}`, true)
+	if v.Result != auth.Fail || len(v.Images) != 1 || v.Images[0].Error == "" || v.Problems[0].Path != "/photo" {
+		t.Fatalf("text as an image: %+v", v)
+	}
+}

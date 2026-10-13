@@ -155,9 +155,14 @@ func (c Config) verifySchema(ch Check, r Request, hasBody bool) auth.Verdict {
 	}
 	res := set.Validate(name, r.Body)
 	if res.OK {
-		return auth.Verdict{Result: auth.Pass, Reason: "matches " + name}
+		v := auth.Verdict{Result: auth.Pass, Reason: "matches " + name, Images: res.Images}
+		if n := schema.Undecoded(res.Images); n > 0 {
+			// HEIC or AVIF: recognised, but whether it is whole cannot be told here.
+			v.Result, v.Reason = auth.NotVerifiable, fmt.Sprintf("matches %s, but %d image(s) cannot be decoded here to check them", name, n)
+		}
+		return v
 	}
-	v := auth.Verdict{Result: auth.Fail, Problems: res.Problems, Total: res.Total}
+	v := auth.Verdict{Result: auth.Fail, Problems: res.Problems, Total: res.Total, Images: res.Images}
 	switch {
 	case res.Total == 1 && res.Problems[0].Keyword == "json":
 		v.Reason = res.Problems[0].Message
