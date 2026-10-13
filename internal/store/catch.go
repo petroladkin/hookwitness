@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -269,20 +270,54 @@ func (s *Store) VerdictCounts(ctx context.Context, endpointID int64) (map[string
 	return out, rows.Err()
 }
 
-// EachRequest calls fn with every kept request of a register, with its
-// body, oldest first, reading 200 at a time; an error from fn stops it.
+// EachRequest calls fn for every request of a register with its body,
+// oldest first, reading them in pages.
 func (s *Store) EachRequest(ctx context.Context, endpointID int64, fn func(Request) error) error {
+	return s.EachSelected(ctx, endpointID, Selection{}, true, fn)
+}
+
+// Selection picks requests of a register: received within [From, To] (a
+// zero bound is open) and, when Nos is not empty, only the requests with
+// those numbers in the register.
+type Selection struct {
+	From, To time.Time
+	Nos      []int64
+}
+
+// EachSelected calls fn for the selected requests of a register, oldest
+// first, reading them in pages so that a long register is never held whole;
+// withBody reads the bodies too.
+func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selection, withBody bool, fn func(Request) error) error {
 	const page = 200
-	var after int64
+	cols := requestColumns
+	if withBody {
+		cols += ", body"
+	}
+	where := "endpoint_id IS ? AND id > ?"
+	args := []any{register(endpointID), int64(0)}
+	if !sel.From.IsZero() {
+		where += " AND received_at >= ?"
+		args = append(args, millis(sel.From))
+	}
+	if !sel.To.IsZero() {
+		where += " AND received_at <= ?"
+		args = append(args, millis(sel.To))
+	}
+	if len(sel.Nos) > 0 {
+		where += " AND no IN (?" + strings.Repeat(",?", len(sel.Nos)-1) + ")"
+		for _, n := range sel.Nos {
+			args = append(args, n)
+		}
+	}
+	query := `SELECT ` + cols + ` FROM requests WHERE ` + where + ` ORDER BY id LIMIT ` + strconv.Itoa(page)
 	for {
-		rows, err := s.db.QueryContext(ctx, `SELECT `+requestColumns+`, body FROM requests
-			WHERE endpoint_id IS ? AND id > ? ORDER BY id LIMIT ?`, register(endpointID), after, page)
+		rows, err := s.db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return fmt.Errorf("read requests: %w", err)
 		}
 		var batch []Request
 		for rows.Next() {
-			r, err := scanRequest(rows, true)
+			r, err := scanRequest(rows, withBody)
 			if err != nil {
 				rows.Close()
 				return err
@@ -298,7 +333,7 @@ func (s *Store) EachRequest(ctx context.Context, endpointID int64, fn func(Reque
 			if err := fn(r); err != nil {
 				return err
 			}
-			after = r.ID
+			args[1] = r.ID
 		}
 		if len(batch) < page {
 			return nil

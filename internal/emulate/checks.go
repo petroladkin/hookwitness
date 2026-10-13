@@ -23,6 +23,35 @@ const (
 	KindSchema   = "schema"   // the body against a JSON Schema
 )
 
+// CredentialHeaders names the request headers that carry the credentials
+// or signatures the endpoint's checks verify, in check order, each once:
+// what a report offers to mask.
+func (c Config) CredentialHeaders() []string {
+	var out []string
+	add := func(names ...string) {
+		for _, n := range names {
+			if n != "" && !slices.ContainsFunc(out, func(o string) bool { return strings.EqualFold(o, n) }) {
+				out = append(out, n)
+			}
+		}
+	}
+	for _, ch := range c.Checks {
+		switch ch.kind() {
+		case KindGitHub:
+			add("X-Hub-Signature-256")
+		case KindStripe:
+			add("Stripe-Signature")
+		case KindStandard:
+			add("webhook-signature", "svix-signature")
+		case KindHMAC:
+			add(ch.Header)
+		case KindBearer, KindBasic:
+			add("Authorization")
+		}
+	}
+	return out
+}
+
 // AuthKinds in the order the check editor offers them.
 var AuthKinds = []string{KindGitHub, KindStripe, KindStandard, KindHMAC, KindBearer, KindBasic}
 

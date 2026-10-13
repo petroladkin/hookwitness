@@ -414,3 +414,43 @@ func TestSetConfigIf(t *testing.T) {
 		t.Fatalf("missing endpoint: %v", err)
 	}
 }
+
+func TestEachSelected(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	ep, _ := s.CreateEndpoint(ctx, "/sel")
+	other, _ := s.CreateEndpoint(ctx, "/other")
+	base := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	var ids, nos []int64
+	for i := range 450 { // more than two pages
+		r := sample(ep.ID, fmt.Sprint(i))
+		r.ReceivedAt = base.Add(time.Duration(i) * time.Second)
+		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, r.ID)
+		nos = append(nos, r.No)
+	}
+	s.AddRequest(ctx, sample(other.ID, "x"), 1000, nil)
+	collect := func(sel Selection, withBody bool) (got []Request) {
+		t.Helper()
+		if err := s.EachSelected(ctx, ep.ID, sel, withBody, func(r Request) error { got = append(got, r); return nil }); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if all := collect(Selection{}, false); len(all) != 450 || all[0].ID != ids[0] || all[449].ID != ids[449] || all[0].Body != nil {
+		t.Fatalf("all: %d", len(all))
+	}
+	r := collect(Selection{From: base.Add(10 * time.Second), To: base.Add(20 * time.Second)}, true)
+	if len(r) != 11 || r[0].ID != ids[10] || r[10].ID != ids[20] || string(r[0].Body) != "10" {
+		t.Fatalf("range: %d", len(r))
+	}
+	picked := collect(Selection{Nos: []int64{nos[400], nos[3], nos[449]}}, false)
+	if len(picked) != 3 || picked[0].ID != ids[3] || picked[2].ID != ids[449] {
+		t.Fatalf("picked: %+v", picked)
+	}
+	if got := collect(Selection{Nos: []int64{nos[3]}, From: base.Add(time.Minute)}, false); len(got) != 0 {
+		t.Fatal("numbers and a range combine")
+	}
+}

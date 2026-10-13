@@ -284,3 +284,20 @@ func TestStampWhy(t *testing.T) {
 		}
 	}
 }
+
+func TestCredentialHeaders(t *testing.T) {
+	c := Config{Checks: []Check{
+		{Kind: KindHeader, Header: "X-Required"},
+		{Kind: KindStandard},
+		{Kind: KindHMAC, Header: "X-Signature"},
+		{Kind: KindBearer},
+		{Kind: KindBasic},
+		{Kind: KindHMAC, Header: "x-signature"},
+		{Kind: KindGitHub},
+		{Kind: KindSchema, Schema: "A"},
+	}}
+	got := strings.Join(c.CredentialHeaders(), ",")
+	if got != "webhook-signature,svix-signature,X-Signature,Authorization,X-Hub-Signature-256" {
+		t.Fatalf("%s", got)
+	}
+}
