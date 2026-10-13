@@ -25,6 +25,7 @@ var (
 	hexDump    = payload.HexDump
 	parseQuery = payload.ParseQuery
 	markBad    = payload.MarkBad
+	markImages = payload.MarkImages
 )
 
 // bodyKind is how a body is shown.

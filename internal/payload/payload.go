@@ -25,6 +25,7 @@ type Token struct {
 	Path        string
 	HasPath     bool
 	Bad         bool // a schema check found a problem at Path
+	Image       bool // an image is at Path
 }
 
 // IsText reports UTF-8 text without control characters other than
@@ -136,6 +137,15 @@ func MarkBad(toks []Token, paths map[string]bool) {
 	for i := range toks {
 		if toks[i].HasPath && paths[toks[i].Path] {
 			toks[i].Bad = true
+		}
+	}
+}
+
+// MarkImages flags the tokens at the given JSON pointers as images.
+func MarkImages(toks []Token, paths map[string]bool) {
+	for i := range toks {
+		if toks[i].HasPath && paths[toks[i].Path] {
+			toks[i].Image = true
 		}
 	}
 }

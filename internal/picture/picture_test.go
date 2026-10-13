@@ -12,6 +12,8 @@ import (
 	"image/png"
 	"strings"
 	"testing"
+
+	"github.com/petroladkin/hookwitness/internal/auth"
 )
 
 // webp1x1 is a lossless 1×1 WebP.
@@ -124,5 +126,41 @@ func TestDecode(t *testing.T) {
 	}
 	if !IsDataImage("data:image/jpeg;base64,/9j/") || IsDataImage("data:text/plain;base64,aGk=") || IsDataImage("image/png") {
 		t.Fatal("IsDataImage")
+	}
+}
+
+func TestFindAndAt(t *testing.T) {
+	png1 := base64.StdEncoding.EncodeToString(sample(t, PNG, 2, 2))
+	jpg := base64.StdEncoding.EncodeToString(sample(t, JPEG, 3, 3))
+	body := []byte(`{"a":{"x/y":"data:image/png;base64,` + png1 + `"},"list":["text","data:image/jpeg;base64,` + jpg + `"],"declared":"` + png1 + `"}`)
+	declared := []auth.Verdict{{Images: []auth.Image{{Path: "/declared", Declared: PNG, Type: PNG, Width: 2, Height: 2}}}}
+	got := Find(body, "application/json", declared)
+	var paths []string
+	for _, f := range got {
+		paths = append(paths, f.Path+"="+f.Source+":"+f.Type)
+	}
+	if strings.Join(paths, " ") != "/a/x~1y=data URL:image/png /declared=schema:image/png /list/1=data URL:image/jpeg" {
+		t.Fatalf("%v", paths)
+	}
+	for _, p := range []string{"/a/x~1y", "/list/1", "/declared"} {
+		b, err := At(body, p)
+		if err != nil || Sniff(b) == "" {
+			t.Fatalf("At %s: %v", p, err)
+		}
+	}
+	for _, p := range []string{"/nope", "/list/9", "/a", "a"} {
+		if _, err := At(body, p); err == nil {
+			t.Fatalf("At %s: no error", p)
+		}
+	}
+	whole := Find(sample(t, GIF, 5, 4), "image/gif", nil)
+	if len(whole) != 1 || whole[0].Path != Body || whole[0].Source != "body" || whole[0].Width != 5 || whole[0].Error != "" {
+		t.Fatalf("body: %+v", whole)
+	}
+	if bad := Find([]byte("not a picture"), "image/png", nil); len(bad) != 1 || bad[0].Error == "" {
+		t.Fatalf("a body declared an image that is not one: %+v", bad)
+	}
+	if len(Find([]byte(`{"a":"b"}`), "application/json", nil)) != 0 {
+		t.Fatal("found an image in plain JSON")
 	}
 }

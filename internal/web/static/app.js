@@ -290,5 +290,34 @@
     window.addEventListener("resize", draw);
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
   }
+  // Images under a request's body: a thumbnail opens the viewer, fitted to
+  // the window; 1:1 shows the pixels, scrolling when larger. The exhibit is
+  // swapped by htmx, so clicks are taken at the document.
+  document.addEventListener("click", (e) => {
+    const thumb = e.target.closest(".thumb[data-full]");
+    const viewer = document.getElementById("viewer");
+    if (thumb && viewer) {
+      viewer.querySelector(".viewer-stage img").src = thumb.dataset.full;
+      viewer.querySelector(".viewer-stage img").alt = "The image at " + thumb.dataset.title;
+      viewer.querySelector(".viewer-title").textContent = thumb.dataset.title;
+      const dl = viewer.querySelector('[data-viewer="download"]');
+      dl.href = thumb.dataset.download || thumb.dataset.full;
+      viewer.classList.remove("actual");
+      viewer.querySelector('[data-viewer="zoom"]').setAttribute("aria-pressed", "false");
+      viewer.showModal();
+      return;
+    }
+    const ctl = e.target.closest("[data-viewer]");
+    if (ctl && viewer && viewer.contains(ctl)) {
+      if (ctl.dataset.viewer === "close") viewer.close();
+      if (ctl.dataset.viewer === "zoom") {
+        const on = viewer.classList.toggle("actual");
+        ctl.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+      return;
+    }
+    if (viewer && e.target === viewer) viewer.close(); // a click on the backdrop
+  });
+
   markSelected();
 })();
