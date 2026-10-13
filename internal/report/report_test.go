@@ -193,19 +193,19 @@ func TestSummary(t *testing.T) {
 	for _, c := range h.Outcomes {
 		counts[c.Label] = c.N
 	}
-	want := map[string]int{"2xx": 2, "4xx": 1, "5xx": 1, "timeout": 1, "drop": 1, "refused by a check": 1}
+	want := map[string]int{"2xx": 3, "4xx": 1, "5xx": 1, "timeout": 1, "drop": 1, "refused by a check": 1}
 	for k, n := range want {
 		if counts[k] != n {
 			t.Errorf("%s: %d, want %d (%+v)", k, counts[k], n, h.Outcomes)
 		}
 	}
-	if len(h.Checks) != 2 || h.Checks[1] != (CheckCount{Check: 2, Label: "JSON Schema by /type", Pass: 2, Fail: 1, NC: 1, NV: 1}) {
+	if len(h.Checks) != 2 || h.Checks[1] != (CheckCount{Check: 2, Label: "JSON Schema by /type", Pass: 3, Fail: 1, NC: 1, NV: 1}) {
 		t.Errorf("checks %+v", h.Checks)
 	}
 	if len(h.Retries) != 1 || len(h.Retries[0].Nos) != 2 || h.Retries[0].Gaps[0] != 1500*time.Millisecond {
 		t.Errorf("retries %+v", h.Retries)
 	}
-	if !h.From.Equal(time.Date(2026, 10, 11, 12, 0, 1, 250e6, time.UTC)) || !h.To.Equal(time.Date(2026, 10, 11, 12, 1, 0, 0, time.UTC)) {
+	if !h.From.Equal(time.Date(2026, 10, 11, 12, 0, 1, 250e6, time.UTC)) || !h.To.Equal(time.Date(2026, 10, 11, 12, 1, 5, 500e6, time.UTC)) {
 		t.Errorf("range %v – %v", h.From, h.To)
 	}
 }
@@ -233,5 +233,37 @@ func TestMarkdownFences(t *testing.T) {
 	}
 	if !strings.Contains(md, "| `a` | `|` |") && !strings.Contains(md, "| `a` | `\\|` |") {
 		t.Fatal("a pipe in a query value breaks the table")
+	}
+}
+
+func TestReportImages(t *testing.T) {
+	rs := fixture(t)
+	md := render(t, Markdown, goldenOptions(), rs)
+	for _, want := range []string{
+		"| `/avatar` | PNG · 91 B · ",
+		"24×16 px · declared image/png |",
+		"| `/badge` | GIF · ",
+		"8×8 px · a data URL, no schema |",
+		"| `the body` | PNG · 70 B · 1×1 px · not valid: a truncated or corrupt PNG",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("markdown lacks %q", want)
+		}
+	}
+	html := render(t, HTML, goldenOptions(), rs)
+	if strings.Count(html, `<img src="data:image/`) != 2 || !strings.Contains(html, `alt="The image at /avatar"`) {
+		t.Fatalf("html shows %d images", strings.Count(html, `<img src="data:image/`))
+	}
+	o := goldenOptions()
+	o.NoImages = true
+	if off := render(t, HTML, o, rs); strings.Contains(off, `<img src="data:image/`) || !strings.Contains(off, "<code>/avatar</code>") {
+		t.Fatal("images off: still embedded, or not listed")
+	}
+	pdf := render(t, PDF, goldenOptions(), rs)
+	if n := strings.Count(pdf, "/Subtype /Image"); n < 2 {
+		t.Fatalf("%d images in the PDF", n)
+	}
+	if n := strings.Count(render(t, PDF, o, rs), "/Subtype /Image"); n != 0 {
+		t.Fatalf("images off: %d images in the PDF", n)
 	}
 }

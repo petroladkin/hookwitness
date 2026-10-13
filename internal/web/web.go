@@ -101,6 +101,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("GET "+p+"/e/{reg}/behaviour", h.behaviourPage)
 	mux.HandleFunc("POST "+p+"/e/{reg}/behaviour", h.editBehaviour)
 	mux.HandleFunc("GET "+p+"/r/{id}/body", h.downloadBody)
+	mux.HandleFunc("GET "+p+"/r/{id}/image", h.image)
 	mux.HandleFunc("GET "+p+"/static/{file...}", h.static)
 
 	// Browsers send Sec-Fetch-Site / Origin; a form posted from another site
@@ -536,6 +537,7 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 			}
 		}
 	}
+	v.Images = h.images(req, v.Verdicts, &v.Body)
 	return v, nil
 }
 

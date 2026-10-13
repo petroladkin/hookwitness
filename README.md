@@ -250,6 +250,19 @@ when no schema applies to the event.
   never refused.
 - A body that is not JSON fails with the parse error and its byte offset; an
   empty body fails as such.
+- **Images in the payload:** a string declared
+  `{"type":"string","contentEncoding":"base64","contentMediaType":"image/png"}`
+  (also `image/jpeg`, `image/gif`, `image/webp`, or `image/*` for any; a
+  `data:image/...;base64,` URL is accepted too) must really be such an image:
+  it is decoded completely, so a truncated or mislabelled picture, text or an
+  SVG fails at its path. Up to 40 megapixels; HEIC and AVIF are recognised but
+  cannot be decoded here, so their verdict is n/v (an enforced check refuses
+  them, as it refuses anything it could not verify). The request's page shows
+  the images under the body — declared ones, `data:image` strings and a body
+  that is itself an image — with a full-size viewer and a download; reports
+  carry them too.
+
+![A request with two images declared by its schema: thumbnails above the body, the base64 shortened in it](docs/images/payload-images.png)
 - **Enforce** refuses a failing body with `400` listing the problems (or your
   own reply) before the rules, so it is not counted.
 - The request's page stamps the verdict (`Schema: fail, 3 errors`), lists the

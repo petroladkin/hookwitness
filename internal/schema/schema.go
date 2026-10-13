@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 
@@ -60,6 +61,7 @@ func Compile(docs []Doc) (*Set, error) {
 	c := jsonschema.NewCompiler()
 	c.DefaultDraft(jsonschema.Draft2020)
 	c.AssertFormat()
+	assertImages(c)
 	c.UseLoader(refuse{})
 	seen := map[string]bool{}
 	for _, d := range docs {
@@ -131,6 +133,7 @@ type Result struct {
 	OK       bool
 	Problems []Problem // at most MaxProblems
 	Total    int       // all problems found
+	Images   []Image   // the images the schema declares, found in the body
 }
 
 // Validate checks body against the schema called name, which must exist.
@@ -142,16 +145,26 @@ func (s *Set) Validate(name string, body []byte) Result {
 	if err != nil {
 		return Result{Problems: []Problem{{Keyword: "json", Message: "not JSON: " + jsonError(string(body), err)}}, Total: 1}
 	}
-	err = s.byName[name].Validate(inst)
-	if err == nil {
-		return Result{OK: true}
+	sch := s.byName[name]
+	res := Result{OK: true}
+	if err := sch.Validate(inst); err != nil {
+		res.OK = false
+		var ve *jsonschema.ValidationError
+		if errors.As(err, &ve) {
+			res.Problems, res.Total = problems(ve)
+		} else {
+			res.Problems, res.Total = []Problem{{Message: err.Error()}}, 1
+		}
 	}
-	var ve *jsonschema.ValidationError
-	if !errors.As(err, &ve) {
-		return Result{Problems: []Problem{{Message: err.Error()}}, Total: 1}
+	res.Images = findImages(sch, inst)
+	for _, p := range dataURLProblems(res.Images) {
+		res.OK = false
+		res.Total++
+		if len(res.Problems) < MaxProblems {
+			res.Problems = append(res.Problems, p)
+		}
 	}
-	ps, total := problems(ve)
-	return Result{Problems: ps, Total: total}
+	return res
 }
 
 // BodyError says why body is not one JSON document, as a schema verdict
@@ -194,6 +207,12 @@ func problems(ve *jsonschema.ValidationError) ([]Problem, int) {
 			if len(out) < MaxProblems {
 				kw := e.ErrorKind.KeywordPath()
 				p := Problem{Path: pointer(e.InstanceLocation), Message: e.ErrorKind.LocalizedString(printer)}
+				if k, ok := e.ErrorKind.(*kind.ContentMediaType); ok && k.Err != nil {
+					p.Message = "not a valid " + k.Want + ": " + k.Err.Error()
+				}
+				if k, ok := e.ErrorKind.(*kind.ContentEncoding); ok && k.Err != nil {
+					p.Message = k.Err.Error()
+				}
 				if len(kw) > 0 {
 					p.Keyword = kw[len(kw)-1]
 				}

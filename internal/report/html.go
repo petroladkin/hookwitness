@@ -82,26 +82,31 @@ func fontFaces(fonts fs.FS) string {
 }
 
 var htmlTemplates = template.Must(template.New("report").Funcs(template.FuncMap{
-	"stamp":   stamp,
-	"num":     num,
-	"gap":     gap,
-	"span":    rangeLine,
-	"alarm":   func(stamp string) bool { return !strings.HasPrefix(stamp, "2") },
-	"note":    bodyNote,
-	"answer":  answerLine,
-	"target":  target,
-	"ordinal": ordinal,
-	"pointer": pointer,
-	"short":   func(s string) string { return s[:min(16, len(s))] + "…" },
-	"sub":     func(a, b int) int { return a - b },
-	"lower":   strings.ToLower,
-	"size":    func(n int) string { return size(int64(n)) },
-	"top":     func() float64 { return stripTop },
-	"base":    func() float64 { return stripBase },
-	"w":       func() float64 { return stripW },
-	"h":       func() float64 { return stripH },
-	"isJSON":  func(b Body) bool { return b.Kind == BodyJSON },
-	"isText":  func(b Body) bool { return b.Kind == BodyText },
+	"stamp":    stamp,
+	"num":      num,
+	"gap":      gap,
+	"span":     rangeLine,
+	"alarm":    func(stamp string) bool { return !strings.HasPrefix(stamp, "2") },
+	"note":     bodyNote,
+	"answer":   answerLine,
+	"target":   target,
+	"ordinal":  ordinal,
+	"pointer":  pointer,
+	"short":    func(s string) string { return s[:min(16, len(s))] + "…" },
+	"sub":      func(a, b int) int { return a - b },
+	"lower":    strings.ToLower,
+	"imgLabel": imageLabel,
+	"imgNote":  imageNote,
+	"dataURI": func(img ItemImage) template.URL {
+		return template.URL("data:" + img.Type + ";base64," + base64.StdEncoding.EncodeToString(img.Data))
+	},
+	"size":   func(n int) string { return size(int64(n)) },
+	"top":    func() float64 { return stripTop },
+	"base":   func() float64 { return stripBase },
+	"w":      func() float64 { return stripW },
+	"h":      func() float64 { return stripH },
+	"isJSON": func(b Body) bool { return b.Kind == BodyJSON },
+	"isText": func(b Body) bool { return b.Kind == BodyText },
 	"tokenClass": func(class string, bad bool) string {
 		if bad {
 			return strings.TrimSpace(class + " bad")
@@ -204,9 +209,13 @@ const htmlSource = `{{define "head" -}}
 {{if .Headers}}<table class="kv">{{range .Headers}}<tr><th><code>{{.Name}}</code></th><td>{{if .Masked}}<span class="masked">{{.Value}}</span>{{else}}<code>{{.Value}}</code>{{end}}</td></tr>{{end}}</table>
 {{else}}<p class="none">None.</p>
 {{end}}</section>
-<section>
+{{if .Images}}<section>
+<h3>Images</h3>
+<div class="images">{{range .Images}}<figure{{if .Error}} class="bad"{{end}}>{{if .Data}}<img src="{{dataURI .}}" alt="The image at {{imgLabel .Found}}">{{end}}<figcaption><code>{{imgLabel .Found}}</code> {{imgNote .Found}}</figcaption></figure>{{end}}</div>
+</section>
+{{end}}<section>
 <h3>Body <span class="note">{{note .Body}}</span></h3>
-{{if isJSON .Body}}<pre class="body json">{{range .Body.Tokens}}{{if or .Class .Bad}}<span class="{{tokenClass .Class .Bad}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}</pre>
+{{if isJSON .Body}}<pre class="body json">{{range .Body.Tokens}}{{if or .Class .Bad}}<span class="{{tokenClass .Class .Bad}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{if .Elided}}<span class="elided">{{.Elided}}</span>{{end}}{{end}}</pre>
 {{else if isText .Body}}<pre class="body">{{.Body.Text}}</pre>
 {{end}}{{if .Body.Cut}}<p class="note">Cut at {{size .Body.Shown}}.</p>
 {{end}}</section>
@@ -297,7 +306,14 @@ th,td{text-align:left;padding:4px 12px 4px 0;border-bottom:1px solid var(--rule)
 .note{font:400 12px/1.4 var(--f-data);text-transform:none;letter-spacing:0;color:var(--muted);overflow-wrap:anywhere}
 pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var(--rule);font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .json .k{color:var(--ink)}.json .s{color:var(--text)}.json .n{color:var(--ink-soft)}
+.json .elided{color:var(--muted);font-style:italic}
 .json .bad{color:var(--alarm);text-decoration:underline wavy var(--alarm);text-underline-offset:3px}
+.images{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,220px),1fr));gap:12px}
+.images figure{margin:0;border-top:2px solid var(--ink);padding-top:6px;min-width:0}
+.images figure.bad{border-top-color:var(--alarm)}
+.images img{display:block;max-width:100%;max-height:240px;margin:0 0 6px;background:var(--paper);border:1px solid var(--rule)}
+.images figcaption{font:400 12px/1.4 var(--f-data);color:var(--muted);overflow-wrap:anywhere}
+.images figcaption code{color:var(--text)}
 .foot{margin-top:32px;font-size:12px;color:var(--muted)}
 @media print{
   :root{--paper:#fff;--paper-2:#fff;--grid:#B9CDBF;--grid-major:#93AF9C;--ink:#24308C;--ink-soft:#4B56A6;

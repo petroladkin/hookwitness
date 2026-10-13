@@ -64,6 +64,12 @@ PUT: `"schemas":[{"name":"OrderPaid","text":"<schema JSON as a string>"}]`,
 `"checks":[{"kind":"schema","schema":"OrderPaid"}]`, or pick the schema by the
 event type with `"select":{"from":"body","key":"/type","map":[{"value":"order.paid","schema":"OrderPaid"}]}`.
 A failed schema verdict lists `problems` (`path`, `keyword`, `message`).
+A string the schema marks `"contentEncoding":"base64","contentMediaType":"image/png"`
+(or `image/jpeg`, `image/gif`, `image/webp`, `image/*`; a `data:image/...` URL
+works too) is checked to really be that image; the request's `images` list it
+with its size and pixels, and `GET $API/requests/<id>/image?path=/avatar`
+returns the picture itself — save it and look at it when the test is about
+what the sender put in the image.
 `enforce: true` refuses failures with 401; without it the request gets the
 normal reply and only its `verdict` says `fail` — use that first to observe a
 sender without breaking it.

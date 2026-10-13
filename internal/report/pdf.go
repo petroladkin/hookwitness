@@ -1,8 +1,10 @@
 package report
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
+	"image"
 	"io"
 	"strconv"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"github.com/signintech/gopdf"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
+	"github.com/petroladkin/hookwitness/internal/picture"
 )
 
 // The PDF is drawn natively (no browser): A4 portrait, 15 mm margins, the
@@ -542,21 +545,46 @@ func (p *pdfWriter) item(it Item) error {
 		}
 		top = append(top, p.kv(rows, masked)...)
 	}
+	var pics [][]block // after the headers, before the body; each image with its caption
+	for i, img := range it.Images {
+		var g []block
+		if i == 0 {
+			g = append(g, gapBlock(3), p.caption("Images"))
+		}
+		col := cMuted
+		if img.Error != "" {
+			col = cAlarm
+		}
+		g = append(g, p.monoLines(margin, contentW, 7.5, cText, true, imageLabel(img.Found))...)
+		g = append(g, p.monoLines(margin, contentW, 7, col, false, imageNote(img.Found))...)
+		if b, ok := p.picture(img); ok {
+			g = append(g, b)
+		}
+		pics = append(pics, g)
+	}
 	note := wrapRunes(bodyNote(it.Body), p.cols(7, contentW-30))
-	top = append(top, gapBlock(3), block{float64(len(note))*10 + 4, func(y float64) {
+	bodyStart := []block{gapBlock(3), {float64(len(note))*10 + 4, func(y float64) {
 		p.font(fSans, true, 7, cMuted)
 		p.text(margin, y+3, "BODY")
 		p.font(fMono, false, 7, cMuted)
 		for i, l := range note {
 			p.text(margin+30, y+3+float64(i)*10, l)
 		}
-	}})
+	}}}
 	lines := p.bodyLines(it.Body)
 	if len(lines) > 0 {
-		top = append(top, lines[0]) // the body never starts alone on the next page
+		bodyStart = append(bodyStart, lines[0]) // the body never starts alone on the next page
 		lines = lines[1:]
 	}
-	p.together(top)
+	if len(pics) == 0 {
+		p.together(append(top, bodyStart...))
+	} else {
+		p.together(top)
+		for _, g := range pics {
+			p.together(g)
+		}
+		p.together(bodyStart)
+	}
 	for _, b := range lines {
 		p.place(b)
 	}
@@ -565,6 +593,48 @@ func (p *pdfWriter) item(it Item) error {
 	}
 	p.place(gapBlock(10))
 	return p.err
+}
+
+// picture is an image drawn to fit the width (at most 260 pt high, never
+// enlarged): PNG and JPEG as sent, GIF and WebP decoded first, since a PDF
+// cannot hold them.
+func (p *pdfWriter) picture(img ItemImage) (block, bool) {
+	if len(img.Data) == 0 || img.Width <= 0 || img.Height <= 0 {
+		return block{}, false
+	}
+	const maxH = 260.0
+	w, h := float64(img.Width)*0.75, float64(img.Height)*0.75 // 96 dpi pixels to points
+	if w > contentW {
+		w, h = contentW, h*contentW/w
+	}
+	if h > maxH {
+		w, h = w*maxH/h, maxH
+	}
+	var holder gopdf.ImageHolder
+	var decoded image.Image
+	switch img.Type {
+	case picture.PNG, picture.JPEG:
+		hd, err := gopdf.ImageHolderByBytes(img.Data)
+		if err != nil {
+			return block{}, false
+		}
+		holder = hd
+	default:
+		im, _, err := image.Decode(bytes.NewReader(img.Data))
+		if err != nil {
+			return block{}, false
+		}
+		decoded = im
+	}
+	return block{h + 8, func(y float64) {
+		p.stroke(cRule, 0.5)
+		p.pdf.RectFromUpperLeftWithStyle(margin, y+2, w, h, "D")
+		if holder != nil {
+			p.keep(p.pdf.ImageByHolder(holder, margin, y+2, &gopdf.Rect{W: w, H: h}))
+		} else {
+			p.keep(p.pdf.ImageFrom(decoded, margin, y+2, &gopdf.Rect{W: w, H: h}))
+		}
+	}}, true
 }
 
 // seg is a run of body text in one colour.
@@ -598,6 +668,9 @@ func (p *pdfWriter) bodyLines(b Body) []block {
 				if part != "" {
 					lines[len(lines)-1] = append(lines[len(lines)-1], seg{part, col})
 				}
+			}
+			if t.Elided != "" {
+				lines[len(lines)-1] = append(lines[len(lines)-1], seg{t.Elided, cMuted})
 			}
 		}
 	case BodyText:

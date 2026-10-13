@@ -83,7 +83,14 @@ th,td{text-align:left;padding:4px 12px 4px 0;border-bottom:1px solid var(--rule)
 .note{font:400 12px/1.4 var(--f-data);text-transform:none;letter-spacing:0;color:var(--muted);overflow-wrap:anywhere}
 pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var(--rule);font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .json .k{color:var(--ink)}.json .s{color:var(--text)}.json .n{color:var(--ink-soft)}
+.json .elided{color:var(--muted);font-style:italic}
 .json .bad{color:var(--alarm);text-decoration:underline wavy var(--alarm);text-underline-offset:3px}
+.images{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,220px),1fr));gap:12px}
+.images figure{margin:0;border-top:2px solid var(--ink);padding-top:6px;min-width:0}
+.images figure.bad{border-top-color:var(--alarm)}
+.images img{display:block;max-width:100%;max-height:240px;margin:0 0 6px;background:var(--paper);border:1px solid var(--rule)}
+.images figcaption{font:400 12px/1.4 var(--f-data);color:var(--muted);overflow-wrap:anywhere}
+.images figcaption code{color:var(--text)}
 .foot{margin-top:32px;font-size:12px;color:var(--muted)}
 @media print{
   :root{--paper:#fff;--paper-2:#fff;--grid:#B9CDBF;--grid-major:#93AF9C;--ink:#24308C;--ink-soft:#4B56A6;
@@ -104,45 +111,47 @@ pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var
 <h1>Report · <code>/orders</code></h1>
 </header>
 <dl class="facts">
-<div><dt>Time range</dt><dd>2026-10-11T12:00:01.250Z – 2026-10-11T12:01:00.000Z</dd></div>
+<div><dt>Time range</dt><dd>2026-10-11T12:00:01.250Z – 2026-10-11T12:01:05.500Z</dd></div>
 <div><dt>Selection</dt><dd>whole register</dd></div>
-<div><dt>Requests</dt><dd>7</dd></div>
+<div><dt>Requests</dt><dd>8</dd></div>
 <div><dt>Generated</dt><dd>2026-10-12T09:30:00.000Z by Hookwitness v0.0.0-test</dd></div>
 <div><dt>Masked headers</dt><dd><code>Authorization</code>, <code>cookie</code>, <code>X-Hub-Signature-256</code></dd></div>
 </dl>
 <figure class="strip">
 <svg viewBox="0 0 1000 132" preserveAspectRatio="none" role="img" aria-label="Requests over the reported range">
 <rect class="paper" x="0" y="0" width="1000" height="132"/>
-<line class="grid" x1="36.2" y1="30" x2="36.2" y2="106"/>
-<line class="grid" x1="68.6" y1="30" x2="68.6" y2="106"/>
-<line class="grid" x1="101" y1="30" x2="101" y2="106"/>
-<line class="grid" x1="133.4" y1="30" x2="133.4" y2="106"/>
-<line class="grid-major" x1="165.8" y1="30" x2="165.8" y2="106"/>
-<line class="grid" x1="198.2" y1="30" x2="198.2" y2="106"/>
-<line class="grid" x1="230.6" y1="30" x2="230.6" y2="106"/>
-<line class="grid" x1="263" y1="30" x2="263" y2="106"/>
-<line class="grid" x1="295.4" y1="30" x2="295.4" y2="106"/>
-<line class="grid-major" x1="327.8" y1="30" x2="327.8" y2="106"/>
-<line class="grid" x1="360.2" y1="30" x2="360.2" y2="106"/>
-<line class="grid" x1="392.6" y1="30" x2="392.6" y2="106"/>
-<line class="grid" x1="425.1" y1="30" x2="425.1" y2="106"/>
-<line class="grid" x1="457.5" y1="30" x2="457.5" y2="106"/>
-<line class="grid-major" x1="489.9" y1="30" x2="489.9" y2="106"/>
-<line class="grid" x1="522.3" y1="30" x2="522.3" y2="106"/>
-<line class="grid" x1="554.7" y1="30" x2="554.7" y2="106"/>
-<line class="grid" x1="587.1" y1="30" x2="587.1" y2="106"/>
-<line class="grid" x1="619.5" y1="30" x2="619.5" y2="106"/>
-<line class="grid-major" x1="651.9" y1="30" x2="651.9" y2="106"/>
-<line class="grid" x1="684.3" y1="30" x2="684.3" y2="106"/>
+<line class="grid" x1="35.1" y1="30" x2="35.1" y2="106"/>
+<line class="grid" x1="64.7" y1="30" x2="64.7" y2="106"/>
+<line class="grid" x1="94.4" y1="30" x2="94.4" y2="106"/>
+<line class="grid" x1="124" y1="30" x2="124" y2="106"/>
+<line class="grid-major" x1="153.6" y1="30" x2="153.6" y2="106"/>
+<line class="grid" x1="183.3" y1="30" x2="183.3" y2="106"/>
+<line class="grid" x1="212.9" y1="30" x2="212.9" y2="106"/>
+<line class="grid" x1="242.6" y1="30" x2="242.6" y2="106"/>
+<line class="grid" x1="272.2" y1="30" x2="272.2" y2="106"/>
+<line class="grid-major" x1="301.8" y1="30" x2="301.8" y2="106"/>
+<line class="grid" x1="331.5" y1="30" x2="331.5" y2="106"/>
+<line class="grid" x1="361.1" y1="30" x2="361.1" y2="106"/>
+<line class="grid" x1="390.7" y1="30" x2="390.7" y2="106"/>
+<line class="grid" x1="420.4" y1="30" x2="420.4" y2="106"/>
+<line class="grid-major" x1="450" y1="30" x2="450" y2="106"/>
+<line class="grid" x1="479.6" y1="30" x2="479.6" y2="106"/>
+<line class="grid" x1="509.3" y1="30" x2="509.3" y2="106"/>
+<line class="grid" x1="538.9" y1="30" x2="538.9" y2="106"/>
+<line class="grid" x1="568.5" y1="30" x2="568.5" y2="106"/>
+<line class="grid-major" x1="598.2" y1="30" x2="598.2" y2="106"/>
+<line class="grid" x1="627.8" y1="30" x2="627.8" y2="106"/>
+<line class="grid" x1="657.4" y1="30" x2="657.4" y2="106"/>
+<line class="grid" x1="687.1" y1="30" x2="687.1" y2="106"/>
 <line class="grid" x1="716.7" y1="30" x2="716.7" y2="106"/>
-<line class="grid" x1="749.1" y1="30" x2="749.1" y2="106"/>
-<line class="grid" x1="781.5" y1="30" x2="781.5" y2="106"/>
-<line class="grid-major" x1="814" y1="30" x2="814" y2="106"/>
-<line class="grid" x1="846.4" y1="30" x2="846.4" y2="106"/>
-<line class="grid" x1="878.8" y1="30" x2="878.8" y2="106"/>
-<line class="grid" x1="911.2" y1="30" x2="911.2" y2="106"/>
-<line class="grid" x1="943.6" y1="30" x2="943.6" y2="106"/>
-<line class="grid-major" x1="976" y1="30" x2="976" y2="106"/>
+<line class="grid-major" x1="746.3" y1="30" x2="746.3" y2="106"/>
+<line class="grid" x1="776" y1="30" x2="776" y2="106"/>
+<line class="grid" x1="805.6" y1="30" x2="805.6" y2="106"/>
+<line class="grid" x1="835.2" y1="30" x2="835.2" y2="106"/>
+<line class="grid" x1="864.9" y1="30" x2="864.9" y2="106"/>
+<line class="grid-major" x1="894.5" y1="30" x2="894.5" y2="106"/>
+<line class="grid" x1="924.1" y1="30" x2="924.1" y2="106"/>
+<line class="grid" x1="953.8" y1="30" x2="953.8" y2="106"/>
 <line class="grid" x1="0" y1="106" x2="1000" y2="106"/>
 <line class="grid" x1="0" y1="90" x2="1000" y2="90"/>
 <line class="grid" x1="0" y1="74" x2="1000" y2="74"/>
@@ -150,21 +159,22 @@ pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var
 <line class="grid" x1="0" y1="42" x2="1000" y2="42"/>
 <line class="grid" x1="0" y1="26" x2="1000" y2="26"/>
 <line class="baseline" x1="0" y1="106" x2="1000" y2="106"/>
-<text class="tick" x="165.8" y="132" dy="-8">12:00:10</text>
-<text class="tick" x="327.8" y="132" dy="-8">12:00:20</text>
-<text class="tick" x="489.9" y="132" dy="-8">12:00:30</text>
-<text class="tick" x="651.9" y="132" dy="-8">12:00:40</text>
-<text class="tick" x="814" y="132" dy="-8">12:00:50</text>
-<text class="tick" x="976" y="132" dy="-8">12:01:00</text>
-<path class="bracket" d="M24 24v-6H48.3v6"/><text class="gap" x="24" y="24" dy="-10">&#43;1.5 s</text>
+<text class="tick" x="153.6" y="132" dy="-8">12:00:10</text>
+<text class="tick" x="301.8" y="132" dy="-8">12:00:20</text>
+<text class="tick" x="450" y="132" dy="-8">12:00:30</text>
+<text class="tick" x="598.2" y="132" dy="-8">12:00:40</text>
+<text class="tick" x="746.3" y="132" dy="-8">12:00:50</text>
+<text class="tick" x="894.5" y="132" dy="-8">12:01:00</text>
+<path class="bracket" d="M24 24v-6H46.2v6"/><text class="gap" x="24" y="24" dy="-10">&#43;1.5 s</text>
 <line class="stem ok" x1="24" y1="106" x2="24" y2="94.4"/><circle class="dot ok" cx="24" cy="94.4" r="3"/>
-<line class="stem ok" x1="48.3" y1="106" x2="48.3" y2="94.4"/><circle class="dot ok" cx="48.3" cy="94.4" r="3"/>
-<rect class="alarm" x="149.6" y="106" width="8" height="3" transform="translate(-4 3)"/>
-<line class="stem bad" x1="149.6" y1="106" x2="149.6" y2="96"/><circle class="dot bad" cx="149.6" cy="96" r="3"/>
-<line class="stem bad dashed" x1="254.9" y1="106" x2="254.9" y2="30"/><circle class="ring bad" cx="254.9" cy="30" r="4"/>
-<line class="stem bad" x1="506.1" y1="106" x2="506.1" y2="96"/><path class="stem bad" d="M506.1 96m-5 -5l10 10m0 -10l-10 10"/>
-<line class="stem bad" x1="718.8" y1="106" x2="718.8" y2="30"/><circle class="dot bad" cx="718.8" cy="30" r="3"/>
-<line class="stem bad" x1="976" y1="106" x2="976" y2="85.9"/><circle class="dot bad" cx="976" cy="85.9" r="3"/>
+<line class="stem ok" x1="46.2" y1="106" x2="46.2" y2="94.4"/><circle class="dot ok" cx="46.2" cy="94.4" r="3"/>
+<rect class="alarm" x="138.8" y="106" width="8" height="3" transform="translate(-4 3)"/>
+<line class="stem bad" x1="138.8" y1="106" x2="138.8" y2="96"/><circle class="dot bad" cx="138.8" cy="96" r="3"/>
+<line class="stem bad dashed" x1="235.1" y1="106" x2="235.1" y2="30"/><circle class="ring bad" cx="235.1" cy="30" r="4"/>
+<line class="stem bad" x1="464.8" y1="106" x2="464.8" y2="96"/><path class="stem bad" d="M464.8 96m-5 -5l10 10m0 -10l-10 10"/>
+<line class="stem bad" x1="659.3" y1="106" x2="659.3" y2="30"/><circle class="dot bad" cx="659.3" cy="30" r="3"/>
+<line class="stem bad" x1="894.5" y1="106" x2="894.5" y2="85.9"/><circle class="dot bad" cx="894.5" cy="85.9" r="3"/>
+<line class="stem ok" x1="976" y1="106" x2="976" y2="86.9"/><circle class="dot ok" cx="976" cy="86.9" r="3"/>
 </svg>
 <figcaption>Height = body size · red: not 2xx · dashed: timeout · ×: dropped · red bar under the line: a failed check · same body bracketed · times in UTC</figcaption>
 </figure>
@@ -174,13 +184,13 @@ pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var
 <table class="counts">
 <caption>Answers</caption>
 <tr><th scope="col">2xx</th><th scope="col">4xx</th><th scope="col">5xx</th><th scope="col">timeout</th><th scope="col">drop</th><th scope="col">refused by a check</th></tr>
-<tr><td class="">2</td><td class="hot">1</td><td class="hot">1</td><td class="hot">1</td><td class="hot">1</td><td class="hot">1</td></tr>
+<tr><td class="">3</td><td class="hot">1</td><td class="hot">1</td><td class="hot">1</td><td class="hot">1</td><td class="hot">1</td></tr>
 </table>
 <table class="checks">
 <caption>Verdicts</caption>
 <tr><th scope="col">Check</th><th scope="col">pass</th><th scope="col">fail</th><th scope="col">not checked</th><th scope="col">not verifiable</th></tr>
 <tr><th scope="row">1 · GitHub signature</th><td>2</td><td class="hot">1</td><td>0</td><td>0</td></tr>
-<tr><th scope="row">2 · JSON Schema by /type</th><td>2</td><td class="hot">1</td><td>1</td><td>1</td></tr>
+<tr><th scope="row">2 · JSON Schema by /type</th><td>3</td><td class="hot">1</td><td>1</td><td>1</td></tr>
 </table>
 </div>
 <table class="retries">
@@ -352,6 +362,10 @@ line | with | pipes
 <table class="kv"><tr><th><code>Content-Type</code></th><td><code>image/png</code></td></tr></table>
 </section>
 <section>
+<h3>Images</h3>
+<div class="images"><figure class="bad"><figcaption><code>the body</code> PNG · 70 B · 1×1 px · not valid: a truncated or corrupt PNG: png: invalid format: zlib: invalid checksum</figcaption></figure></div>
+</section>
+<section>
 <h3>Body <span class="note">70 B · sha256 1390c4e2d05b99f4f8e1e4e9ff9c5e4548f1fd2ae03c292081976c358949e749 · binary, not shown</span></h3>
 </section>
 </article>
@@ -396,6 +410,36 @@ line | with | pipes
 <section>
 <h3>Body <span class="note">300 B · sha256 0d4e2ca9e9cbced7a7a5380eb29e1a3783b9b6d0db72de36a1051038e1c1fbc7 · first 256 B shown</span></h3>
 <pre class="body">xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</pre>
+<p class="note">Cut at 256 B.</p>
+</section>
+</article>
+<article class="exhibit" id="r8">
+<header>
+<span class="no">#8</span>
+<span class="line"><b>POST</b> <code>/orders</code></span>
+<span class="stamp">200 sent</span>
+</header>
+<dl class="facts">
+<div><dt>Received</dt><dd>2026-10-11T12:01:05.500Z from <code>198.51.100.7:51010</code> · HTTP/1.1</dd></div>
+<div><dt>Answer</dt><dd>200 sent · default reply</dd></div>
+</dl>
+<section class="verdicts">
+<h3>Verdicts</h3>
+<ul>
+<li class="v-pass"><b>JSON Schema by /type: pass</b> — matches Avatar</li>
+</ul>
+</section>
+<section>
+<h3>Headers</h3>
+<table class="kv"><tr><th><code>Content-Type</code></th><td><code>application/json</code></td></tr></table>
+</section>
+<section>
+<h3>Images</h3>
+<div class="images"><figure><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAQCAIAAACDRijCAAAAIklEQVR4nGNUMehhoAZgooopDKMGEQNGDSIMRg0iDAafQQBJpAEAFvi3hAAAAABJRU5ErkJggg==" alt="The image at /avatar"><figcaption><code>/avatar</code> PNG · 91 B · 24×16 px · declared image/png</figcaption></figure><figure><img src="data:image/gif;base64,R0lGODdhCAAIAIEAAMIzHwAAAAAAAAAAACwAAAAACAAIAAAIDwABCBxIsKDBgwgTKkwYEAA7" alt="The image at /badge"><figcaption><code>/badge</code> GIF · 54 B · 8×8 px · a data URL, no schema</figcaption></figure></div>
+</section>
+<section>
+<h3>Body <span class="note">279 B · sha256 1e03aca15365834447cbe88a8bf7ad82a2fea7d3a0930e251609766146be52b5 · first 256 B shown</span></h3>
+<pre class="body">{&#34;type&#34;:&#34;avatar.updated&#34;,&#34;user_id&#34;:77,&#34;avatar&#34;:&#34;iVBORw0KGgoAAAANSUhEUgAAABgAAAAQCAIAAACDRijCAAAAIklEQVR4nGNUMehhoAZgooopDKMGEQNGDSIMRg0iDAafQQBJpAEAFvi3hAAAAABJRU5ErkJggg==&#34;,&#34;badge&#34;:&#34;data:image/gif;base64,R0lGODdhCAAIAIEAAMIzHwAAAAAAAAAAACwAAAAACAAIAAAIDwA</pre>
 <p class="note">Cut at 256 B.</p>
 </section>
 </article>

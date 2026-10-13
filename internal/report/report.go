@@ -28,6 +28,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/auth"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/payload"
+	"github.com/petroladkin/hookwitness/internal/picture"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -78,6 +79,7 @@ type Options struct {
 	Version   string    // the Hookwitness build that writes it
 	Generated time.Time // when it is written
 	BodyLimit int       // bytes of a body shown; 0 is BodyLimit
+	NoImages  bool      // list images without showing them (smaller files)
 	// Fonts holds the UI's woff2 files (vendor/<family>/<file>.woff2) that
 	// an HTML report embeds; nil writes the HTML with system fonts only.
 	Fonts fs.FS
@@ -163,6 +165,7 @@ type Head struct {
 	Marks    []Mark
 
 	bodyLimit  int
+	noImages   bool
 	mask       map[string]bool
 	deliveries map[int64]int // request id → delivery number, only for retries
 }
@@ -240,6 +243,7 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 		Generated:  o.Generated.UTC(),
 		Version:    o.Version,
 		bodyLimit:  cmp.Or(o.BodyLimit, BodyLimit),
+		noImages:   o.NoImages,
 		mask:       map[string]bool{},
 		deliveries: map[int64]int{},
 	}
@@ -384,6 +388,14 @@ type Item struct {
 	Answer   Answer
 	Verdicts []auth.Verdict
 	Delivery int // 2 for the first retry of a body, 3 for the next…; 0 otherwise
+	Images   []ItemImage
+}
+
+// ItemImage is an image the request carries; Data holds its decoded bytes
+// when the report shows it (a valid PNG, JPEG, GIF or WebP, images on).
+type ItemImage struct {
+	picture.Found
+	Data []byte
 }
 
 // Header is a request header line, its value masked when asked.
@@ -463,6 +475,36 @@ func (h *Head) item(r store.Request) Item {
 		}
 	}
 	payload.MarkBad(it.Body.Tokens, bad)
+	if !r.TooLarge {
+		ct := ""
+		for _, hd := range r.Headers {
+			if strings.EqualFold(hd.Name, "Content-Type") {
+				ct = hd.Value
+				break
+			}
+		}
+		paths := map[string]bool{}
+		for _, f := range picture.Find(r.Body, ct, it.Verdicts) {
+			img := ItemImage{Found: f}
+			if !h.noImages && f.Error == "" && picture.Decodable(f.Type) {
+				img.Data, _ = picture.At(r.Body, f.Path)
+			}
+			it.Images = append(it.Images, img)
+			paths[f.Path] = true
+		}
+		if it.Body.Kind == BodyJSON && len(paths) > 0 {
+			// The images are listed with their digests; their base64 would
+			// fill pages of the body, so it is shortened there.
+			payload.MarkImages(it.Body.Tokens, paths)
+			payload.ElideImages(it.Body.Tokens, 48)
+			var sb strings.Builder
+			for _, t := range it.Body.Tokens {
+				sb.WriteString(t.Text)
+				sb.WriteString(t.Elided)
+			}
+			it.Body.Text = sb.String()
+		}
+	}
 	for i, v := range it.Verdicts {
 		// A signature taken from a masked header is masked too, and so is
 		// the one expected in its place.
@@ -631,4 +673,37 @@ func rangeLine(h *Head) string {
 		return "no requests"
 	}
 	return stamp(h.From) + " – " + stamp(h.To)
+}
+
+// imageLabel is where an image is: its JSON pointer or "the body".
+func imageLabel(f picture.Found) string {
+	if f.Path == picture.Body {
+		return "the body"
+	}
+	return f.Path
+}
+
+// imageNote is an image's facts in a line: type, size, pixels, origin, or
+// why it is not a valid image.
+func imageNote(f picture.Found) string {
+	var parts []string
+	if f.Type != "" {
+		parts = append(parts, strings.ToUpper(strings.TrimPrefix(f.Type, "image/")))
+	}
+	if f.Size > 0 {
+		parts = append(parts, size(int64(f.Size)))
+	}
+	if f.Width > 0 {
+		parts = append(parts, strconv.Itoa(f.Width)+"×"+strconv.Itoa(f.Height)+" px")
+	}
+	switch f.Source {
+	case "schema":
+		parts = append(parts, "declared "+f.Declared)
+	case "data URL":
+		parts = append(parts, "a data URL, no schema")
+	}
+	if f.Error != "" {
+		parts = append(parts, "not valid: "+f.Error)
+	}
+	return strings.Join(parts, " · ")
 }

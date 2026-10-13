@@ -77,6 +77,17 @@ type exhibitView struct {
 	Outcome  emulate.Outcome
 	Verdicts []auth.Verdict
 	BadPaths int // body tokens marked by schema problems
+	Images   []imageView
+}
+
+// imageView is an image the request carries, under its body.
+type imageView struct {
+	Label    string // the JSON pointer, or "the body"
+	Note     string // "PNG · 412 B · 40×30 px · declared by a schema"
+	Error    string // why it is not a valid image
+	Hint     string // why a valid image is not shown
+	Src      string // the decoded image, shown when it can be (PNG, JPEG, GIF, WebP)
+	Download string
 }
 
 func id(n int64) string { return strconv.FormatInt(n, 10) }

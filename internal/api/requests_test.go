@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -227,5 +228,38 @@ func TestManyWaitersAllWake(t *testing.T) {
 		if c != 1 {
 			t.Fatalf("a waiter got %d requests, want 1", c)
 		}
+	}
+}
+
+func TestRequestImages(t *testing.T) {
+	e := newEnv(t)
+	ep := e.endpoint(t, "/uploads")
+	// A 1×1 PNG, declared by a schema verdict at /photo and sent as a data URL at /extra.
+	png1 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+	r := e.add(t, ep.ID, `{"photo":"`+png1+`","extra":"data:image/png;base64,`+png1+`"}`, func(r *store.Request) {
+		r.Verdicts = `[{"check":1,"label":"JSON Schema Upload","result":"pass","images":[{"path":"/photo","declared":"image/png","type":"image/png","size":70,"width":1,"height":1}]}]`
+	})
+	got := decodeAs[map[string]any](t, e.do("GET", fmt.Sprintf("/requests/%d", r.ID), ""))
+	imgs, _ := got["images"].([]any)
+	if len(imgs) != 2 {
+		t.Fatalf("images %v", got["images"])
+	}
+	first := imgs[0].(map[string]any)
+	if first["path"] != "/extra" || first["source"] != "data URL" || first["type"] != "image/png" ||
+		first["url"] != fmt.Sprintf("/admin/api/v1/requests/%d/image?path=%%2Fextra", r.ID) {
+		t.Fatalf("first image %v", first)
+	}
+	if second := imgs[1].(map[string]any); second["source"] != "schema" || second["declared"] != "image/png" {
+		t.Fatalf("second image %v", second)
+	}
+	rec := e.do("GET", fmt.Sprintf("/requests/%d/image?path=/photo", r.ID), "")
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/png" || !bytes.HasPrefix(rec.Body.Bytes(), []byte("\x89PNG")) {
+		t.Fatalf("bytes: %d %s", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	wantError(t, e.do("GET", fmt.Sprintf("/requests/%d/image?path=/nope", r.ID), ""), http.StatusNotFound, "not_found", "path")
+	plain := e.add(t, ep.ID, `{"note":"aGVsbG8="}`, nil)
+	wantError(t, e.do("GET", fmt.Sprintf("/requests/%d/image?path=/note", plain.ID), ""), http.StatusUnprocessableEntity, "not_an_image", "path")
+	if got := decodeAs[map[string]any](t, e.do("GET", fmt.Sprintf("/requests/%d", plain.ID), "")); fmt.Sprint(got["images"]) != "[]" {
+		t.Fatalf("no images: %v", got["images"])
 	}
 }

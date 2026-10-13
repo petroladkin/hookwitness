@@ -120,3 +120,21 @@ func TestReportOfUnmatched(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Header().Get("Content-Disposition"))
 	}
 }
+
+func TestReportImagesOption(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/pics")
+	e.add(t, ep.ID, string(pngBytes(t, 4, 4)), func(r *store.Request) {
+		r.Headers = []store.Header{{Name: "Content-Type", Value: "image/png"}}
+	})
+	base := "/admin/e/" + id(ep.ID)
+	if !strings.Contains(e.do("GET", base+"?report", nil).Body.String(), `<option value="shown" selected>`) {
+		t.Fatal("images are shown by default")
+	}
+	shown := e.do("GET", base+"/report?format=html&scope=all", nil).Body.String()
+	listed := e.do("GET", base+"/report?format=html&scope=all&images=listed", nil).Body.String()
+	if !strings.Contains(shown, `<img src="data:image/png;base64,`) || strings.Contains(listed, `<img src="data:image/png;base64,`) ||
+		!strings.Contains(listed, "<code>the body</code>") {
+		t.Fatal("the images option")
+	}
+}

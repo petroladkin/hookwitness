@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | Endpoint | `/orders` |
-| Time range | 2026-10-11T12:00:01.250Z – 2026-10-11T12:01:00.000Z |
+| Time range | 2026-10-11T12:00:01.250Z – 2026-10-11T12:01:05.500Z |
 | Selection | whole register |
-| Requests | 7 |
+| Requests | 8 |
 | Generated | 2026-10-12T09:30:00.000Z by Hookwitness v0.0.0-test |
 | Masked headers | `Authorization`, `cookie`, `X-Hub-Signature-256` |
 
@@ -15,14 +15,14 @@
 
 | 2xx | 4xx | 5xx | timeout | drop | refused by a check |
 |---:|---:|---:|---:|---:|---:|
-| 2 | 1 | 1 | 1 | 1 | 1 |
+| 3 | 1 | 1 | 1 | 1 | 1 |
 
 **Verdicts**
 
 | Check | pass | fail | not checked | not verifiable |
 |---|---:|---:|---:|---:|
 | 1 · GitHub signature | 2 | 1 | 0 | 0 |
-| 2 · JSON Schema by /type | 2 | 1 | 1 | 1 |
+| 2 · JSON Schema by /type | 3 | 1 | 1 | 1 |
 
 **Retries** (the same body delivered more than once)
 
@@ -198,6 +198,12 @@ line | with | pipes
 |---|---|
 | `Content-Type` | `image/png` |
 
+**Images**
+
+| Where | Image | SHA-256 |
+|---|---|---|
+| `the body` | PNG · 70 B · 1×1 px · not valid: a truncated or corrupt PNG: png: invalid format: zlib: invalid checksum | `1390c4e2d05b99f4…` |
+
 **Body** · 70 B · sha256 1390c4e2d05b99f4f8e1e4e9ff9c5e4548f1fd2ae03c292081976c358949e749 · binary, not shown
 
 ### #6 · POST `/orders`
@@ -239,6 +245,38 @@ line | with | pipes
 
 ```
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+*Cut at 256 B.*
+
+### #8 · POST `/orders`
+
+| | |
+|---|---|
+| Received | 2026-10-11T12:01:05.500Z from `198.51.100.7:51010` · HTTP/1.1 |
+| Answer | 200 sent · default reply |
+
+**Verdicts**
+
+- JSON Schema by /type: pass — matches Avatar
+
+**Headers**
+
+| Name | Value |
+|---|---|
+| `Content-Type` | `application/json` |
+
+**Images**
+
+| Where | Image | SHA-256 |
+|---|---|---|
+| `/avatar` | PNG · 91 B · 24×16 px · declared image/png | `6e67d5560e2bf3b3…` |
+| `/badge` | GIF · 54 B · 8×8 px · a data URL, no schema | `19b2ac9b993d694c…` |
+
+**Body** · 279 B · sha256 1e03aca15365834447cbe88a8bf7ad82a2fea7d3a0930e251609766146be52b5 · first 256 B shown
+
+```
+{"type":"avatar.updated","user_id":77,"avatar":"iVBORw0KGgoAAAANSUhEUgAAABgAAAAQCAIAAACDRijCAAAAIklEQVR4nGNUMehhoAZgooopDKMGEQNGDSIMRg0iDAafQQBJpAEAFvi3hAAAAABJRU5ErkJggg==","badge":"data:image/gif;base64,R0lGODdhCAAIAIEAAMIzHwAAAAAAAAAAACwAAAAACAAIAAAIDwA
 ```
 
 *Cut at 256 B.*

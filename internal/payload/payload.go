@@ -24,7 +24,9 @@ type Token struct {
 	Class, Text string
 	Path        string
 	HasPath     bool
-	Bad         bool // a schema check found a problem at Path
+	Bad         bool   // a schema check found a problem at Path
+	Image       bool   // an image is at Path
+	Elided      string // set when Text was shortened: what was left out
 }
 
 // IsText reports UTF-8 text without control characters other than
@@ -136,6 +138,27 @@ func MarkBad(toks []Token, paths map[string]bool) {
 	for i := range toks {
 		if toks[i].HasPath && paths[toks[i].Path] {
 			toks[i].Bad = true
+		}
+	}
+}
+
+// MarkImages flags the tokens at the given JSON pointers as images.
+func MarkImages(toks []Token, paths map[string]bool) {
+	for i := range toks {
+		if toks[i].HasPath && paths[toks[i].Path] {
+			toks[i].Image = true
+		}
+	}
+}
+
+// ElideImages shortens the image strings among the tokens to their first
+// characters, noting how much was left out: a picture's base64 would fill
+// the body view.
+func ElideImages(toks []Token, keep int) {
+	for i, t := range toks {
+		if t.Image && t.Class == "s" && len(t.Text) > keep+16 {
+			toks[i].Elided = fmt.Sprintf(" %d more characters", len(t.Text)-keep-2)
+			toks[i].Text = t.Text[:keep] + "…\""
 		}
 	}
 }

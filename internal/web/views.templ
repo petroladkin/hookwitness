@@ -256,6 +256,13 @@ templ reportDialog(v exportView) {
 					</select>
 				</label>
 			</div>
+			<label>
+				Images in the requests
+				<select name="images">
+					<option value="shown" selected?={ v.Images == "shown" }>Shown (HTML and PDF), listed (Markdown)</option>
+					<option value="listed" selected?={ v.Images == "listed" }>Listed only: a smaller file</option>
+				</select>
+			</label>
 			<div class="grid2 even for-range">
 				<label>From, UTC <input type="datetime-local" name="from" step="0.001" value={ v.From } aria-invalid?={ v.Field == "from" }/></label>
 				<label>To, UTC <input type="datetime-local" name="to" step="0.001" value={ v.To } aria-invalid?={ v.Field == "to" }/></label>
@@ -385,6 +392,9 @@ templ exhibit(x exhibitView) {
 		}
 		<a class="btn" href={ templ.SafeURL(x.Self + "?report") }>Report</a>
 	</div>
+	if len(x.Images) > 0 {
+		@images(x)
+	}
 	<h2>Body</h2>
 	if x.TooLarge {
 		<div class="too">
@@ -406,10 +416,13 @@ templ exhibit(x exhibitView) {
 				}
 				<pre class="body json">
 					for _, t := range x.Body.JSON {
-						if t.Class == "" && !t.Bad {
+						if t.Class == "" && !t.Bad && !t.Image {
 							{ t.Text }
 						} else {
-							<span class={ t.Class, templ.KV("bad", t.Bad) }>{ t.Text }</span>
+							<span class={ t.Class, templ.KV("bad", t.Bad), templ.KV("img", t.Image) }>{ t.Text }</span>
+							if t.Elided != "" {
+								<span class="elided">{ t.Elided }</span>
+							}
 						}
 					}
 				</pre>
@@ -453,6 +466,45 @@ templ exhibit(x exhibitView) {
 			</table>
 		</div>
 	}
+}
+
+templ images(x exhibitView) {
+	<h2>Images · { strconv.Itoa(len(x.Images)) }</h2>
+	<ul class="images">
+		for _, im := range x.Images {
+			<li class={ templ.KV("bad", im.Error != "") }>
+				if im.Src != "" {
+					<button type="button" class="thumb" data-full={ im.Src } data-download={ im.Download } data-title={ im.Label } aria-label={ "Open " + im.Label + " full size" }>
+						<img src={ im.Src } alt={ "The image at " + im.Label } loading="lazy"/>
+					</button>
+				} else {
+					<div class={ "thumb", "none", templ.KV("hint", im.Hint != "") } aria-hidden="true">?</div>
+				}
+				<div class="img-text">
+					<code>{ im.Label }</code>
+					<span class="note">{ im.Note }</span>
+					if im.Error != "" {
+						<span class="error">{ im.Error }</span>
+					}
+					if im.Hint != "" {
+						<span class="note">{ im.Hint }</span>
+					}
+					if im.Download != "" {
+						<a href={ templ.SafeURL(im.Download) } download>Download</a>
+					}
+				</div>
+			</li>
+		}
+	</ul>
+	<dialog class="viewer" id="viewer" aria-label="Image">
+		<div class="viewer-bar">
+			<code class="viewer-title"></code>
+			<button type="button" class="btn quiet" data-viewer="zoom" aria-pressed="false">1:1</button>
+			<a class="btn quiet" data-viewer="download" href="#" download>Download</a>
+			<button type="button" class="btn quiet" data-viewer="close">Close</button>
+		</div>
+		<div class="viewer-stage"><img alt=""/></div>
+	</dialog>
 }
 
 templ notFoundPage(nav navView, msg string) {
