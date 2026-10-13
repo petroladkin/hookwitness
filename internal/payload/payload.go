@@ -24,7 +24,7 @@ type Token struct {
 	Class, Text string
 	Path        string
 	HasPath     bool
-	Bad         bool // a schema check found a problem at Path
+	Bad         bool   // a schema check found a problem at Path
 	Image       bool   // an image is at Path
 	Elided      string // set when Text was shortened: what was left out
 }
