@@ -478,13 +478,16 @@ templ images(x exhibitView) {
 						<img src={ im.Src } alt={ "The image at " + im.Label } loading="lazy"/>
 					</button>
 				} else {
-					<div class="thumb none" aria-hidden="true">?</div>
+					<div class={ "thumb", "none", templ.KV("hint", im.Hint != "") } aria-hidden="true">?</div>
 				}
 				<div class="img-text">
 					<code>{ im.Label }</code>
 					<span class="note">{ im.Note }</span>
 					if im.Error != "" {
 						<span class="error">{ im.Error }</span>
+					}
+					if im.Hint != "" {
+						<span class="note">{ im.Hint }</span>
 					}
 					if im.Download != "" {
 						<a href={ templ.SafeURL(im.Download) } download>Download</a>

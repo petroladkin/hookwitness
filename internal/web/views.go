@@ -85,6 +85,7 @@ type imageView struct {
 	Label    string // the JSON pointer, or "the body"
 	Note     string // "PNG · 412 B · 40×30 px · declared by a schema"
 	Error    string // why it is not a valid image
+	Hint     string // why a valid image is not shown
 	Src      string // the decoded image, shown when it can be (PNG, JPEG, GIF, WebP)
 	Download string
 }

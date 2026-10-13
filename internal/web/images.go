@@ -48,7 +48,7 @@ func (h *Handler) images(req store.Request, vs []auth.Verdict, body *bodyView) [
 		if f.Error == "" && picture.Decodable(f.Type) {
 			v.Src = base
 		} else if f.Error == "" {
-			v.Error = "cannot be shown here (" + f.Type + "); download it"
+			v.Hint = "cannot be shown here (" + f.Type + "); download it"
 		}
 		if f.Type == "" {
 			v.Download = "" // nothing that sniffs as an image to hand out

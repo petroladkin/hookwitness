@@ -332,6 +332,7 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 .thumb{display:grid;place-items:center;height:140px;background:var(--paper-2) repeating-conic-gradient(var(--grid) 0 25%,transparent 0 50%) 0 0/16px 16px;border:1px solid var(--rule);padding:6px;cursor:zoom-in}
 .thumb img{display:block;max-width:100%;max-height:126px;width:auto;height:auto;object-fit:contain}
 .thumb.none{cursor:default;font:400 32px/1 var(--f-stamp);color:var(--alarm)}
+.thumb.none.hint{color:var(--muted)}
 .img-text{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:13px}
 .img-text code{overflow-wrap:anywhere}
 .img-text .note{margin:0}
