@@ -454,3 +454,64 @@ func TestEachSelected(t *testing.T) {
 		t.Fatal("numbers and a range combine")
 	}
 }
+
+func TestListFiltersAndSetPath(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	ep, _ := s.CreateEndpoint(ctx, "/f")
+	var ids []int64
+	for i, v := range []struct {
+		verdict string
+		status  int
+	}{{"pass", 200}, {"fail", 401}, {"pass", 500}, {"n/v", 413}, {"fail", 200}} {
+		r := sample(ep.ID, fmt.Sprint(i))
+		r.Verdict, r.Status = v.verdict, v.status
+		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, r.ID)
+	}
+	got := func(q ListQuery) string {
+		rs, err := s.List(ctx, ep.ID, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, r := range rs {
+			for i, id := range ids {
+				if id == r.ID {
+					out = append(out, fmt.Sprint(i))
+				}
+			}
+		}
+		return fmt.Sprint(out)
+	}
+	for q, want := range map[*ListQuery]string{
+		{}:                                              "[4 3 2 1 0]",
+		{Verdict: "pass"}:                               "[2 0]",
+		{Verdict: "fail", Status: 200}:                  "[4]",
+		{Status: 200, Limit: 1}:                         "[4]",
+		{Before: ids[4], Verdict: "fail"}:               "[1]",
+		{HasAfter: true, After: ids[0]}:                 "[1 2 3 4]",
+		{HasAfter: true, Verdict: "pass"}:               "[0 2]",
+		{HasAfter: true, After: ids[2], Verdict: "n/v"}: "[3]",
+	} {
+		if g := got(*q); g != want {
+			t.Errorf("%+v: %s, want %s", *q, g, want)
+		}
+	}
+	other, _ := s.CreateEndpoint(ctx, "/other")
+	if err := s.SetPath(ctx, ep.ID, "/other"); !errors.Is(err, ErrDuplicatePath) {
+		t.Fatalf("taken path: %v", err)
+	}
+	if err := s.SetPath(ctx, ep.ID, "/moved"); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := s.Endpoint(ctx, ep.ID); e.Path != "/moved" || e.Count != 5 {
+		t.Fatalf("moved: %+v", e)
+	}
+	if err := s.SetPath(ctx, 999, "/x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown: %v", err)
+	}
+	_ = other
+}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -29,7 +30,10 @@ type Options struct {
 	Prefix  string          // the admin prefix, e.g. /admin; the API is at Prefix+"/api/v1"
 	MaxWait time.Duration   // longest delay an endpoint may configure
 	Keys    emulate.Sealer  // seals and hashes secrets; nil refuses to set them
+	Keyring emulate.Keyring // opens secrets for re-checks; nil: checks needing one are n/v
 	Stop    <-chan struct{} // closed on shutdown: waiting calls answer at once
+	Version string          // the build, named in reports
+	Fonts   fs.FS           // the UI's fonts, embedded in HTML reports
 }
 
 // Handler serves the API. Create it with New.
@@ -56,6 +60,12 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	h.mux.HandleFunc("GET "+b+"/endpoints", h.listEndpoints)
 	h.mux.HandleFunc("POST "+b+"/endpoints", h.createEndpoint)
 	h.mux.HandleFunc("GET "+b+"/endpoints/{id}", h.getEndpoint)
+	h.mux.HandleFunc("PATCH "+b+"/endpoints/{id}", h.patchEndpoint)
+	h.mux.HandleFunc("DELETE "+b+"/endpoints/{id}", h.deleteEndpoint)
+	h.mux.HandleFunc("POST "+b+"/endpoints/{id}/reset-counter", h.resetCounter)
+	h.mux.HandleFunc("POST "+b+"/endpoints/{id}/recheck", h.recheck)
+	h.mux.HandleFunc("GET "+b+"/endpoints/{id}/report", h.endpointReport)
+	h.mux.HandleFunc("DELETE "+b+"/endpoints/{id}/requests", h.clearRequests)
 	h.mux.HandleFunc("GET "+b+"/endpoints/{id}/behaviour", h.getBehaviour)
 	h.mux.HandleFunc("PUT "+b+"/endpoints/{id}/behaviour", h.putBehaviour)
 	h.mux.HandleFunc("PUT "+b+"/endpoints/{id}/secrets/{name}", h.putSecret)
@@ -63,6 +73,9 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	h.mux.HandleFunc("GET "+b+"/endpoints/{id}/requests", h.listRequests)
 	h.mux.HandleFunc("GET "+b+"/requests/{id}", h.getRequest)
 	h.mux.HandleFunc("GET "+b+"/requests/{id}/image", h.getImage)
+	h.mux.HandleFunc("GET "+b+"/requests/{id}/body", h.rawBody)
+	h.mux.HandleFunc("GET "+b+"/unmatched/requests", h.listUnmatched)
+	h.mux.HandleFunc("GET "+b+"/unmatched/report", h.unmatchedReport)
 	h.mux.HandleFunc(b+"/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no route %s %s", r.Method, r.URL.Path), "")
 	})

@@ -174,6 +174,12 @@ type listQuery struct {
 	hasAfter      bool
 	limit         int
 	wait          time.Duration
+	verdict       string
+	status        int
+}
+
+func (l listQuery) store(limit int) store.ListQuery {
+	return store.ListQuery{Before: l.before, After: l.after, HasAfter: l.hasAfter, Limit: limit, Verdict: l.verdict, Status: l.status}
 }
 
 func parseList(w http.ResponseWriter, r *http.Request) (listQuery, bool) {
@@ -209,6 +215,23 @@ func parseList(w http.ResponseWriter, r *http.Request) (listQuery, bool) {
 		}
 		l.limit = min(n, maxLimit)
 	}
+	if q.Has("verdict") {
+		switch l.verdict = q.Get("verdict"); l.verdict {
+		case "pass", "fail", "n/v", "n/c":
+		default:
+			return bad("verdict", "verdict is pass, fail, n/v or n/c")
+		}
+	}
+	if q.Has("status") {
+		n, err := strconv.Atoi(q.Get("status"))
+		if err != nil || n < 0 || n > 599 {
+			return bad("status", "status is an HTTP status code such as 200, or 0 for nothing sent")
+		}
+		l.status = n
+		if n == 0 {
+			l.status = -1 // filter on "nothing sent"
+		}
+	}
 	if q.Has("wait") {
 		s := q.Get("wait")
 		d, err := time.ParseDuration(s)
@@ -228,12 +251,21 @@ func parseList(w http.ResponseWriter, r *http.Request) (listQuery, bool) {
 
 // listRequests lists an endpoint's requests: newest first (paged back with
 // before), or with after the newer ones oldest first, waiting up to wait
-// for the first of them.
+// for the first of them; verdict and status filter either way.
 func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 	ep, ok := h.endpoint(w, r)
 	if !ok {
 		return
 	}
+	h.list(w, r, ep.ID)
+}
+
+// listUnmatched lists the Unmatched register the same way.
+func (h *Handler) listUnmatched(w http.ResponseWriter, r *http.Request) {
+	h.list(w, r, store.Unmatched)
+}
+
+func (h *Handler) list(w http.ResponseWriter, r *http.Request, reg int64) {
 	l, ok := parseList(w, r)
 	if !ok {
 		return
@@ -241,9 +273,9 @@ func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 	var reqs []store.Request
 	var err error
 	if l.hasAfter {
-		reqs, err = h.waitAfter(r, ep.ID, l)
+		reqs, err = h.waitAfter(r, reg, l)
 	} else {
-		reqs, err = h.store.Requests(r.Context(), ep.ID, l.before, l.limit)
+		reqs, err = h.store.List(r.Context(), reg, l.store(l.limit))
 	}
 	if r.Context().Err() != nil {
 		return // the client went away
@@ -269,11 +301,8 @@ func (h *Handler) waitAfter(r *http.Request, id int64, l listQuery) ([]store.Req
 	deadline := time.NewTimer(l.wait)
 	defer deadline.Stop()
 	for {
-		reqs, err := h.store.RequestsAfter(r.Context(), id, l.after)
+		reqs, err := h.store.List(r.Context(), id, l.store(l.limit))
 		if err != nil || len(reqs) > 0 || l.wait == 0 {
-			if len(reqs) > l.limit {
-				reqs = reqs[:l.limit]
-			}
 			return reqs, err
 		}
 		select {
