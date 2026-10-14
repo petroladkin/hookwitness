@@ -9,7 +9,8 @@ Catch webhooks, get a verdict, attach the evidence.
 
 <!-- docs-check: skip: starts a long-running container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
-docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data ghcr.io/petroladkin/hookwitness:edge
+docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
+  ghcr.io/petroladkin/hookwitness:edge
 ```
 
 <img src="docs/images/demo.gif" width="760" alt="A 20-second run: GitHub webhooks arrive live on the register; the third is answered 503 by a rule; one signed with the wrong secret turns red and its page says the signature does not match; then the report is downloaded and opened.">
