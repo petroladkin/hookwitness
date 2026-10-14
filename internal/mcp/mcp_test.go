@@ -190,7 +190,7 @@ func TestSignatureScenario(t *testing.T) {
 		e.deliver("/github/events", body, "X-Hub-Signature-256", githubSig("wrong", body))
 	}()
 	out, text := e.ok(t, "expect", map[string]any{"endpoint": "/github/events", "verdict": "pass", "within_s": 10})
-	if out["result"] != "pass" || !strings.HasPrefix(text, "pass: 1 request(s) with verdict=pass arrived") {
+	if out["result"] != "pass" || !strings.HasPrefix(text, "pass: 1 request(s) with verdict=pass arrived") || out["summary"] != strings.SplitN(text, "\n", 2)[0] {
 		t.Fatalf("expect pass: %s", text)
 	}
 	time.Sleep(100 * time.Millisecond) // the bad one is caught too

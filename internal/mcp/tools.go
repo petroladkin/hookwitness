@@ -25,11 +25,17 @@ const (
 	apiWait     = 60 * time.Second // the API's longest long-poll
 )
 
-// result is what every tool answers: a summary line, then compact JSON;
-// the same object is the structured content.
+// result is what every tool answers: a summary line, then compact JSON.
+// The structured content (which some clients show instead of the text)
+// carries the summary too.
 func result(summary string, out map[string]any) (*sdk.CallToolResult, map[string]any, error) {
 	b, _ := json.Marshal(out)
-	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: summary + "\n" + string(b)}}}, out, nil
+	structured := make(map[string]any, len(out)+1)
+	for k, v := range out {
+		structured[k] = v
+	}
+	structured["summary"] = summary
+	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: summary + "\n" + string(b)}}}, structured, nil
 }
 
 func ptr[T any](v T) *T { return &v }
