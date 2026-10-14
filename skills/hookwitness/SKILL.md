@@ -61,8 +61,10 @@ Check kinds: `basic` (+`user`), `bearer` (token secrets); `github`, `stripe`,
 `standard` (`whsec_` key), `hmac` (+`header`, `algo`, `encoding`) (key secrets).
 To check the payload's shape, add JSON Schemas and a `schema` check in the same
 PUT: `"schemas":[{"name":"OrderPaid","text":"<schema JSON as a string>"}]`,
-`"checks":[{"kind":"schema","schema":"OrderPaid"}]`, or pick the schema by the
-event type with `"select":{"from":"body","key":"/type","map":[{"value":"order.paid","schema":"OrderPaid"}]}`.
+`"checks":[{"kind":"schema","schema":"OrderPaid"}]`, any of several shapes with
+`"schemas":["V1","V2"]`, or pick the schema by the event type with
+`"select":{"from":"body","key":"/type","map":[{"value":"order.paid","schema":"OrderPaid"}],"default":"V1"}`
+(`default`, one name or a list, covers unmapped or missing values; without it they are `n/c`).
 A failed schema verdict lists `problems` (`path`, `keyword`, `message`).
 
 Between test cases: `DELETE $API/endpoints/<id>/requests` clears an endpoint,

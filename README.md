@@ -246,10 +246,16 @@ when no schema applies to the event.
 - Schemas refer to each other by name: `{"$ref": "Address"}`. Nothing is ever
   fetched: a reference to any other URL or a file is refused at save.
 - `format` is asserted: a `date-time` of `"yesterday"` fails.
-- A check uses one schema, or picks it by a discriminator — a JSON pointer
-  into the body (`/type`) or a header (`X-GitHub-Event`) — with a mapping
-  `order.paid = OrderPaid`. A value without a mapping gets **n/c** and is
-  never refused.
+- A check uses one schema, or several when the sender may send either shape
+  (v1 or v2): the body must match one of them, the verdict names which, and
+  when none matches it gives the problems of the closest one and how far the
+  others were (`matches none of V1, V2; closest V2 with 1 error (V1: another
+  shape)`).
+- Or a check picks the schema by a discriminator — a JSON pointer into the
+  body (`/type`) or a header (`X-GitHub-Event`) — with a mapping
+  `order.paid = OrderPaid`. A value without a mapping, or a request without
+  the value, is checked against the default schemas when there are any;
+  without a default it gets **n/c** and is never refused.
 - A body that is not JSON fails with the parse error and its byte offset; an
   empty body fails as such.
 - **Images in the payload:** a string declared

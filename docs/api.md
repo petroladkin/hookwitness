@@ -163,11 +163,17 @@ The document (fields left out take their zero value; `default.status` 0 means 20
 | `basic` | `Authorization: Basic` | token (the password) | `user` |
 
 - **JSON Schema** checks (`"kind": "schema"`) validate the body against one of
-  the endpoint's `schemas`: `"schema": "OrderPaid"`, or picked by a
+  the endpoint's `schemas`: `"schema": "OrderPaid"`; any of several,
+  `"schemas": ["V1", "V2"]` (the reason names the one matched, or, when none
+  did, the closest one, whose `problems` the verdict carries, and the others'
+  counts; "closest" is the fewest problems at the top of the body, a wrong
+  shape, then the fewest in all, then the first listed); or picked by a
   discriminator, `"select": {"from": "body", "key": "/type", "map": [{"value":
-  "order.paid", "schema": "OrderPaid"}]}` (`from` is `body` with a JSON
-  pointer or `header` with a header name). A value without a mapping gets the
-  verdict `n/c` (not checked) and is never refused; enforced failures are
+  "order.paid", "schema": "OrderPaid"}], "default": ["V1", "V2"]}` (`from` is
+  `body` with a JSON pointer or `header` with a header name; `default` is one
+  name or a list, for a value without a mapping or a request without the
+  value). Without a default such a request gets the verdict `n/c` (not
+  checked) and is never refused; enforced failures are
   refused with `400` listing the problems. Schemas follow `$schema` (2020-12
   when absent), refer to each other by name (`{"$ref": "Address"}`), are never
   fetched from anywhere, and assert `format`. An invalid schema is a `422`

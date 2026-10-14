@@ -79,7 +79,7 @@
    "headers": [],
    "want": {
     "result": "fail",
-    "reason": "matches none of V1, V2; closest V2 with 1 error (V1: 1 error)",
+    "reason": "matches none of V1, V2; closest V2 with 1 error (V1: another shape)",
     "problems": [
      "/data/task_id"
     ]
@@ -117,7 +117,7 @@
    "headers": [],
    "want": {
     "result": "fail",
-    "reason": "matches none of V1, V2; closest V2 with 2 errors (V1: 1 error)",
+    "reason": "matches none of V1, V2; closest V2 with 2 errors (V1: another shape)",
     "problems": [
      "/version",
      "/event"

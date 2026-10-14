@@ -265,7 +265,11 @@ func (c Config) verifySchema(ch Check, r Request, hasBody bool) auth.Verdict {
 		var others []string
 		for i, o := range results {
 			if i != best {
-				others = append(others, fmt.Sprintf("%s: %s", names[i], errorCount(o.Total)))
+				desc := errorCount(o.Total)
+				if rootProblems(o) > rootProblems(res) {
+					desc = "another shape" // what made it farther, though its count may be as low
+				}
+				others = append(others, names[i]+": "+desc)
 			}
 		}
 		v.Reason = "matches none of " + strings.Join(names, ", ") + "; closest " + names[best] + " with " +

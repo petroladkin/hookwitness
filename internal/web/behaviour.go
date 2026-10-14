@@ -435,10 +435,12 @@ func formCheck(r *http.Request) (emulate.Check, error) {
 	case emulate.KindSchema:
 		ch.Secret = ""
 		if from := v("select_from"); from != "" {
-			ch.Select = &emulate.Select{From: from, Key: v("select_key")}
+			ch.Select = &emulate.Select{From: from, Key: v("select_key"), Default: emulate.Names(r.PostForm["select_default"])}
 			ch.Select.Map, err = parseMapping(r.PostFormValue("select_map"))
-		} else {
-			ch.Schema = v("schema")
+		} else if names := r.PostForm["schema"]; len(names) == 1 {
+			ch.Schema = names[0]
+		} else if len(names) > 1 {
+			ch.Schemas = names
 		}
 	case emulate.KindStripe, emulate.KindStandard:
 		ch.IgnoreTimestamp = r.PostFormValue("ignore_timestamp") == "on"
@@ -496,6 +498,11 @@ func parseMapping(text string) ([]emulate.Mapping, error) {
 		out = append(out, emulate.Mapping{Value: strings.TrimSpace(line[:i]), Schema: strings.TrimSpace(line[i+1:])})
 	}
 	return out, nil
+}
+
+// checkUses reports a schema among a check's alternatives (no Select).
+func checkUses(ch emulate.Check, name string) bool {
+	return ch.Select == nil && (ch.Schema == name || slices.Contains(ch.Schemas, name))
 }
 
 // formatMapping is the editor text of a mapping.
@@ -695,7 +702,11 @@ func checkSummary(c emulate.Check) string {
 			for _, m := range c.Select.Map {
 				parts = append(parts, strconv.Quote(m.Value)+" → "+m.Schema)
 			}
-			parts = []string{strings.Join(parts, ", "), "other values not checked"}
+			other := "other values not checked"
+			if d := c.Select.Default; len(d) > 0 {
+				other = "other values → " + strings.Join(d, " or ")
+			}
+			parts = []string{strings.Join(parts, ", "), other}
 		}
 	}
 	switch c.Kind {

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"slices"
 	"strconv"
 
 	"github.com/petroladkin/hookwitness/internal/emulate"
@@ -929,26 +930,35 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 			<label>
 				Pick the schema by
 				<select name="select_from">
-					<option value="" selected?={ ch.Select == nil }>nothing: always one schema</option>
+					<option value="" selected?={ ch.Select == nil }>nothing: the same for every request</option>
 					<option value="body" selected?={ ch.Select != nil && ch.Select.From == "body" }>a value in the body (JSON pointer)</option>
 					<option value="header" selected?={ ch.Select != nil && ch.Select.From == "header" }>a header</option>
 				</select>
 			</label>
-			<label class="for-schema">
-				Schema
-				<select name="schema">
-					<option value="">choose…</option>
-					for _, sc := range b.Config.Schemas {
-						<option value={ sc.Name } selected?={ ch.Schema == sc.Name }>{ sc.Name }</option>
-					}
-				</select>
-			</label>
 		</div>
+		<fieldset class="masks for-schema">
+			<legend>Schemas · the body must match one</legend>
+			<div class="mask-list">
+				for _, sc := range b.Config.Schemas {
+					<label class="check"><input type="checkbox" name="schema" value={ sc.Name } checked?={ checkUses(ch, sc.Name) }/> <code>{ sc.Name }</code></label>
+				}
+			</div>
+			<p class="help">Tick more than one when the sender may send either shape (v1 or v2): the verdict names the one that matched, or the closest one and its problems.</p>
+		</fieldset>
 		<div class="for-select">
 			<label>Pointer or header <input name="select_key" value={ selectKey(ch) } spellcheck="false" autocomplete="off" placeholder="/type or X-GitHub-Event"/></label>
 			<label for="check-map">Values to schemas, one per line as <code>value = SchemaName</code></label>
 			<textarea id="check-map" name="select_map" rows="3" spellcheck="false" placeholder="order.paid = OrderPaid">{ formatMapping(ch.Select) }</textarea>
-			<p class="help">The value at the pointer, or of the header, picks the schema from these lines. A value without a line gets the verdict <b>n/c</b> (not checked) and is never refused.</p>
+			<p class="help">The value at the pointer, or of the header, picks the schema from these lines.</p>
+			<fieldset class="masks">
+				<legend>Other values, or none · default</legend>
+				<div class="mask-list">
+					for _, sc := range b.Config.Schemas {
+						<label class="check"><input type="checkbox" name="select_default" value={ sc.Name } checked?={ ch.Select != nil && slices.Contains(ch.Select.Default, sc.Name) }/> <code>{ sc.Name }</code></label>
+					}
+				</div>
+				<p class="help">A value without a line, or a request without the value, must match one of the ticked schemas. Tick none to leave such requests unchecked: verdict <b>n/c</b>, never refused.</p>
+			</fieldset>
 		</div>
 	</div>
 	<label class="kinded k-header k-hmac">Header <input name="header" value={ ch.Header } spellcheck="false" autocomplete="off" placeholder="X-Signature"/></label>
