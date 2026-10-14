@@ -1,0 +1,95 @@
+# Troubleshooting
+
+## I added a secret, but requests still get 200 and no verdict
+
+A secret alone does nothing: it is only the value a check uses. Add the
+check that uses it: **Behaviour → Checks → New check**, choose the kind
+(Bearer token, Basic credentials, GitHub signature…) and the secret. The
+Secrets tab lists which checks use each secret; "not used" means none does.
+
+<!-- docs-check: setup: secret_only -->
+```sh
+curl -s -o /dev/null -d '{}' -H 'Authorization: Bearer wrong' http://127.0.0.1:8080/ping   # 200: no check, no verdict
+```
+
+Even with the check, a request that fails gets the usual `200` unless the
+check's **Enforce** is on: without it, the check only records a verdict. See
+[Authorization checks and secrets](authorization.md#enforce).
+
+## Everything is gone after I recreated the container
+
+The container ran without a volume for `/data`, so the database lived in the
+container itself and went with it. Run it with a named volume
+(`-v hookwitness:/data`) from now on; see
+[Configuration and deployment](deployment.md#keep-the-data-in-a-volume). What
+was in the removed container cannot be recovered.
+
+## The UI says it does not answer to the host name
+
+```text
+The web UI does not answer to the host name "hooks.example.com:8080". Open it by IP address or localhost, or allow the name with -admin-hosts.
+```
+
+The UI and the API answer only to IP addresses and `localhost`, so a web page
+on another domain cannot reach them through DNS. Open it by IP address, or
+allow the name: `-admin-hosts hooks.example.com` (in Docker:
+`-e HOOKWITNESS_ADMIN_HOSTS=hooks.example.com`). The API answers the same
+refusal as `421 wrong_host`. Catch paths answer to any name.
+
+```sh
+curl -s -H 'Host: hooks.example.com' http://127.0.0.1:8080/admin/api/v1/endpoints | jq -r .error.code
+# wrong_host
+```
+
+## Every signature check says n/v: "cannot be decrypted (wrong secret key?)"
+
+The server runs with another secret key than the one that sealed the
+secrets: `HOOKWITNESS_SECRET_KEY` changed, or the database was moved without
+its `.key` file. At startup the log says so:
+
+```text
+this secret key is not the one this database was used with: sealed signing keys cannot be opened and stored tokens never match
+```
+
+Start it with the original key (the variable, or the `.key` file next to the
+database), or set the secrets again with **Replace** on the Secrets tab, then
+**Re-check** the kept requests. Stored tokens and passwords cannot be
+recovered either: with the wrong key they simply never match.
+
+## A request got 413 and its checks say n/v
+
+Its body was larger than `-max-body` (10 MiB by default). It was answered
+`413` and kept without its body, so nothing that needs the body (a signature,
+a schema) can be verified: **n/v**. Raise the limit
+(`HOOKWITNESS_MAX_BODY=50MiB`) if such bodies are expected.
+
+<!-- docs-check: setup: github -->
+```sh
+head -c 11000000 /dev/zero | curl -s -o /dev/null --data-binary @- http://127.0.0.1:8080/hooks   # 413
+head -c 11000000 /dev/zero | curl -s -o /dev/null --data-binary @- http://127.0.0.1:8080/hooks   # n/v: body not kept (over the size limit)
+```
+
+## My requests land in Unmatched with 404
+
+The path does not match an endpoint exactly. Compare them in the Unmatched
+register: a trailing slash (`/hooks/` is not `/hooks`), a missing segment, a
+different case. Fix the sender's URL, or create the endpoint at that path.
+
+## The sender says it timed out, but Hookwitness has the request
+
+The reply's delay (or a timeout rule) was longer than the sender's timeout.
+The request is recorded as **sender left**, with how long the sender waited,
+and counted as a timeout. Shorten the delay, or keep it to test exactly that.
+
+## A Stripe or Standard Webhooks check fails with "timestamp … old"
+
+The signed timestamp is older than the tolerance (300 s), typically when you
+replay a captured request. Tick **Accept any timestamp (replayed captures)** on
+the check, or raise its tolerance.
+
+## The register does not update by itself
+
+The live view is a Server-Sent Events stream at `/admin/e/<id>/events`. A
+reverse proxy that buffers responses holds it back; turn buffering off for
+the admin prefix (nginx: `proxy_buffering off;`; Hookwitness also sends
+`X-Accel-Buffering: no`). A reload always shows the current state.

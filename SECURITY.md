@@ -31,7 +31,8 @@ The project is in early development and has no releases yet: only the latest
 
 - **The web UI has no login yet.** Anyone who can reach the admin prefix can
   read every caught request and change every endpoint. Keep it on localhost
-  or behind a reverse proxy that does not publish it (see the README).
+  or behind a reverse proxy that does not publish it (see
+  [Reaching it from other machines](docs/deployment.md#reaching-it-from-other-machines)).
 - Caught requests are stored as received, including the senders' own
   `Authorization` headers and signatures: they are the evidence.
 - Secrets used with the checks are meant to be test values; protect the
