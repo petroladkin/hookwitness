@@ -105,3 +105,31 @@ func TestDraftValidatesItsBodies(t *testing.T) {
 		}
 	}
 }
+
+func TestChanges(t *testing.T) {
+	stored, _ := Draft([][]byte{[]byte(`{"id":1,"at":"2026-10-12T17:28:07Z","tags":["a"],"addr":{"zip":"01001"},"old":true}`)})
+	draft, _ := Draft([][]byte{[]byte(`{"id":1.5,"at":"later","tags":[1],"addr":{"zip":"01001","city":"Kyiv"},"note":null}`),
+		[]byte(`{"id":2,"at":"x","tags":[],"addr":{}}`)})
+	got, err := Changes(stored, draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"/addr/city: new key, optional",
+		"/addr/zip: now optional",
+		"/at: format date-time dropped",
+		"/id: type integer → number",
+		"/note: new key, optional",
+		"/old: not in the draft (not seen in these requests)",
+		"/tags/items/*: type string → integer",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("changes\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if same, _ := Changes(stored, stored); len(same) != 0 {
+		t.Fatalf("no changes: %v", same)
+	}
+	if _, err := Changes("[1]", draft); err == nil {
+		t.Fatal("a stored schema that is not an object")
+	}
+}
