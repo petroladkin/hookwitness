@@ -136,7 +136,8 @@ that makes it false.
   `scripts/api-smoke.sh` — the API scenario (the Basic-credentials recipe
   end to end) against a URL, a binary or an image.
 - `docs/` — user documentation, one page per task (`docs/README.md` is the
-  index), screenshots in `docs/images/` (WebP, from `make media`); `docs/uk/`
+  index), screenshots in `docs/images/` (WebP, from `make media`, and the
+  README's `demo.gif`), the social preview in `docs/media/`; `docs/uk/`
   — the Ukrainian twins; `docs/api.md` — the API reference and recipes
   (English only); `skills/hookwitness/SKILL.md` — a Claude Code skill for
   testing webhook senders with hookwitness.
@@ -146,7 +147,9 @@ that makes it false.
   says to click); `scripts/media/media.mjs` — `make media`: does through the
   API what each page's text does (same paths, values, requests) and shoots
   the documentation's screenshots over the Chrome DevTools Protocol (Node, no
-  npm packages). A shot that shows something else than its text is a bug.
+  npm packages); records the README's demo GIF from a screencast, encoded by
+  ffmpeg in a container pinned by digest. A shot that shows something else
+  than its text is a bug.
 - `Dockerfile`, `.dockerignore` — two-stage image: cross-compiling build
   stage through `make build`, distroless static nonroot final stage; the
   build context is an allowlist.
@@ -174,8 +177,8 @@ that makes it false.
 - `make docs-check` — every shell example of the documentation against a
   fresh build (curl, jq, openssl). Run it after changing a page or what a
   page describes.
-- `make media` — regenerate `docs/images/` (Node 22+, Chrome; `CHROME=` to
-  choose the browser).
+- `make media` — regenerate `docs/images/` and `docs/media/` (Node 22+,
+  Chrome, Docker for the GIF; `CHROME=` to choose the browser).
 
 ## Scope
 
