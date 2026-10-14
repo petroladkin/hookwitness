@@ -31,8 +31,10 @@ in reports. A schema can be drafted from caught bodies (`internal/schema`
 stored only when saved. The REST API core
 (`<prefix>/api/v1`: endpoints list/create/read, behaviour GET/PUT with
 ETag/If-Match, write-only secrets, request lists with long-poll `wait`, one
-request) has the UI's access rules; docs in `docs/api.md`, an agent skill in
-`skills/hookwitness`. Reports: a register's requests (all, a time range or
+request) has the UI's access rules; reference in `docs/api.md`, an agent skill in
+`skills/hookwitness`. User documentation in `docs/` (task by task, with
+screenshots) and its Ukrainian twin in `docs/uk/`; the README keeps the pitch,
+the quick start and links. Reports: a register's requests (all, a time range or
 picked by number) download from the UI as Markdown, self-contained HTML or a
 native PDF, with a summary (answers by class, verdicts per check, retry
 groups, the strip of the range) and optional header masking. The REST API
@@ -125,14 +127,25 @@ that makes it false.
   addresses or home-directory paths in tracked files (exempt a line with
   `guard:allow`, a file with `guard:allow-file` in its first line), and
   `THIRD-PARTY-NOTICES.md` matching the modules compiled in and the bundled
-  assets (web vendor files and report fonts).
+  assets (web vendor files and report fonts); the documentation: every page
+  of `docs/` has its twin in `docs/uk/` (except `api.md`) with the same `sh`
+  blocks, relative links and anchors resolve, every image is used.
 - `scripts/hooks` — git hooks; `scripts/notices.sh` — notices generator;
   `scripts/docker-smoke.sh` — the container scenario (README's `docker run`,
   health, persistence of data and sealed secrets, graceful stop, read-only);
   `scripts/api-smoke.sh` — the API scenario (the Basic-credentials recipe
   end to end) against a URL, a binary or an image.
-- `docs/api.md` — the API reference and recipes; `skills/hookwitness/SKILL.md`
-  — a Claude Code skill for testing webhook senders with hookwitness.
+- `docs/` — user documentation, one page per task (`docs/README.md` is the
+  index), screenshots in `docs/images/` (WebP, from `make media`); `docs/uk/`
+  — the Ukrainian twins; `docs/api.md` — the API reference and recipes
+  (English only); `skills/hookwitness/SKILL.md` — a Claude Code skill for
+  testing webhook senders with hookwitness.
+- `scripts/docscheck` — `make docs-check`: runs every `sh` block of the README
+  and `docs/` against a fresh server and checks the verdicts, statuses and
+  outputs the text promises (`setup.sh` does through the API what a page
+  says to click); `scripts/media/media.mjs` — `make media`: seeds an instance
+  through the API and shoots the documentation's screenshots over the Chrome
+  DevTools Protocol (Node, no npm packages).
 - `Dockerfile`, `.dockerignore` — two-stage image: cross-compiling build
   stage through `make build`, distroless static nonroot final stage; the
   build context is an allowlist.
@@ -157,6 +170,11 @@ that makes it false.
   image-smoke` — the container scenario against it (Docker, curl, openssl).
 - `make api-smoke` — the API scenario against a freshly built binary (curl,
   jq); `scripts/api-smoke.sh --image <image>` runs it against an image.
+- `make docs-check` — every shell example of the documentation against a
+  fresh build (curl, jq, openssl). Run it after changing a page or what a
+  page describes.
+- `make media` — regenerate `docs/images/` (Node 22+, Chrome; `CHROME=` to
+  choose the browser).
 
 ## Scope
 
@@ -172,7 +190,8 @@ Go, sqlite, templ, HTMX, Server-Sent Events, Docker.
 - Gitflow: `main` + `dev` + `feature/*` + `release/*` + `fix/*` + `hotfix/*`.
   No direct commits to `dev` or `main`; work reaches `dev` from a branch after
   review. `make hooks` enables the guards.
-- Conventional Commits; English everywhere in the repository.
+- Conventional Commits; English everywhere in the repository, except the
+  Ukrainian documentation in `docs/uk/`.
 - Build binaries into `bin/`, never at the repository root.
 - Never commit secrets, real customer payloads, personal data, local machine
   paths or private network addresses — not in code, tests, fixtures, docs or
@@ -182,7 +201,9 @@ Go, sqlite, templ, HTMX, Server-Sent Events, Docker.
   beside them.
 - No test, script or make target may depend on files outside the
   repository: a clean clone must pass `make check`.
-- Documentation changes in the same change as the code it describes.
+- Documentation changes in the same change as the code it describes: the
+  page in `docs/` and its twin in `docs/uk/` (translated in the same change;
+  the shell blocks stay identical), and `make docs-check` passes.
 - Tests that measure wall-clock time assert only what runner load cannot
   fake: never early, and ended well before the alternative (a delay applied
   twice, a hold past its cap); exact durations go through the catcher's timer

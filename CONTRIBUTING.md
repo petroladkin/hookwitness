@@ -46,6 +46,24 @@ root.
 - Code, comments, identifiers, commit messages and docs are in English.
 - Tests go with the change, and `make check` passes (Go 1.27+).
 
+## Documentation
+
+User documentation lives in `docs/`, with a Ukrainian twin of every page in
+`docs/uk/` (the API reference `docs/api.md` is English only). A change that
+changes what a user sees changes the page that describes it, and its twin, in
+the same pull request.
+
+- The shell examples (```` ```sh ```` blocks) are run by `make docs-check`
+  against a fresh build (needs curl, jq, openssl): a command ending in
+  `# pass`, `# fail: <reason>` or `# 200` asserts the verdict or status of the
+  request it sent, and comment lines right after a command are its expected
+  output. `scripts/docscheck/main.go` documents the rest. Twins keep the same
+  `sh` blocks; a repository test checks that, the relative links and anchors,
+  and that every image is used.
+- Screenshots in `docs/images/` come from `make media` (Node 22+ and Chrome):
+  a seeded instance shot at 1280 px in the light theme. Regenerate them when
+  the UI visibly changes, and commit only the ones that changed.
+
 ## Reporting a problem
 
 Bugs go to the issue tracker: what you did, what you saw, what you expected.

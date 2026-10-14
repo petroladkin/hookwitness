@@ -1,0 +1,123 @@
+# Налаштування й розгортання
+
+## Docker
+
+<!-- docs-check: skip: starts a container; scripts/docker-smoke.sh runs this command in CI -->
+```sh
+docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
+  ghcr.io/petroladkin/hookwitness:edge
+```
+
+Інтерфейс — на <http://localhost:8080/admin/>; вебхуки йдуть на будь-який
+інший шлях порту 8080. Образи зібрано для linux/amd64 і linux/arm64. `:edge`
+іде за гілкою розробки; випущені версії мають теги `:X.Y.Z`, `:X.Y` і
+`:latest`.
+
+### Тримайте дані в томі
+
+Усе, що зберігає Hookwitness (ендпоінти, їхня поведінка, секрети, упіймані
+запити), лежить у `/data`: база даних і, якщо не задано
+`HOOKWITNESS_SECRET_KEY`, ключ, яким запечатано секрети
+(`/data/hookwitness.db.key`).
+
+**Завжди монтуйте `/data`.** Без `-v hookwitness:/data` дані живуть у
+власному шарі контейнера: після `docker rm` і нового `docker run`
+(оновлення, змінений прапорець) все починається з порожнього, усі ендпоінти
+зникають. Іменований том, як вище, переживає контейнер.
+
+Якщо замість іменованого тому каталог хоста, віддайте його користувачу
+образу (`chown 65532:65532 <dir>`) або запускайте з
+`--user "$(id -u):$(id -g)"`.
+
+Робіть резервну копію бази й ключа разом: база, відновлена без свого ключа,
+зберігає запити, але втрачає секрети.
+
+### Compose
+
+```yaml
+services:
+  hookwitness:
+    image: ghcr.io/petroladkin/hookwitness:edge
+    ports: ["127.0.0.1:8080:8080"]
+    volumes: ["hookwitness:/data"]
+    restart: unless-stopped
+volumes:
+  hookwitness:
+```
+
+### Образ
+
+- Працює від непривілейованого користувача без оболонки і з
+  `--read-only --tmpfs /tmp`.
+- Має перевірку здоров'я (`hookwitness health`, що питає `/healthz`);
+  `docker ps` її показує.
+- Несе підписане походження збірки (provenance) і SBOM:
+  `gh attestation verify oci://ghcr.io/petroladkin/hookwitness:edge --owner petroladkin`.
+- `make image` збирає його локально; `make image-smoke` проганяє сценарій,
+  який проганяє CI.
+
+## Параметри
+
+Параметри задаються прапорцями або змінними середовища; прапорець має
+перевагу. У Docker передавайте змінні: `-e HOOKWITNESS_RETENTION=5000`.
+
+| Прапорець | Змінна | Типово |
+|---|---|---|
+| `-addr` | `HOOKWITNESS_ADDR` | `127.0.0.1:8080` (в образі: `:8080`) |
+| `-db` | `HOOKWITNESS_DB` | `hookwitness.db` (в образі: `/data/hookwitness.db`) |
+| `-log-format` | `HOOKWITNESS_LOG_FORMAT` | `text` (або `json`) |
+| `-max-body` | `HOOKWITNESS_MAX_BODY` | `10MiB` (байти, або з `KiB`, `MiB`, `GiB`); більші тіла отримують `413` і не зберігаються |
+| `-retention` | `HOOKWITNESS_RETENTION` | `1000` запитів на ендпоінт і стільки ж без ендпоінта |
+| `-admin-prefix` | `HOOKWITNESS_ADMIN_PREFIX` | `/admin` |
+| `-admin-hosts` | `HOOKWITNESS_ADMIN_HOSTS` | немає: імена хостів, на які відповідають UI та API, через кому |
+| `-max-wait` | `HOOKWITNESS_MAX_WAIT` | `5m`: найдовша затримка відповіді чи утримання таймауту (від 1s до 1h) |
+| — | `HOOKWITNESS_SECRET_KEY` | немає: тоді файл ключа `<db>.key` |
+
+Ctrl-C або SIGTERM зупиняє сервер акуратно: запити в роботі завершуються,
+утримання таймаутів закінчуються.
+
+### Ключ секретів
+
+Ключі підпису перевірок ендпоінтів шифруються 32-байтовим ключем:
+
+- `HOOKWITNESS_SECRET_KEY`, 32 байти в base64 (`openssl rand -base64 32`);
+  лише із середовища, щоб не світився в списку процесів;
+- або, якщо його не задано, файл ключа поруч із базою (`<db>.key`,
+  створюється з правами 0600 під час першого запуску).
+
+Переносьте ключ разом із базою. База, відкрита з іншим ключем, зберігає все,
+крім секретів: ключі підпису неможливо розшифрувати (їхні перевірки дають
+**n/v**), а збережені токени ніколи не збігаються. Сервер попереджає про це
+під час запуску; див. [Розв'язання проблем](troubleshooting.md).
+
+## Доступ з інших машин
+
+В інтерфейсу й API **ще немає входу з паролем**. Тримайте їх на localhost
+або за зворотним проксі, який публікує лише шляхи для вебхуків.
+
+- `-p 127.0.0.1:8080:8080` лишає його на цьому хості. `-p 8080:8080`
+  публікує в мережу.
+- Інтерфейс і API відповідають, лише коли їх відкрито за IP-адресою чи
+  `localhost`, тож ворожа вебсторінка не дістанеться до них, спрямувавши
+  свій домен на ваш сервер (DNS rebinding). За проксі з іменем дозвольте це
+  ім'я: `-e HOOKWITNESS_ADMIN_HOSTS=hooks.example.com`. Шляхи для вебхуків
+  відповідають на будь-яке ім'я.
+- Там, де до сервера можуть дістатися сторонні, публікуйте все, крім
+  префікса адмінки (`/admin`).
+
+![Відповідь на ім'я хоста, якого не дозволено](../images/host-refused.webp)
+
+## Збірка з вихідного коду
+
+Потрібен Go 1.27 або новіший. `make check` також потребує компілятора C для
+race-детектора; сам бінарник збирається без cgo.
+
+<!-- docs-check: skip: builds and starts the server this check already runs -->
+```sh
+make build                    # writes bin/hookwitness, a single static binary
+bin/hookwitness version
+bin/hookwitness serve         # listens on 127.0.0.1:8080, database ./hookwitness.db
+```
+
+`bin/hookwitness health` питає `/healthz` запущеного сервера і виходить з
+кодом 0, коли він працює.
