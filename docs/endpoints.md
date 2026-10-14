@@ -63,6 +63,8 @@ the line means a check failed, and the same body delivered more than once is
 bracketed. A sender's retry pattern (backoff, bursts, duplicates) is visible
 at a glance.
 
+![A minute of a payments sender on the strip: a burst of five small events, a failed check (red bar under the line), a timeout (dashed), a drop (cross), a large body, then a body answered 503 twice and retried after 4 s and 8 s, and the same body delivered twice 5 s apart](images/strip.webp)
+
 ### Retries
 
 The same body delivered again is a retry: the request's page says

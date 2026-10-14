@@ -63,7 +63,10 @@ the same pull request.
 - Screenshots in `docs/images/` come from `make media` (Node 22+ and Chrome):
   a seeded instance shot at 1280 px in the light theme. Each shot shows what
   its page's text creates, with the same paths, values and requests: the
-  script follows the page step by step, so change both together. Regenerate them when
+  script follows the page step by step, so change both together. The strip
+  is shot from a real minute of traffic, so a full run takes about two
+  minutes; `node scripts/media/media.mjs bin/hookwitness docs/images <name>`
+  takes one shot. Regenerate them when
   the UI visibly changes; the times on the pages differ on every run, so
   commit the images whose content changed, not every file git reports.
 

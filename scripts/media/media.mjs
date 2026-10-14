@@ -277,6 +277,43 @@ if (!only.length || only.includes("report-html")) {
 }
 await shot("report-html", `file://${join(work, "report.html")}`, { maxHeight: 1000 });
 
+// docs/endpoints.md, "The strip": a sender's real minute on its own
+// endpoint, so every mark the text names is on the paper: a body retried
+// with backoff (4 s, then 8 s) after two 503s, a burst, a failed check, a timeout, a drop,
+// a large body, the same body delivered twice five seconds apart. It runs in real time
+// (about 70 s), last, so the other shots do not wait for it.
+if (!only.length || only.includes("strip")) {
+  const pay = (await api("POST", "/endpoints", { path: "/payments/webhooks" })).json.id;
+  await api("PUT", `/endpoints/${pay}/secrets/PAY_TOKEN`, { kind: "token", value: "tok_pay_test" });
+  await behave(pay, { checks: [{ kind: "bearer", secret: "PAY_TOKEN" }] });
+  const start = Date.now();
+  const at = async (sec) => { const d = start + sec * 1000 - Date.now(); if (d > 0) await sleep(d); };
+  const auth = { Authorization: "Bearer tok_pay_test", "User-Agent": "payments/4.1" };
+  const event = (id, extra = {}) => JSON.stringify({ id: `evt_${id}`, type: "payment.succeeded", amount: 1999, currency: "EUR", ...extra });
+  const big = event("refund_batch", { items: Array.from({ length: 400 }, (_, i) => ({ id: `re_${i}`, amount: 100 + i })) });
+  const a = event("1001", { customer: { id: "cus_42", email: "buyer@example.com" }, lines: Array.from({ length: 30 }, (_, i) => ({ sku: `SKU-${i}`, qty: 1 })) });
+  // The retries come last: their brackets are drawn along the top, where
+  // the legend leaves the paper clear only near the pen.
+  for (const [i, t] of [0, 0.3, 0.5, 0.9, 1.2].entries()) { await at(t); await send("/payments/webhooks", event(`20${i}`), auth); }
+  await at(8); await send("/payments/webhooks", event("3001"), { ...auth, Authorization: "Bearer revoked" });
+  await behave(pay, { rules: [{ when: { kind: "every", n: 1 }, do: "timeout" }] });
+  await at(16); await send("/payments/webhooks", event("4001"), auth);  // held until the sender gives up
+  await behave(pay, { rules: [{ when: { kind: "every", n: 1 }, do: "drop" }] });
+  await at(24); await send("/payments/webhooks", event("5001"), auth);
+  await behave(pay, { rules: [] });
+  await at(32); await send("/payments/webhooks", big, auth);
+  await behave(pay, { rules: [{ when: { kind: "first", n: 2 }, do: "reply", reply: { status: 503, headers: [{ name: "Retry-After", value: "4" }] } }] });
+  await api("POST", `/endpoints/${pay}/reset-counter`, {});
+  await at(54); await send("/payments/webhooks", a, auth);         // 503
+  await at(58); await send("/payments/webhooks", a, auth);         // 503, retried after 4 s
+  await at(66); await send("/payments/webhooks", a, auth);         // 200, after 8 s more
+  const b = event("6001", { note: "sent twice" });
+  await at(67); await send("/payments/webhooks", b, auth);
+  await at(72); await send("/payments/webhooks", b, auth);         // the same body again
+  await at(73);
+  await shot("strip", `${UI}/e/${pay}`, { selector: "section.strip", step: "new Promise((r) => setTimeout(r, 300))" });
+}
+
 // docs/troubleshooting.md, docs/deployment.md: the UI opened by a name that
 // is not allowed.
 await shot("host-refused", `http://hooks.example.com:${port}/admin/`, { maxHeight: 80 });
