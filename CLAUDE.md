@@ -26,7 +26,9 @@ several, or picked by a body pointer or header with an optional default; verdict
 n/c; offending paths marked in the body view); images in payloads declared
 with contentMediaType image/* are decoded and checked, recorded in the
 verdict, previewed under the body with a viewer, served by the API and shown
-in reports. The REST API core
+in reports. A schema can be drafted from caught bodies (`internal/schema`
+`Draft`, offered on a request and the register, and by the API) and is
+stored only when saved. The REST API core
 (`<prefix>/api/v1`: endpoints list/create/read, behaviour GET/PUT with
 ETag/If-Match, write-only secrets, request lists with long-poll `wait`, one
 request) has the UI's access rules; docs in `docs/api.md`, an agent skill in

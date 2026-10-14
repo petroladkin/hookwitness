@@ -258,6 +258,14 @@ when no schema applies to the event.
   without a default it gets **n/c** and is never refused.
 - A body that is not JSON fails with the parse error and its byte offset; an
   empty body fails as such.
+- **Draft a schema from what was caught:** *Draft schema* on a request, or on
+  the register for several (by number, or all with the same discriminator
+  value), opens the schema editor on a draft: types, keys (required when
+  every body has them), array items, formats. Nothing is saved until you save
+  it; the editor offers to map the value in the discriminator check, and when
+  a schema of that name exists it lists what the draft changes (keys added,
+  now optional, types widened). The API does the same
+  (`POST …/schema-draft`).
 - **Images in the payload:** a string declared
   `{"type":"string","contentEncoding":"base64","contentMediaType":"image/png"}`
   (also `image/jpeg`, `image/gif`, `image/webp`, or `image/*` for any; a

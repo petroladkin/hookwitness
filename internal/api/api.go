@@ -87,6 +87,7 @@ func (h *Handler) routes() []route {
 		{"DELETE", "/endpoints/{id}/secrets/{name}", h.deleteSecret},
 		{"POST", "/endpoints/{id}/reset-counter", h.resetCounter},
 		{"POST", "/endpoints/{id}/recheck", h.recheck},
+		{"POST", "/endpoints/{id}/schema-draft", h.schemaDraft},
 		{"GET", "/endpoints/{id}/report", h.endpointReport},
 		{"GET", "/endpoints/{id}/requests", h.listRequests},
 		{"DELETE", "/endpoints/{id}/requests", h.clearRequests},

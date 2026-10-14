@@ -66,6 +66,9 @@ PUT: `"schemas":[{"name":"OrderPaid","text":"<schema JSON as a string>"}]`,
 `"select":{"from":"body","key":"/type","map":[{"value":"order.paid","schema":"OrderPaid"}],"default":"V1"}`
 (`default`, one name or a list, covers unmapped or missing values; without it they are `n/c`).
 A failed schema verdict lists `problems` (`path`, `keyword`, `message`).
+No schema yet? Catch one real delivery, then
+`POST $API/endpoints/$ID/schema-draft` with `{"requests":[<id>]}` returns a draft
+(`name`, `text`; nothing stored) to review and PUT into `schemas`.
 
 Between test cases: `DELETE $API/endpoints/<id>/requests` clears an endpoint,
 `POST $API/endpoints/<id>/reset-counter` (body `{}`, JSON) restarts "every Nth"

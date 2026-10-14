@@ -628,6 +628,70 @@
         }
       }
     },
+    "/endpoints/{id}/schema-draft": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "post": {
+        "operationId": "draftSchema",
+        "summary": "Draft a JSON Schema from requests",
+        "description": "Drafts a 2020-12 schema from the bodies of the given requests of this endpoint (at most 100): their types, properties (required when in every body; additional ones allowed), arrays' items, integer when every number is whole, null in the type list, a format only when every string has it. Nothing is stored: save it with PUT behaviour (schemas), and map it in a discriminator check if you want.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The draft.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaDraft"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such endpoint (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "No draft: a request that is not this endpoint's, a body not kept or not JSON, none or over 100 (`invalid`, field `requests`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not the expected JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/endpoints/{id}/report": {
       "parameters": [
         {
@@ -1883,6 +1947,100 @@
         "examples": [
           "2026-10-13T18:48:01.380Z"
         ]
+      },
+      "DraftRequest": {
+        "type": "object",
+        "properties": {
+          "requests": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Request ids of this endpoint."
+          }
+        },
+        "required": [
+          "requests"
+        ],
+        "additionalProperties": false
+      },
+      "SchemaDraft": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Suggested: the schema the shared discriminator value maps to, else one from that value (order.paid → OrderPaid), else from the endpoint's path."
+          },
+          "text": {
+            "type": "string",
+            "description": "The schema, as JSON text."
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "exists": {
+            "type": "boolean",
+            "description": "A schema of that name is stored; saving the draft under that name replaces it."
+          },
+          "changes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "How the draft differs from the stored schema of that name (keys added or not seen, required or optional, types, formats); null when none is stored."
+          },
+          "discriminator": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "check": {
+                    "type": "integer"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string",
+                    "description": "The value all the requests share; empty when they differ or lack it."
+                  },
+                  "mapped": {
+                    "type": "string",
+                    "description": "The schema that value maps to now; empty when none."
+                  }
+                },
+                "required": [
+                  "check",
+                  "label",
+                  "value",
+                  "mapped"
+                ],
+                "additionalProperties": false
+              }
+            ],
+            "description": "The first schema check that picks by a value; null when there is none."
+          }
+        },
+        "required": [
+          "name",
+          "text",
+          "requests",
+          "exists",
+          "changes",
+          "discriminator"
+        ],
+        "additionalProperties": false
       }
     },
     "parameters": {
