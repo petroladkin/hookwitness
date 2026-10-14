@@ -99,7 +99,7 @@ func TestAnswersMatchTheirSchemas(t *testing.T) {
 	e.do("PUT", fmt.Sprintf("/endpoints/%d/secrets/PW", ep.ID), `{"kind":"token","value":"test-pw"}`)
 	_, tag := e.behaviour(t, ep.ID)
 	e.do("PUT", fmt.Sprintf("/endpoints/%d/behaviour", ep.ID), `{"default":{"status":202,"headers":[{"name":"X-A","value":"1"}]},
-		"rules":[{"when":{"kind":"every","n":3},"do":"reply","reply":{"status":503}}],
+		"rules":[{"when":{"kind":"every","n":3},"do":"reply","reply":{"status":503,"body_base64":"//4="}}],
 		"checks":[{"kind":"basic","secret":"PW","user":"u"},{"kind":"schema","schema":"S"}],
 		"vars":[{"name":"V","value":"x"}],"schemas":[{"name":"S","text":"{\"type\":\"object\"}"}]}`, "If-Match", tag)
 	r := e.add(t, ep.ID, `{"a":1}`, func(r *store.Request) {

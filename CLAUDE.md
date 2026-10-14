@@ -17,7 +17,9 @@ into the Unmatched register with a 404. The UI shows each endpoint's requests
 live (SSE + HTMX) with the recorder strip and the request detail. Each
 endpoint's behaviour page scripts its answers: required-header checks, ordered
 rules (every Nth, first N, random p%) with reply / timeout / drop, a default
-reply, template variables; every request records its outcome. Authorization
+reply, template variables; a reply body is a template or exact bytes
+(`body_base64`); every request records its outcome (a reply body that is not
+UTF-8 as base64). Authorization
 checks (GitHub, Stripe, Standard Webhooks/Svix, generic HMAC, bearer, basic)
 give each request pass / fail / n/v verdicts, optionally enforced, with
 re-check; their secrets are write-only (signing keys sealed, tokens hashed).

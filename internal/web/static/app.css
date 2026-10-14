@@ -353,3 +353,5 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 .card:has(select[name=by] option[value=value]:checked) .for-pick{display:none}
 .changes{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:2px;font-size:12px}
 .build{margin-top:48px;font:400 12px/1.4 var(--f-data);color:var(--muted)}
+.body-as{display:flex;align-items:end;justify-content:space-between;gap:12px}
+.body-as select{width:auto}

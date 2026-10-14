@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -555,6 +556,9 @@ func sealSecret(name, kind, value string, keys *secret.Key) (emulate.Secret, err
 func formReply(r *http.Request, prefix string) (emulate.Reply, error) {
 	v := func(name string) string { return r.PostFormValue(prefix + name) }
 	reply := emulate.Reply{Body: v("body")}
+	if v("body_as") == "base64" { // the exact bytes: whitespace and line breaks are not part of them
+		reply.Body, reply.BodyBase64 = "", strings.Join(strings.Fields(v("body")), "")
+	}
 	var errs []string
 	num := func(name, label string) int64 {
 		s := strings.TrimSpace(v(name))
@@ -1029,4 +1033,17 @@ func formEnctype(e *editor) string {
 		return "multipart/form-data"
 	}
 	return "application/x-www-form-urlencoded"
+}
+
+// replyBodyText is what a reply's body field shows: the template or the base64.
+func replyBodyText(r emulate.Reply) string {
+	if r.BodyBase64 != "" {
+		return r.BodyBase64
+	}
+	return r.Body
+}
+
+// rawSize is how many bytes a base64 text holds.
+func rawSize(b64 string) int64 {
+	return int64(base64.StdEncoding.DecodedLen(len(b64)) - strings.Count(b64, "="))
 }
