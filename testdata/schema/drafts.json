@@ -254,6 +254,30 @@
   }
  },
  {
+  "name": "one key loses its format, another keeps it",
+  "bodies": [
+   "{\"at\": \"2026-10-12T17:28:07Z\", \"day\": \"2026-10-12\"}",
+   "{\"at\": \"2026-10-13T08:00:00Z\", \"day\": \"tomorrow\"}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "properties": {
+    "at": {
+     "type": "string",
+     "format": "date-time"
+    },
+    "day": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "at",
+    "day"
+   ]
+  }
+ },
+ {
   "name": "an empty array gives no items",
   "bodies": [
    "{\"tags\": []}"
