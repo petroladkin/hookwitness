@@ -143,3 +143,10 @@ setup_api_tasks() {
     curl -fs -o /dev/null -d '{"taskId":41,"state":"done"}' "$URL"
     curl -fs -o /dev/null -d '{"taskId":42,"state":"done"}' "$URL" ) &
 }
+
+# --- replies: raw bytes ---------------------------------------------------------
+
+setup_raw_bytes() {
+  local id; id=$(hw_endpoint /legacy/hook)
+  hw_behave "$id" '.default = {"status":200,"body_base64":"//5vaw=="}'
+}

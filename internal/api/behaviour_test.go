@@ -115,6 +115,8 @@ func TestPutBehaviourInvalid(t *testing.T) {
 		`{"rules":[{"when":{"kind":"sometimes"},"do":"reply"}]}`:           "rules[0]",
 		`{"checks":[{"kind":"github","secret":"","enforce":true}]}`:        "checks[0]",
 		`{"rules":[{"when":{"kind":"random","percent":101},"do":"drop"}]}`: "rules[0]",
+		`{"default":{"status":200,"body":"x","body_base64":"//4="}}`:       "default",
+		`{"default":{"status":200,"body_base64":"not base64!"}}`:           "default",
 	} {
 		_, tag := e.behaviour(t, ep.ID)
 		got := wantError(t, e.putBehaviour(ep.ID, tag, body), http.StatusUnprocessableEntity, "invalid", field)
@@ -277,4 +279,24 @@ func compact(t *testing.T, b []byte) []byte {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
+}
+
+// TestPutBehaviourBodyBase64: a reply's raw bytes round-trip through the
+// behaviour document; giving body and body_base64 is refused, naming them.
+func TestPutBehaviourBodyBase64(t *testing.T) {
+	e := newEnv(t)
+	ep := e.endpoint(t, "/hooks")
+	_, tag := e.behaviour(t, ep.ID)
+	if rec := e.putBehaviour(ep.ID, tag, `{"default":{"status":200,"body_base64":"//4="}}`); rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if got := e.stored(t, ep.ID).Default; got.BodyBase64 != "//4=" || got.Body != "" {
+		t.Fatalf("stored %+v", got)
+	}
+	_, tag = e.behaviour(t, ep.ID)
+	got := wantError(t, e.putBehaviour(ep.ID, tag, `{"default":{"status":200,"body":"x","body_base64":"//4="}}`),
+		http.StatusUnprocessableEntity, "invalid", "default")
+	if !strings.Contains(got.Error.Message, "body_base64") {
+		t.Fatalf("message %q does not name body_base64", got.Error.Message)
+	}
 }

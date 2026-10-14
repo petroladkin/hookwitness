@@ -473,3 +473,21 @@ func TestSenderLeftDuringDelay(t *testing.T) {
 		t.Fatalf("patient: %d %+v", r.Status, o)
 	}
 }
+
+// TestRawReplyBody: a reply given as body_base64 sends exactly those bytes,
+// and the outcome keeps a body that is not UTF-8 as base64.
+func TestRawReplyBody(t *testing.T) {
+	h, st, _ := setup(t, 1<<20)
+	url := serve(t, h)
+	ep := configure(t, st, "/odd", emulate.Config{Default: emulate.Reply{Status: 200, BodyBase64: "//57e319"}}) // ff fe { { } }
+	resp, body, err := do(t, http.DefaultClient, "POST", url+"/odd", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 || body != "\xff\xfe{{}}" || resp.Header.Get("Content-Length") != "6" {
+		t.Fatalf("%d %q %v", resp.StatusCode, body, resp.Header)
+	}
+	if _, o := lastOutcome(t, st, ep); o.BodyBase64 != "//57e319" || o.Body != "" {
+		t.Fatalf("outcome %+v", o)
+	}
+}

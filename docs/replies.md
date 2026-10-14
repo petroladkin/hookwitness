@@ -129,6 +129,26 @@ curl -s -d '{"type":"url_verification","challenge":"3eZb"}' http://127.0.0.1:808
 # {"challenge":"3eZb"}
 ```
 
+## Raw bytes
+
+To emulate a receiver that answers something odd, such as invalid UTF-8 or
+a binary body, give the body as bytes. Above the body field, switch **a
+template** to **bytes, base64**, and paste the bytes in base64. They are sent
+exactly as given, never read as a template; line breaks and spaces in the
+field are dropped. In the API, that is `body_base64` instead of `body`.
+
+On `/legacy/hook`, a default reply with the bytes `//5vaw==` answers
+`ff fe 6f 6b`: two bytes that are not UTF-8, then `ok`.
+
+<!-- docs-check: setup: raw_bytes -->
+```sh
+curl -s -d '{}' http://127.0.0.1:8080/legacy/hook | od -An -tx1 | xargs
+# ff fe 6f 6b
+```
+
+The request page shows such a reply's body in base64 under **Answer**, since
+it is not text.
+
 ## Templates
 
 Header values and bodies of replies are Go templates over the request:

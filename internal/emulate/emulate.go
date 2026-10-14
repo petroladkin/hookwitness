@@ -5,6 +5,7 @@
 package emulate
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,11 +27,14 @@ type Header struct {
 // Reply is a response: status, headers in order, a body, and how long to
 // wait before sending it.
 type Reply struct {
-	Status   int      `json:"status"`
-	Headers  []Header `json:"headers,omitempty"`
-	Body     string   `json:"body,omitempty"` // a template
-	DelayMs  int64    `json:"delay_ms,omitempty"`
-	JitterMs int64    `json:"jitter_ms,omitempty"` // random extra delay, 0..JitterMs
+	Status  int      `json:"status"`
+	Headers []Header `json:"headers,omitempty"`
+	Body    string   `json:"body,omitempty"` // a template
+	// BodyBase64 is the body's exact bytes in base64, instead of Body: for
+	// what a template cannot say plainly (invalid UTF-8, binary).
+	BodyBase64 string `json:"body_base64,omitempty"`
+	DelayMs    int64  `json:"delay_ms,omitempty"`
+	JitterMs   int64  `json:"jitter_ms,omitempty"` // random extra delay, 0..JitterMs
 }
 
 // Action kinds.
@@ -205,6 +209,18 @@ func (r Reply) validate(maxWait time.Duration) error {
 		}
 		if _, err := parseTemplate(h.Value); err != nil {
 			return fmt.Errorf("header %s: %w", h.Name, err)
+		}
+	}
+	if r.BodyBase64 != "" {
+		if r.Body != "" {
+			return errors.New("give body or body_base64, not both")
+		}
+		b, err := base64.StdEncoding.DecodeString(r.BodyBase64)
+		if err != nil {
+			return fmt.Errorf("body_base64 is not valid base64: %v", err)
+		}
+		if len(b) > maxRendered {
+			return fmt.Errorf("body_base64 is over %d bytes", maxRendered)
 		}
 	}
 	if _, err := parseTemplate(r.Body); err != nil {

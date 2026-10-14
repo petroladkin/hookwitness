@@ -1,6 +1,7 @@
 package emulate
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"testing"
@@ -24,11 +25,16 @@ func TestValidate(t *testing.T) {
 		t.Fatalf("valid config refused: %v", err)
 	}
 	bad := map[string]func(c *Config){
-		"status 199":                     func(c *Config) { c.Default.Status = 199 },
-		"status 600":                     func(c *Config) { c.Default.Status = 600 },
-		"set by the server":              func(c *Config) { c.Default.Headers = []Header{{"content-length", "1"}} },
-		"valid HTTP header":              func(c *Config) { c.Default.Headers = []Header{{"Bad Name", "1"}} },
-		"template error":                 func(c *Config) { c.Default.Body = "{{.Header" },
+		"status 199":                      func(c *Config) { c.Default.Status = 199 },
+		"status 600":                      func(c *Config) { c.Default.Status = 600 },
+		"set by the server":               func(c *Config) { c.Default.Headers = []Header{{"content-length", "1"}} },
+		"valid HTTP header":               func(c *Config) { c.Default.Headers = []Header{{"Bad Name", "1"}} },
+		"template error":                  func(c *Config) { c.Default.Body = "{{.Header" },
+		"body or body_base64, not both":   func(c *Config) { c.Default.BodyBase64 = "//4=" },
+		"body_base64 is not valid base64": func(c *Config) { c.Default.Body, c.Default.BodyBase64 = "", "not base64!" },
+		"body_base64 is over": func(c *Config) {
+			c.Default.Body, c.Default.BodyBase64 = "", base64.StdEncoding.EncodeToString(make([]byte, maxRendered+1))
+		},
 		"maximum wait":                   func(c *Config) { c.Rules[0].Reply.DelayMs = int64(wait / time.Millisecond) },
 		"cannot be negative":             func(c *Config) { c.Default.DelayMs = -1 },
 		"the count N must be at least 1": func(c *Config) { c.Rules[0].When.N = 0 },
@@ -184,6 +190,11 @@ func TestRender(t *testing.T) {
 	if _, err := big.Render(d); err == nil || !strings.Contains(err.Error(), "over 1048576 bytes") {
 		t.Fatalf("a body over 1 MiB must fail: %v", err)
 	}
+	// Raw bytes go out exactly as given, never as a template.
+	raw, err := (Reply{Status: 200, BodyBase64: base64.StdEncoding.EncodeToString([]byte("\xff\xfe{{.N}}"))}).Render(d)
+	if err != nil || string(raw.Body) != "\xff\xfe{{.N}}" {
+		t.Fatalf("raw body %q, %v", raw.Body, err)
+	}
 	notJSON := NewData(Request{Body: []byte("a=1")}, nil, 0)
 	if notJSON.JSON("a") != "" {
 		t.Fatal("JSON of a non-JSON body must be empty")
@@ -232,6 +243,22 @@ func TestOutcome(t *testing.T) {
 	if (Outcome{Action: ActTimeout}).Stamp() != "timeout" || (Outcome{Action: ActDrop}).Stamp() != "dropped" ||
 		(Outcome{Action: ActRefused, Status: 401}).Stamp() != "401 refused" {
 		t.Fatal("stamps")
+	}
+	// A body that is not UTF-8 is kept as base64, exactly; text stays text.
+	var raw, text Outcome
+	raw.SetReply(Rendered{Status: 200, Body: []byte{0xff, 0xfe, 'a'}})
+	text.SetReply(Rendered{Status: 200, Body: []byte("héllo")})
+	if raw.Body != "" || raw.BodyBase64 != "//5h" || text.Body != "héllo" || text.BodyBase64 != "" {
+		t.Fatalf("raw %+v, text %+v", raw, text)
+	}
+	if got := ParseOutcome(raw.String(), 0); got.BodyBase64 != "//5h" {
+		t.Fatalf("round trip of a raw body %+v", got)
+	}
+	// Cut inside a character: the text is cut before it, still text.
+	var long Outcome
+	long.SetReply(Rendered{Status: 200, Body: []byte(strings.Repeat("a", maxRecordedBody-1) + "é")})
+	if !long.Cut || long.BodyBase64 != "" || len(long.Body) != maxRecordedBody-1 {
+		t.Fatalf("cut text: cut %v, %d bytes, base64 %q", long.Cut, len(long.Body), long.BodyBase64[:min(10, len(long.BodyBase64))])
 	}
 	var big Outcome
 	big.SetReply(Rendered{Status: 200, Body: make([]byte, maxRecordedBody+1)})

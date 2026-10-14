@@ -1231,6 +1231,11 @@
             "type": "string",
             "description": "A Go template."
           },
+          "body_base64": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "description": "The body's exact bytes in base64, sent as they are (not a template); instead of body, for bytes a template cannot say plainly (invalid UTF-8, binary). Giving both is refused. At most 1 MiB decoded."
+          },
           "delay_ms": {
             "type": "integer",
             "description": "Wait before replying.",
@@ -1890,7 +1895,7 @@
               "object",
               "null"
             ],
-            "description": "What was done: source, action (reply, timeout, drop, refused, error, abandoned — the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent, delay_ms, waited_ms, counter."
+            "description": "What was done: source, action (reply, timeout, drop, refused, error, abandoned — the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB), delay_ms, waited_ms, counter."
           },
           "verdicts": {
             "type": "array",

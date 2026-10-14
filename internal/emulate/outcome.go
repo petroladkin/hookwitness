@@ -1,10 +1,12 @@
 package emulate
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Outcome sources: what decided the answer.
@@ -28,28 +30,41 @@ const maxRecordedBody = 64 << 10
 
 // Outcome is what Hookwitness did with a request, kept with it as evidence.
 type Outcome struct {
-	Source   string   `json:"source"`
-	Rule     int      `json:"rule,omitempty"`  // 1-based, for FromRule
-	Label    string   `json:"label,omitempty"` // the rule's condition
-	Check    string   `json:"check,omitempty"` // the failed check
-	Action   string   `json:"action"`
-	Status   int      `json:"status,omitempty"` // 0 when nothing was sent
-	Headers  []Header `json:"headers,omitempty"`
-	Body     string   `json:"body,omitempty"` // first 64 KiB of the reply body
-	Cut      bool     `json:"cut,omitempty"`  // Body is truncated
-	DelayMs  int64    `json:"delay_ms,omitempty"`
-	WaitedMs int64    `json:"waited_ms,omitempty"` // a timeout: how long the sender waited
-	Error    string   `json:"error,omitempty"`
-	Would    int      `json:"would_status,omitempty"` // abandoned: the status the reply would have had
-	Counter  int64    `json:"counter,omitempty"`      // the request's number since the reset
+	Source  string   `json:"source"`
+	Rule    int      `json:"rule,omitempty"`  // 1-based, for FromRule
+	Label   string   `json:"label,omitempty"` // the rule's condition
+	Check   string   `json:"check,omitempty"` // the failed check
+	Action  string   `json:"action"`
+	Status  int      `json:"status,omitempty"` // 0 when nothing was sent
+	Headers []Header `json:"headers,omitempty"`
+	Body    string   `json:"body,omitempty"` // first 64 KiB of the reply body, when it is text
+	// BodyBase64 holds the first 64 KiB instead, in base64, when the reply
+	// body is not UTF-8: kept exactly rather than as a lossy string.
+	BodyBase64 string `json:"body_base64,omitempty"`
+	Cut        bool   `json:"cut,omitempty"` // the body is truncated
+	DelayMs    int64  `json:"delay_ms,omitempty"`
+	WaitedMs   int64  `json:"waited_ms,omitempty"` // a timeout: how long the sender waited
+	Error      string `json:"error,omitempty"`
+	Would      int    `json:"would_status,omitempty"` // abandoned: the status the reply would have had
+	Counter    int64  `json:"counter,omitempty"`      // the request's number since the reset
 }
 
 // SetReply records the reply actually sent.
 func (o *Outcome) SetReply(r Rendered) {
 	o.Status, o.Headers = r.Status, r.Headers
-	o.Body, o.Cut = string(r.Body), false
-	if len(r.Body) > maxRecordedBody {
-		o.Body, o.Cut = string(r.Body[:maxRecordedBody]), true
+	kept := r.Body
+	o.Cut = len(kept) > maxRecordedBody
+	if o.Cut {
+		kept = kept[:maxRecordedBody]
+	}
+	o.Body, o.BodyBase64 = "", ""
+	if utf8.Valid(r.Body) {
+		for len(kept) > 0 && !utf8.Valid(kept) { // cut inside a character: before it
+			kept = kept[:len(kept)-1]
+		}
+		o.Body = string(kept)
+	} else {
+		o.BodyBase64 = base64.StdEncoding.EncodeToString(kept)
 	}
 }
 

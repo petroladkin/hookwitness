@@ -130,6 +130,7 @@ The document (fields left out take their zero value; `default.status` 0 means 20
   },
   "rules": [                        // in order; the first whose condition holds decides
     {"when": {"kind": "every", "n": 3},       "do": "reply", "reply": {"status": 500}},
+    {"when": {"kind": "every", "n": 7},       "do": "reply", "reply": {"status": 200, "body_base64": "//4="}},  // exact bytes
     {"when": {"kind": "first", "n": 2},       "do": "timeout"},   // hold, never answer
     {"when": {"kind": "random", "percent": 10}, "do": "drop"}     // reset the connection
   ],
@@ -146,6 +147,10 @@ The document (fields left out take their zero value; `default.status` 0 means 20
 }
 ```
 
+- **Bodies:** `body` is a template; `body_base64` gives a reply's exact bytes
+  instead (invalid UTF-8, binary), sent as they are and at most 1 MiB. A
+  reply with both is refused (`422`). A recorded outcome keeps a reply body
+  that is not UTF-8 as `body_base64` too.
 - **Conditions:** `every` N (N, 2N, …), `first` N since the counter reset,
   `random` with `percent` (0 < p ≤ 100). **Actions:** `reply` (with `reply`),
   `timeout`, `drop`. Delays and timeouts are capped by `-max-wait`.

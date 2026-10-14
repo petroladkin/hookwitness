@@ -634,9 +634,13 @@ templ answer(x exhibitView) {
 			}
 			if x.Outcome.Body != "" {
 				<pre class="body sent">{ x.Outcome.Body }</pre>
-				if x.Outcome.Cut {
-					<p class="note">Only the first 64 KiB of the reply are kept.</p>
-				}
+			}
+			if x.Outcome.BodyBase64 != "" {
+				<p class="note">The body is not UTF-8; its bytes, in base64:</p>
+				<pre class="body sent">{ x.Outcome.BodyBase64 }</pre>
+			}
+			if x.Outcome.Cut {
+				<p class="note">Only the first 64 KiB of the reply are kept.</p>
 			}
 		</div>
 	}
@@ -860,7 +864,10 @@ templ replySummary(r emulate.Reply) {
 		</dd>
 		<dt>Body</dt>
 		<dd>
-			if r.Body == "" {
+			if r.BodyBase64 != "" {
+				<pre>{ r.BodyBase64 }</pre>
+				<p class="note">bytes, base64: { size(rawSize(r.BodyBase64)) }</p>
+			} else if r.Body == "" {
 				empty
 			} else {
 				<pre>{ r.Body }</pre>
@@ -938,8 +945,14 @@ templ replyFields(b behaviourView, id, prefix string, r emulate.Reply) {
 	</div>
 	<label for={ id + "-headers" }>Headers, one per line as <code>Name: value</code></label>
 	<textarea id={ id + "-headers" } name={ prefix + "headers" } rows="3" spellcheck="false" placeholder="Content-Type: application/json">{ emulate.FormatHeaders(r.Headers) }</textarea>
-	<label for={ id + "-body" }>Body</label>
-	<textarea id={ id + "-body" } name={ prefix + "body" } rows="4" spellcheck="false">{ r.Body }</textarea>
+	<div class="body-as">
+		<label for={ id + "-body" }>Body</label>
+		<select name={ prefix + "body_as" } aria-label="Body as">
+			<option value="template" selected?={ r.BodyBase64 == "" }>a template</option>
+			<option value="base64" selected?={ r.BodyBase64 != "" }>bytes, base64</option>
+		</select>
+	</div>
+	<textarea id={ id + "-body" } name={ prefix + "body" } rows="4" spellcheck="false">{ replyBodyText(r) }</textarea>
 	<p class="help">Delay plus jitter up to { span(b.MaxWait) }. Content-Length, Transfer-Encoding and Connection are set by the server.</p>
 }
 

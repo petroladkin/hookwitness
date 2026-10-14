@@ -2,6 +2,7 @@ package emulate
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -186,6 +187,14 @@ func (r Reply) Render(d *Data) (Rendered, error) {
 			return Rendered{}, fmt.Errorf("header %s: the rendered value has a line break or a control character", h.Name)
 		}
 		out.Headers = append(out.Headers, Header{h.Name, v})
+	}
+	if r.BodyBase64 != "" { // validated when saved
+		b, err := base64.StdEncoding.DecodeString(r.BodyBase64)
+		if err != nil {
+			return Rendered{}, fmt.Errorf("body_base64: %w", err)
+		}
+		out.Body = b
+		return out, nil
 	}
 	body, err := render(r.Body, d)
 	if err != nil {

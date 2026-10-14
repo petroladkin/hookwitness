@@ -108,17 +108,18 @@ func TestBehaviourRefusesInvalid(t *testing.T) {
 	e.edit(ep.ID, url.Values{"op": {"rule-save"}, "i": {"new"}, "when": {"every"}, "n": {"2"}, "do": {"timeout"}})
 	before := e.config(t, ep.ID).String()
 	for form, want := range map[string]url.Values{
-		"status 700: use 200-599":        {"op": {"default"}, "status": {"700"}},
-		"set by the server":              {"op": {"default"}, "status": {"200"}, "headers": {"Content-Length: 3"}},
-		"write it as Name: value":        {"op": {"default"}, "status": {"200"}, "headers": {"oops"}},
-		"template error":                 {"op": {"default"}, "status": {"200"}, "body": {"{{.JSON"}},
-		"over the maximum wait of 5m0s":  {"op": {"default"}, "status": {"200"}, "delay": {"300001"}},
-		"must be a whole number":         {"op": {"default"}, "status": {"two hundred"}},
-		"the count N must be at least 1": {"op": {"rule-save"}, "i": {"0"}, "when": {"every"}, "n": {"0"}, "do": {"timeout"}},
-		"that rule no longer exists":     {"op": {"rule-save"}, "i": {"5"}},
-		"regular expression":             {"op": {"check-save"}},
-		"a name is letters":              {"op": {"var-save"}, "i": {"new"}, "name": {"1A"}},
-		"unknown edit":                   {"op": {"explode"}},
+		"status 700: use 200-599":         {"op": {"default"}, "status": {"700"}},
+		"set by the server":               {"op": {"default"}, "status": {"200"}, "headers": {"Content-Length: 3"}},
+		"write it as Name: value":         {"op": {"default"}, "status": {"200"}, "headers": {"oops"}},
+		"template error":                  {"op": {"default"}, "status": {"200"}, "body": {"{{.JSON"}},
+		"body_base64 is not valid base64": {"op": {"default"}, "status": {"200"}, "body_as": {"base64"}, "body": {"not base64!"}},
+		"over the maximum wait of 5m0s":   {"op": {"default"}, "status": {"200"}, "delay": {"300001"}},
+		"must be a whole number":          {"op": {"default"}, "status": {"two hundred"}},
+		"the count N must be at least 1":  {"op": {"rule-save"}, "i": {"0"}, "when": {"every"}, "n": {"0"}, "do": {"timeout"}},
+		"that rule no longer exists":      {"op": {"rule-save"}, "i": {"5"}},
+		"regular expression":              {"op": {"check-save"}},
+		"a name is letters":               {"op": {"var-save"}, "i": {"new"}, "name": {"1A"}},
+		"unknown edit":                    {"op": {"explode"}},
 	} {
 		if form == "regular expression" {
 			continue // needs an existing check: below
@@ -439,5 +440,34 @@ func TestUnusedSecretLeadsToACheck(t *testing.T) {
 	e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"bearer"}, "secret": {"PING_TOKEN"}, "enforce": {"on"}})
 	if page := e.do("GET", base+"?tab=secrets&saved=secret-0", nil).Body.String(); strings.Contains(page, "It does nothing") || !strings.Contains(page, "used by check 1 (Bearer token)") {
 		t.Fatal("a used secret still reads as unused")
+	}
+}
+
+// TestReplyBytes: the reply editor takes a body as bytes in base64 (line
+// breaks and spaces dropped), shows it as such when reopened and on the
+// Default tab, and the exhibit shows a reply body that is not UTF-8 as
+// base64.
+func TestReplyBytes(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/raw")
+	if rec := e.edit(ep.ID, url.Values{"op": {"default"}, "status": {"200"}, "body_as": {"base64"}, "body": {"//57\n e319\n"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("%d %s", rec.Code, errorOf(rec.Body.String()))
+	}
+	if got := e.config(t, ep.ID).Default; got.BodyBase64 != "//57e319" || got.Body != "" {
+		t.Fatalf("saved %+v", got)
+	}
+	tab := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=default", nil).Body.String()
+	if !strings.Contains(tab, "<pre>//57e319</pre>") || !strings.Contains(tab, "bytes, base64: 6 B") {
+		t.Error("the Default tab does not show the bytes")
+	}
+	editor := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=default&edit=default", nil).Body.String()
+	if !strings.Contains(editor, `<option value="base64" selected>`) || !strings.Contains(editor, ">//57e319</textarea>") {
+		t.Error("the editor does not reopen on the bytes")
+	}
+	out := emulate.Outcome{Source: emulate.FromDefault, Action: emulate.ActReply, Status: 200, BodyBase64: "//57e319"}
+	r := e.add(t, ep.ID, "{}", func(r *store.Request) { r.Status, r.Outcome = 200, out.String() })
+	page := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(r.ID), nil).Body.String()
+	if !strings.Contains(page, "The body is not UTF-8; its bytes, in base64:") || !strings.Contains(page, "//57e319") {
+		t.Error("the exhibit does not show the raw reply body")
 	}
 }
