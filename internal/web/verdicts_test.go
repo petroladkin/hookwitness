@@ -1,11 +1,14 @@
 package web
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -76,7 +79,7 @@ func TestRecheck(t *testing.T) {
 		t.Fatalf("with secret A: %v", counts)
 	}
 	page := e.do("GET", base+"?rechecked=3", nil).Body.String()
-	if !strings.Contains(page, `<b class="v-pass">3 pass</b>`) || !strings.Contains(page, "Re-checked 3 requests") || !strings.Contains(page, "Re-check 3</button>") {
+	if !strings.Contains(page, `<b class="v-pass"><span data-count="pass">3</span> pass</b>`) || !strings.Contains(page, "Re-checked 3 requests") || !strings.Contains(page, `Re-check <span data-count="kept">3</span></button>`) {
 		t.Fatal("register lacks counts, notice or the re-check button")
 	}
 
@@ -95,5 +98,64 @@ func TestRecheck(t *testing.T) {
 	}
 	if rec := e.do("POST", "/admin/e/unmatched/recheck", url.Values{}); rec.Code != http.StatusNotFound {
 		t.Fatalf("Unmatched has no checks: %d", rec.Code)
+	}
+}
+
+// TestLiveCounts: after rows arrive or change on the live feed, a "counts"
+// event carries the register's kept and verdict totals, so its header
+// follows without a reload; rows over the page's reach count too.
+func TestLiveCounts(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/live")
+	srv := httptest.NewServer(e.h)
+	defer srv.Close()
+	e.add(t, ep.ID, "{}", func(r *store.Request) { r.Verdict = "pass" })
+	failed := e.add(t, ep.ID, "{}", func(r *store.Request) { r.Verdict = "fail" })
+
+	resp, err := http.Get(srv.URL + "/admin/e/" + id(ep.ID) + "/events?after=0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	counts := make(chan map[string]int, 8)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		event := ""
+		for sc.Scan() {
+			l := sc.Text()
+			if v, ok := strings.CutPrefix(l, "event: "); ok {
+				event = v
+			} else if v, ok := strings.CutPrefix(l, "data: "); ok && event == "counts" {
+				var c map[string]int
+				json.Unmarshal([]byte(v), &c)
+				counts <- c
+			} else if l == "" {
+				event = ""
+			}
+		}
+	}()
+	next := func(what string) map[string]int {
+		t.Helper()
+		select {
+		case c := <-counts:
+			return c
+		case <-time.After(5 * time.Second):
+			t.Fatalf("no counts event %s", what)
+		}
+		return nil
+	}
+	if c := next("for the rows on connect"); c["kept"] != 2 || c["pass"] != 1 || c["fail"] != 1 || c["nv"] != 0 {
+		t.Fatalf("on connect %v", c)
+	}
+	e.add(t, ep.ID, "{}", func(r *store.Request) { r.Verdict = "n/v" })
+	e.lv.Publish(ep.ID)
+	if c := next("for a new request"); c["kept"] != 3 || c["nv"] != 1 {
+		t.Fatalf("after a request %v", c)
+	}
+	// A re-check turns the failed one into a pass: an update, then counts.
+	e.st.SetVerdicts(context.Background(), failed.ID, "pass", `[]`)
+	e.lv.Publish(ep.ID)
+	if c := next("for an update"); c["pass"] != 2 || c["fail"] != 0 || c["kept"] != 3 {
+		t.Fatalf("after an update %v", c)
 	}
 }

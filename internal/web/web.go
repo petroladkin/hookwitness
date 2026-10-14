@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -621,8 +622,27 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "\n")
 		return true
 	}
+	// writeCounts sends the register's totals after rows changed, so the
+	// header's kept and verdict counts follow without a reload (rows past
+	// the retention limit or not loaded yet count too).
+	writeCounts := func() error {
+		ep, err := h.store.Endpoint(r.Context(), reg)
+		if err != nil {
+			return err
+		}
+		c := map[string]int{}
+		if reg != store.Unmatched {
+			if c, err = h.store.VerdictCounts(r.Context(), reg); err != nil {
+				return err
+			}
+		}
+		b, _ := json.Marshal(map[string]int{"kept": ep.Count, "pass": c["pass"], "fail": c["fail"], "nv": c["n/v"], "nc": c["n/c"]})
+		fmt.Fprintf(w, "event: counts\ndata: %s\n\n", b)
+		return nil
+	}
 	send := func() bool {
 		now := time.Now().UnixMilli()
+		wrote := false
 		reqs, err := h.store.RequestsAfter(r.Context(), reg, last)
 		if err == nil && last > 0 {
 			var changed []store.Request
@@ -631,19 +651,26 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 				if !writeRow(req, "update") {
 					return false
 				}
+				wrote = true
 			}
+		}
+		for _, req := range reqs {
+			if err != nil {
+				break
+			}
+			if !writeRow(req, "request") {
+				return false
+			}
+			last, wrote = req.ID, true
+		}
+		if err == nil && wrote {
+			err = writeCounts()
 		}
 		if err != nil {
 			if r.Context().Err() == nil {
 				h.log.Error("web: live feed", "err", err)
 			}
 			return false
-		}
-		for _, req := range reqs {
-			if !writeRow(req, "request") {
-				return false
-			}
-			last = req.ID
 		}
 		since = now
 		return rc.Flush() == nil

@@ -74,6 +74,28 @@
     draw();
   });
 
+  // After rows change the server sends the register's totals ("counts"):
+  // the kept count and the header's verdict counts follow them.
+  document.addEventListener("htmx:sseOpen", (e) => {
+    const src = e.detail && e.detail.source;
+    if (!src || src.hwCounts) return;
+    src.hwCounts = true;
+    src.addEventListener("counts", (m) => {
+      let c;
+      try { c = JSON.parse(m.data); } catch { return; }
+      document.querySelectorAll("[data-count]").forEach((el) => {
+        const n = c[el.dataset.count];
+        if (typeof n !== "number") return;
+        el.textContent = String(n);
+        if (el.dataset.count === "nc") el.parentElement.hidden = n === 0;
+      });
+      const form = document.querySelector(".verdict-counts form[data-confirm]");
+      if (form && typeof c.kept === "number") {
+        form.dataset.confirm = form.dataset.confirm.replace(/^Re-check the \d+ /, "Re-check the " + c.kept + " ");
+      }
+    });
+  });
+
   // The row of the exhibit on show is marked in the register.
   function markSelected() {
     const ex = document.querySelector("#exhibit [data-exhibit]");
