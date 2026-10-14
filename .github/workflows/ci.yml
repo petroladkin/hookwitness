@@ -39,8 +39,13 @@ jobs:
         with:
           fetch-depth: 0 # git describe needs the tags
       - id: ver
+        # The version the build reports: the tag for a release, "edge" for
+        # the image built from dev, otherwise what git describe says.
         run: |
-          echo "version=$(git describe --tags --dirty 2>/dev/null || echo dev)" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v=$(git describe --tags --exact-match)
+          elif [ "$GITHUB_REF" = refs/heads/dev ]; then v=edge
+          else v=$(git describe --tags --dirty 2>/dev/null || echo dev); fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - id: meta
