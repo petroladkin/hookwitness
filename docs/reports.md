@@ -20,7 +20,8 @@ Hookwitness answered and every verdict, with a summary on top.
 
 ## What is in it
 
-- **On top**: the endpoint, the range, when and by which Hookwitness version
+- **On top**: the endpoint, the range, when and by which Hookwitness build
+  (`<version> (<commit>)`, see [Which build is running](deployment.md#which-build-is-running))
   the report was written.
 - **Summary**: answers by class (2xx, 4xx, 5xx, timeout, drop, refused by a
   check); verdicts per check (pass, fail, not checked, not verifiable); the

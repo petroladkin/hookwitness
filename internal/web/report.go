@@ -124,7 +124,7 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
 		From:      sel.From,
 		To:        sel.To,
 		Mask:      rq.Mask,
-		Version:   version.Version,
+		Version:   version.String(),
 		Generated: now,
 		NoImages:  rq.NoImages,
 	}

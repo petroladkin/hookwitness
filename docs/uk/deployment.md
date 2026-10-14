@@ -125,3 +125,20 @@ bin/hookwitness serve         # listens on 127.0.0.1:8080, database ./hookwitnes
 
 `bin/hookwitness health` питає `/healthz` запущеного сервера і виходить з
 кодом 0, коли він працює.
+
+## Яка збірка працює
+
+Усюди, де згадано Hookwitness, збірку названо як `<версія> (<коміт>)`,
+наприклад `edge (5a45bb4)`: рядок унизу сторінки Endpoints (і підказка на
+логотипі на кожній сторінці), `hookwitness version` і рядок «Generated … by
+Hookwitness» кожного звіту. Тож звіт, доданий до тікета, каже, яка збірка
+впіймала його запити. Випущені образи кажуть свій тег (`v1.2.0 (…)`), образ
+`:edge` каже `edge`, а локальна збірка — те, що знаходить `git describe`, або
+`dev`.
+
+`/healthz` дає те саме у двох полях:
+
+```sh
+curl -s http://127.0.0.1:8080/healthz | jq -r 'keys | join(" ")'
+# commit status version
+```

@@ -110,7 +110,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	h.csrf = http.NewCrossOriginProtection()
 	h.mux = h.csrf.Handler(mux)
 
-	ao := api.Options{Prefix: prefix, MaxWait: h.maxWait, Stop: h.stop, Version: version.Version}
+	ao := api.Options{Prefix: prefix, MaxWait: h.maxWait, Stop: h.stop, Version: version.String()}
 	if o.Keys != nil {
 		ao.Keys, ao.Keyring = o.Keys, o.Keys // a nil *secret.Key must stay a nil interface
 	}
@@ -223,6 +223,7 @@ func (h *Handler) nav(r *http.Request, current int64, onRegister bool) (navView,
 		Current:    current,
 		OnRegister: onRegister,
 		Asset:      h.assetURL,
+		Build:      version.String(),
 	}, nil
 }
 
