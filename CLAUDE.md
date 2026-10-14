@@ -44,8 +44,9 @@ JSON pointer), bodies in lists and long-poll, the Unmatched register, the raw bo
 images, clear, reset counter, re-check, reports, and its OpenAPI 3.1
 description (`internal/api/openapi.json`, checked by tests); every time
 in an answer has exactly three fraction digits. No MCP yet. `hookwitness
-version` prints the build identity; `hookwitness health` probes `/healthz`
-(the container's health check). A container image (distroless, non-root, data
+version`, reports, the UI and `/healthz` name the build as `<version>
+(<commit>)` (the image from `dev` is `edge`); `hookwitness health` probes
+`/healthz` (the container's health check). A container image (distroless, non-root, data
 in the `/data` volume) is built, smoke-tested and published to GHCR by CI.
 This section must describe what is true now — update it in the same change
 that makes it false.

@@ -125,3 +125,20 @@ bin/hookwitness serve         # listens on 127.0.0.1:8080, database ./hookwitnes
 
 `bin/hookwitness health` asks a running server's `/healthz` and exits 0 when
 it is up.
+
+## Which build is running
+
+Every place that names Hookwitness names the build as `<version> (<commit>)`,
+for example `edge (5a45bb4)`: the line at the bottom of the Endpoints page
+(and the logo's tooltip on every page), `hookwitness version`, and the
+"Generated … by Hookwitness" line of every report. So a report attached to a
+ticket says which build caught its requests. Released images say their tag
+(`v1.2.0 (…)`), the `:edge` image says `edge`, and a local build says what
+`git describe` finds, or `dev`.
+
+`/healthz` gives the same in two fields:
+
+```sh
+curl -s http://127.0.0.1:8080/healthz | jq -r 'keys | join(" ")'
+# commit status version
+```

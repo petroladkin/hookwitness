@@ -20,6 +20,7 @@ type navView struct {
 	Current    int64 // register shown; -1 for none
 	OnRegister bool  // a register page with a live feed
 	Asset      func(string) string
+	Build      string // the build serving the page: "<version> (<commit>)"
 }
 
 // registerView is one register: an endpoint's requests or the Unmatched ones.

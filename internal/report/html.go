@@ -281,7 +281,9 @@ th,td{text-align:left;padding:4px 12px 4px 0;border-bottom:1px solid var(--rule)
 .counts td,.checks td{font:600 15px/1.2 var(--f-data);font-variant-numeric:tabular-nums}
 .counts th{font-weight:400;color:var(--muted)}
 .hot{color:var(--alarm)}
-.retries{margin-top:16px}
+.retries{margin-top:16px;width:100%}
+.summary caption{white-space:nowrap}
+.checks td.none{font:inherit;color:var(--muted)}
 .none{color:var(--muted)}
 .requests-title{margin-top:36px}
 .exhibit{background:var(--paper-2);border-left:3px solid var(--ink);padding:12px 16px 14px;margin:0 0 18px;break-inside:auto}

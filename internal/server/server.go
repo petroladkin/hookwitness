@@ -77,7 +77,8 @@ func healthz(db Pinger, log *slog.Logger) http.HandlerFunc {
 		json.NewEncoder(w).Encode(struct {
 			Status  string `json:"status"`
 			Version string `json:"version"`
-		}{status, version.Version})
+			Commit  string `json:"commit"`
+		}{status, version.Version, version.Commit})
 	}
 }
 

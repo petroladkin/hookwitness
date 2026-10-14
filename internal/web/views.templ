@@ -39,7 +39,7 @@ templ layout(nav navView, pageTitle string) {
 
 templ masthead(nav navView) {
 	<header class="mast">
-		<a class="brand" href={ templ.SafeURL(nav.Prefix + "/") }>Hookwitness</a>
+		<a class="brand" href={ templ.SafeURL(nav.Prefix + "/") } title={ "Hookwitness " + nav.Build }>Hookwitness</a>
 		if len(nav.Endpoints) > 0 || nav.Unmatched > 0 {
 			<div class="endpoint">
 				<label for="register-select">Endpoint</label>
@@ -144,6 +144,7 @@ templ endpointsPage(nav navView, creating bool, formPath, formErr string) {
 					</form>
 				</dialog>
 			}
+			<p class="build">Hookwitness { nav.Build }</p>
 		</main>
 	}
 }
