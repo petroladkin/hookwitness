@@ -22,8 +22,11 @@ const MaxBody = 16 << 10
 const (
 	DefaultWait = 30 * time.Second
 	MaxWait     = 300 * time.Second
-	apiWait     = 60 * time.Second // the API's longest long-poll
 )
+
+// apiWait is one long-poll of a chain: the API's longest. Tests shorten it
+// to see the chain.
+var apiWait = 60 * time.Second
 
 // result is what every tool answers: a summary line, then compact JSON.
 // The structured content (which some clients show instead of the text)

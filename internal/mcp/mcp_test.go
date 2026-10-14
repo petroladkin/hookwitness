@@ -310,3 +310,23 @@ func TestResetAndDelete(t *testing.T) {
 		t.Fatal("endpoint not deleted")
 	}
 }
+
+// TestWaitChainsLongPolls: a wait longer than one API long-poll is a chain
+// of them, and lasts the whole time asked for.
+func TestWaitChainsLongPolls(t *testing.T) {
+	old := apiWait
+	apiWait = 200 * time.Millisecond
+	t.Cleanup(func() { apiWait = old })
+	e := newEnv(t)
+	e.ok(t, "create_endpoint", map[string]any{"path": "/chain"})
+	start := time.Now()
+	got, _ := e.ok(t, "wait_for_request", map[string]any{"endpoint": "/chain", "timeout_s": 1})
+	if got["arrived"] != false || time.Since(start) < time.Second {
+		t.Fatalf("returned after %v (arrived %v); the chain must last the whole second", time.Since(start), got["arrived"])
+	}
+	go func() { time.Sleep(600 * time.Millisecond); e.deliver("/chain", "{}") }()
+	got, _ = e.ok(t, "wait_for_request", map[string]any{"endpoint": "/chain", "timeout_s": 5})
+	if got["arrived"] != true {
+		t.Fatal("a request arriving after the first long-poll of the chain is missed")
+	}
+}
