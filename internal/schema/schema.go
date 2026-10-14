@@ -7,11 +7,14 @@ package schema
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -105,7 +108,7 @@ func compileError(err error) string {
 	case errors.As(err, &meta):
 		var ve *jsonschema.ValidationError
 		if errors.As(meta.Err, &ve) {
-			ps, total := problems(ve)
+			ps, total := sortProblems(problems(ve))
 			var parts []string
 			for _, p := range ps {
 				where := p.Path
@@ -147,22 +150,22 @@ func (s *Set) Validate(name string, body []byte) Result {
 	}
 	sch := s.byName[name]
 	res := Result{OK: true}
+	var found []ranked
 	if err := sch.Validate(inst); err != nil {
-		res.OK = false
 		var ve *jsonschema.ValidationError
 		if errors.As(err, &ve) {
-			res.Problems, res.Total = problems(ve)
+			found = problems(ve)
 		} else {
-			res.Problems, res.Total = []Problem{{Message: err.Error()}}, 1
+			found = []ranked{{Problem: Problem{Message: err.Error()}}}
 		}
 	}
 	res.Images = findImages(sch, inst)
 	for _, p := range dataURLProblems(res.Images) {
+		found = append(found, ranked{p, tokens(p.Path), p.Keyword})
+	}
+	if len(found) > 0 {
 		res.OK = false
-		res.Total++
-		if len(res.Problems) < MaxProblems {
-			res.Problems = append(res.Problems, p)
-		}
+		res.Problems, res.Total = sortProblems(found)
 	}
 	return res
 }
@@ -196,28 +199,25 @@ func jsonError(text string, err error) string {
 	return err.Error() // valid for encoding/json, refused by the library (trailing data)
 }
 
-// problems flattens a validation error to its leaves, in document order.
-func problems(ve *jsonschema.ValidationError) ([]Problem, int) {
-	var out []Problem
-	total := 0
+// problems lists the leaf errors of a validation, every one: the caller
+// sorts them (sortProblems) before keeping MaxProblems.
+func problems(ve *jsonschema.ValidationError) []ranked {
+	var out []ranked
 	var walk func(e *jsonschema.ValidationError)
 	walk = func(e *jsonschema.ValidationError) {
 		if len(e.Causes) == 0 {
-			total++
-			if len(out) < MaxProblems {
-				kw := e.ErrorKind.KeywordPath()
-				p := Problem{Path: pointer(e.InstanceLocation), Message: e.ErrorKind.LocalizedString(printer)}
-				if k, ok := e.ErrorKind.(*kind.ContentMediaType); ok && k.Err != nil {
-					p.Message = "not a valid " + k.Want + ": " + k.Err.Error()
-				}
-				if k, ok := e.ErrorKind.(*kind.ContentEncoding); ok && k.Err != nil {
-					p.Message = k.Err.Error()
-				}
-				if len(kw) > 0 {
-					p.Keyword = kw[len(kw)-1]
-				}
-				out = append(out, p)
+			kw := e.ErrorKind.KeywordPath()
+			p := Problem{Path: pointer(e.InstanceLocation), Message: e.ErrorKind.LocalizedString(printer)}
+			if k, ok := e.ErrorKind.(*kind.ContentMediaType); ok && k.Err != nil {
+				p.Message = "not a valid " + k.Want + ": " + k.Err.Error()
 			}
+			if k, ok := e.ErrorKind.(*kind.ContentEncoding); ok && k.Err != nil {
+				p.Message = k.Err.Error()
+			}
+			if len(kw) > 0 {
+				p.Keyword = kw[len(kw)-1]
+			}
+			out = append(out, ranked{p, e.InstanceLocation, strings.Join(kw, "/")})
 			return
 		}
 		for _, c := range e.Causes {
@@ -225,7 +225,68 @@ func problems(ve *jsonschema.ValidationError) ([]Problem, int) {
 		}
 	}
 	walk(ve)
-	return out, total
+	return out
+}
+
+// ranked is a problem with what it is sorted by.
+type ranked struct {
+	Problem
+	loc     []string // the instance location's tokens
+	keyword string   // the keyword path
+}
+
+// sortProblems puts problems in one order whatever order the validator
+// found them in (it walks a schema's properties in map order): by place in
+// the body, array indexes as numbers, then by keyword path and message.
+// It returns the first MaxProblems and the count of all.
+func sortProblems(rs []ranked) ([]Problem, int) {
+	slices.SortStableFunc(rs, func(a, b ranked) int {
+		for i := 0; i < len(a.loc) && i < len(b.loc); i++ {
+			if c := compareToken(a.loc[i], b.loc[i]); c != 0 {
+				return c
+			}
+		}
+		if c := cmp.Compare(len(a.loc), len(b.loc)); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.keyword, b.keyword); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Message, b.Message)
+	})
+	out := make([]Problem, 0, min(len(rs), MaxProblems))
+	for _, r := range rs[:min(len(rs), MaxProblems)] {
+		out = append(out, r.Problem)
+	}
+	return out, len(rs)
+}
+
+// compareToken orders two location tokens: numbers (array indexes) by
+// value and before names, names as strings.
+func compareToken(a, b string) int {
+	na, ea := strconv.Atoi(a)
+	nb, eb := strconv.Atoi(b)
+	switch {
+	case ea == nil && eb == nil:
+		return cmp.Compare(na, nb)
+	case ea == nil:
+		return -1
+	case eb == nil:
+		return 1
+	}
+	return strings.Compare(a, b)
+}
+
+// tokens splits a JSON pointer into its tokens.
+func tokens(ptr string) []string {
+	if ptr == "" {
+		return nil
+	}
+	out := strings.Split(ptr[1:], "/")
+	for i, t := range out {
+		out[i] = strings.NewReplacer("~1", "/", "~0", "~").Replace(t)
+	}
+	return out
 }
 
 // pointer is a JSON pointer (RFC 6901) from path tokens.

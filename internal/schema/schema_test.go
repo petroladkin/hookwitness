@@ -2,6 +2,7 @@ package schema
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -157,5 +158,66 @@ func TestImageFixtures(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestProblemsInOneOrder: the validator walks a schema's properties in map
+// order, so problems are sorted (by place in the body, numbers as numbers,
+// then keyword) before the MaxProblems cut: the same body gives the same
+// list every time.
+func TestProblemsInOneOrder(t *testing.T) {
+	props, body := []string{}, []string{}
+	for i := 0; i < 30; i++ {
+		props = append(props, fmt.Sprintf(`"k%02d":{"type":"string"}`, i))
+		body = append(body, fmt.Sprintf(`"k%02d":%d`, i, i))
+	}
+	text := `{"type":"object","properties":{` + strings.Join(props, ",") +
+		`,"list":{"type":"array","items":{"type":"integer","minimum":5}}},"required":["absent"]}`
+	set, err := Compile([]Doc{{Name: "S", Text: text}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := []byte(`{` + strings.Join(body, ",") + `,"list":[1,2,3,4,0,1,2,3,4,0,1]}`)
+	first := set.Validate("S", doc)
+	if first.Total != 30+11+1 || len(first.Problems) != MaxProblems {
+		t.Fatalf("total %d, kept %d", first.Total, len(first.Problems))
+	}
+	want := []string{"", "/k00", "/k01"} // (body) required first, then in order
+	for i, w := range want {
+		if first.Problems[i].Path != w {
+			t.Fatalf("problem %d at %q, want %q: %v", i, first.Problems[i].Path, w, first.Problems)
+		}
+	}
+	if last := first.Problems[MaxProblems-1].Path; last != "/k18" {
+		t.Fatalf("the cut kept up to %q, want /k18 (sorted before the cut)", last)
+	}
+	for range 50 {
+		again := set.Validate("S", doc)
+		if fmt.Sprint(again.Problems) != fmt.Sprint(first.Problems) {
+			t.Fatalf("another order:\n%v\n%v", again.Problems, first.Problems)
+		}
+	}
+	// Array indexes compare as numbers: /list/2 before /list/10.
+	all := set.Validate("S", []byte(`{"list":[1,2,3,4,0,1,2,3,4,0,1]}`))
+	var got []string
+	for _, p := range all.Problems {
+		got = append(got, p.Path)
+	}
+	if strings.Join(got, " ") != " /list/0 /list/1 /list/2 /list/3 /list/4 /list/5 /list/6 /list/7 /list/8 /list/9 /list/10" {
+		t.Fatalf("order %q", got)
+	}
+	// Two problems at one place: by keyword path.
+	two, err := Compile([]Doc{{Name: "T", Text: `{"properties":{"code":{"type":"string","pattern":"^X","minLength":5,"maxLength":1}}}`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 30 {
+		var kws []string
+		for _, p := range two.Validate("T", []byte(`{"code":"abc"}`)).Problems {
+			kws = append(kws, p.Keyword)
+		}
+		if strings.Join(kws, " ") != "maxLength minLength pattern" {
+			t.Fatalf("keywords at one place in order %q, want maxLength minLength pattern", kws)
+		}
 	}
 }
