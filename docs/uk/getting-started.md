@@ -44,12 +44,12 @@ curl -s http://127.0.0.1:8080/healthz
    або залиште порожнім, щоб отримати випадковий.
 3. Натисніть **Create endpoint**.
 
-![Діалог New endpoint над сторінкою Endpoints](../images/new-endpoint.webp)
+![Діалог New endpoint зі шляхом /stripe/webhooks](../images/new-endpoint.webp)
 
 Тепер у списку є ендпоінт зі своїм **catch URL**: це адреса, яку треба дати
 відправнику.
 
-![Сторінка Endpoints із трьома ендпоінтами, їхніми catch URL і лічильниками](../images/endpoints.webp)
+![Сторінка Endpoints з /stripe/webhooks і його catch URL](../images/endpoints.webp)
 
 ## 3. Надішліть йому вебхук
 
@@ -73,7 +73,7 @@ Hookwitness відповідає `200` з порожнім тілом. Це ти
 порядку, як їх написав відправник, тіло (гарний JSON, сирий текст або
 hex-перегляд для бінарних даних) і що відповів Hookwitness.
 
-![Реєстр ендпоінта з відкритим запитом: тіло, невдалий вердикт підпису, відповідь і заголовки](../images/request.webp)
+![Реєстр /stripe/webhooks з відкритим запитом invoice.paid: тіло, відповідь 200 і заголовки](../images/first-request.webp)
 
 ## Далі
 

@@ -17,7 +17,7 @@
 2. Відкрийте вкладку **Checks**, натисніть **New check** і виберіть тип
    **JSON Schema**. Виберіть схему і збережіть.
 
-![Вкладка Schemas ендпоінта /shop/events із двома схемами](../images/schemas.webp)
+![Вкладка Schemas ендпоінта /orders/events: OrderPaid і ReceiptScanned](../images/schemas.webp)
 
 Схема з прикладу нижче:
 

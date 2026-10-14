@@ -143,9 +143,10 @@ that makes it false.
 - `scripts/docscheck` — `make docs-check`: runs every `sh` block of the README
   and `docs/` against a fresh server and checks the verdicts, statuses and
   outputs the text promises (`setup.sh` does through the API what a page
-  says to click); `scripts/media/media.mjs` — `make media`: seeds an instance
-  through the API and shoots the documentation's screenshots over the Chrome
-  DevTools Protocol (Node, no npm packages).
+  says to click); `scripts/media/media.mjs` — `make media`: does through the
+  API what each page's text does (same paths, values, requests) and shoots
+  the documentation's screenshots over the Chrome DevTools Protocol (Node, no
+  npm packages). A shot that shows something else than its text is a bug.
 - `Dockerfile`, `.dockerignore` — two-stage image: cross-compiling build
   stage through `make build`, distroless static nonroot final stage; the
   build context is an allowlist.

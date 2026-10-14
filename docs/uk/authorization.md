@@ -24,14 +24,14 @@
    вставте `tok_test_123` і збережіть. Відтепер значення більше ніколи не
    показується, лише його відбиток (fingerprint).
 
-   ![Діалог New secret](../images/secret-new.webp)
+   ![Діалог New secret: API_TOKEN, token or password](../images/secret-new.webp)
 
 3. Відкрийте вкладку **Checks** і натисніть **New check**. Виберіть тип
    **Bearer token** і секрет `API_TOKEN`. Лишіть **Enforce** вимкненим, щоб
    лише записувати вердикти, або ввімкніть, щоб відмовляти запитам, які не
    пройшли.
 
-   ![Діалог New check із типом GitHub signature](../images/check-new.webp)
+   ![Діалог New check: Bearer token із секретом API_TOKEN](../images/check-new.webp)
 
 4. Натисніть **Save check**. Наступний запит отримає вердикт:
 
@@ -46,7 +46,7 @@ curl -s -d '{"order":42}' $H                                           # fail: h
 Реєстр рахує вердикти, кожен рядок показує свій, а стрічка малює червону
 риску під провальними запитами. Сторінка запиту наводить причину.
 
-![Запит, чий підпис GitHub не пройшов: причина, перші символи очікуваного підпису й отриманий підпис](../images/request.webp)
+![Другий запит прикладу: Bearer token fail, token does not match](../images/auth-fail.webp)
 
 ## Перевірки
 
@@ -62,7 +62,7 @@ curl -s -d '{"order":42}' $H                                           # fail: h
 Підписам потрібен секрет **signing key** (ключ підпису); bearer і basic —
 секрет **token or password** (токен чи пароль).
 
-![Вкладка Checks ендпоінта /github/webhooks з однією перевіркою GitHub signature](../images/checks.webp)
+![Вкладка Checks ендпоінта /hooks з перевіркою Bearer token](../images/checks.webp)
 
 ### Як читати провалений підпис
 
@@ -105,7 +105,7 @@ curl -s -o /dev/null -d '{}' -u qa:wrong $H     # 401 refused
 Вкладка **Secrets** показує секрети ендпоінта: ім'я, тип, відбиток і
 перевірки, що ним користуються.
 
-![Вкладка Secrets: GH_SECRET, ключ підпису, яким користується перевірка 1](../images/secrets.webp)
+![Вкладка Secrets: API_TOKEN, токен, яким користується перевірка 1](../images/secrets.webp)
 
 - **Лише на запис.** Збережене значення більше ніколи не показується: ні в
   UI, ні в API, ні в логах, ні у звітах; лише 8-символьний відбиток, щоб

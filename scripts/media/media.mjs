@@ -87,78 +87,6 @@ async function send(path, body, headers = {}) {
 }
 const hmac = (key, s) => createHmac("sha256", key).update(s).digest("hex");
 
-// A GitHub-style endpoint: signed deliveries, every 4th answered 503.
-const gh = (await api("POST", "/endpoints", { path: "/github/webhooks" })).json.id;
-await api("PUT", `/endpoints/${gh}/secrets/GH_SECRET`, { kind: "key", value: "gh_test_secret" });
-await behave(gh, {
-  checks: [{ kind: "github", secret: "GH_SECRET" }],
-  rules: [{ when: { kind: "every", n: 4 }, do: "reply", reply: { status: 503, headers: [{ name: "Retry-After", value: "2" }] } }],
-});
-const events = [
-  { action: "opened", number: 7, pull_request: { title: "Add retries to the exporter", user: { login: "octo-dev" } } },
-  { action: "synchronize", number: 7, before: "9f1c2e4", after: "4b8d0a7" },
-  { action: "created", issue: { number: 12 }, comment: { body: "Looks good to me" } },
-  { action: "closed", number: 7, pull_request: { merged: true } },
-  { action: "opened", number: 8, pull_request: { title: "Bump the SDK", user: { login: "dependabot" } } },
-  { action: "labeled", number: 8, label: { name: "dependencies" } },
-];
-for (const [i, e] of events.entries()) {
-  const body = JSON.stringify(e);
-  const sig = i === 4 ? hmac("old_secret", body) : hmac("gh_test_secret", body);
-  await send("/github/webhooks", body, {
-    "X-GitHub-Event": i === 2 ? "issue_comment" : "pull_request",
-    "X-GitHub-Delivery": `7f0d6b2e-1c3a-4e8f-9b5d-00000000000${i}`,
-    "X-Hub-Signature-256": `sha256=${sig}`, "User-Agent": "GitHub-Hookshot/5c3e1b2",
-  });
-}
-
-// A shop endpoint: JSON Schema picked by /type, an image in the payload.
-const shop = (await api("POST", "/endpoints", { path: "/shop/events" })).json.id;
-const orderPaid = {
-  type: "object", required: ["type", "order_id", "amount"],
-  properties: {
-    type: { const: "order.paid" }, order_id: { type: "integer" },
-    amount: { type: "integer", minimum: 1 }, paid_at: { type: "string", format: "date-time" },
-  },
-};
-const receipt = {
-  type: "object", required: ["type", "order_id", "scan"],
-  properties: {
-    type: { const: "receipt.scanned" }, order_id: { type: "integer" },
-    scan: { type: "string", contentEncoding: "base64", contentMediaType: "image/png" },
-  },
-};
-await behave(shop, {
-  schemas: [{ name: "OrderPaid", text: JSON.stringify(orderPaid, null, 2) },
-    { name: "ReceiptScanned", text: JSON.stringify(receipt, null, 2) }],
-  checks: [{ kind: "schema", select: { from: "body", key: "/type",
-    map: [{ value: "order.paid", schema: "OrderPaid" }, { value: "receipt.scanned", schema: "ReceiptScanned" }] } }],
-});
-const png = readFileSync(new URL("receipt.png", import.meta.url)).toString("base64");
-for (const b of [
-  { type: "order.paid", order_id: 42, amount: 1999, paid_at: "2026-10-12T17:28:07Z" },
-  { type: "order.paid", order_id: "43", paid_at: "yesterday" },
-  { type: "order.shipped", order_id: 42, carrier: "DHL", shipped_at: "2026-10-13T08:02:51Z", items: [{ sku: "A-1", qty: 2 }] },
-  { type: "order.shipped", order_id: 44, carrier: "UPS", shipped_at: "2026-10-13T09:40:31Z", items: [{ sku: "C-2", qty: 1 }], tracking: "https://track.example.com/1Z999" },
-  { type: "receipt.scanned", order_id: 42, scan: png },
-]) await send("/shop/events", JSON.stringify(b));
-
-// A slow and flaky endpoint for the behaviour pages.
-const flaky = (await api("POST", "/endpoints", { path: "/billing/notify" })).json.id;
-await behave(flaky, {
-  default: { status: 200, headers: [{ name: "Content-Type", value: "application/json" }], body: '{"received":true,"n":{{.N}}}', delay_ms: 300 },
-  rules: [
-    { when: { kind: "first", n: 2 }, do: "reply", reply: { status: 503, headers: [{ name: "Retry-After", value: "1" }] } },
-    { when: { kind: "every", n: 5 }, do: "drop" },
-  ],
-  checks: [{ header: "X-Api-Key", match: "equals", value: "key_test" }],
-  vars: [{ name: "TOKEN", value: "tok_test" }],
-});
-for (let i = 1; i <= 7; i++) await send("/billing/notify", JSON.stringify({ invoice: `in_${1000 + i}`, status: "paid" }), { "X-Api-Key": i === 6 ? "wrong" : "key_test" });
-
-// A typo in a sender's URL.
-await send("/github/webhook", JSON.stringify({ action: "opened" }));
-
 // --- the browser -----------------------------------------------------------
 
 const chromePath = process.env.CHROME || [
@@ -228,38 +156,129 @@ async function shot(name, url, { step, maxHeight = 800, selector } = {}) {
 }
 const UI = `${HW}/admin`;
 const reqs = async (id) => (await api("GET", `/endpoints/${id}/requests?limit=50`)).json.requests;
-const ghReqs = await reqs(gh);
-const shopReqs = await reqs(shop);
-const byNo = (list, no) => list.find((r) => r.no === no).id;
-
-const choose = (name, value) => `(() => { const e = document.querySelector('select[name=${name}]');
+const byNo = async (id, no) => (await reqs(id)).find((r) => r.no === no).id;
+const choose = (name, value) => `(() => { const e = document.querySelector('dialog[open] select[name=${name}]');
   e.value = ${JSON.stringify(value)}; e.dispatchEvent(new Event("change", { bubbles: true })); })()`;
+const type = (name, value) => `(() => { const e = document.querySelector('dialog[open] [name=${name}]');
+  e.value = ${JSON.stringify(value)}; e.dispatchEvent(new Event("input", { bubbles: true })); })()`;
+const steps = (...xs) => xs.join(";\n");
 const dialog = "dialog[open]";
 
+// Each part below does what its documentation page tells the reader to do,
+// with the same paths, values and requests, then shoots it.
+
+// docs/getting-started.md: an empty server, /stripe/webhooks created, one
+// invoice.paid event sent with curl.
+await shot("new-endpoint", `${UI}/?edit=new`, { step: type("path", "/stripe/webhooks"), selector: dialog });
+const stripe = (await api("POST", "/endpoints", { path: "/stripe/webhooks" })).json.id;
 await shot("endpoints", `${UI}/`);
-await shot("new-endpoint", `${UI}/?edit=new`, { selector: dialog });
-await shot("register", `${UI}/e/${gh}`);
-await shot("request", `${UI}/e/${gh}/r/${byNo(ghReqs, 5)}`, { maxHeight: 1100 });
+await send("/stripe/webhooks", JSON.stringify({ type: "invoice.paid", id: "evt_1" }), { "User-Agent": "curl/8.7.1" });
+await shot("first-request", `${UI}/e/${stripe}/r/${await byNo(stripe, 1)}`, { maxHeight: 1000 });
+
+// docs/endpoints.md: the sender's typo, and a register with retries, a rule
+// and verdicts (GitHub deliveries, one signed with an old secret, every 4th
+// answered 503).
+await send("/stripe/webhook", "{}", { "User-Agent": "curl/8.7.1" });
 await shot("unmatched", `${UI}/e/unmatched`, { maxHeight: 600 });
-await shot("behaviour-rules", `${UI}/e/${flaky}/behaviour?tab=rules`);
-await shot("behaviour-rule-edit", `${UI}/e/${flaky}/behaviour?tab=rules&edit=rule-0`, { selector: dialog });
-await shot("behaviour-default", `${UI}/e/${flaky}/behaviour?tab=default`, { maxHeight: 1000 });
-await shot("checks", `${UI}/e/${gh}/behaviour?tab=checks`);
-await shot("check-new", `${UI}/e/${gh}/behaviour?tab=checks&edit=check-new`, { step: choose("kind", "github"), selector: dialog });
-await shot("secrets", `${UI}/e/${gh}/behaviour?tab=secrets`);
-await shot("secret-new", `${UI}/e/${gh}/behaviour?tab=secrets&edit=secret-new`, { selector: dialog });
-await shot("schemas", `${UI}/e/${shop}/behaviour?tab=schemas`);
-await shot("schema-check", `${UI}/e/${shop}/behaviour?tab=checks&edit=check-0`, { selector: dialog, maxHeight: 1400 });
-await shot("schema-fail", `${UI}/e/${shop}/r/${byNo(shopReqs, 2)}`, { maxHeight: 1100 });
-await shot("draft-dialog", `${UI}/e/${shop}?draft&value=order.shipped`, { selector: dialog });
-await shot("draft-editor", `${UI}/e/${shop}/behaviour?tab=schemas&edit=schema-draft&by=value&value=order.shipped`, { maxHeight: 1100 });
-await shot("payload-images", `${UI}/e/${shop}/r/${byNo(shopReqs, 5)}`, { maxHeight: 900 });
+const gh = (await api("POST", "/endpoints", { path: "/github/webhooks" })).json.id;
+await api("PUT", `/endpoints/${gh}/secrets/GH_SECRET`, { kind: "key", value: "gh_test_secret" });
+await behave(gh, {
+  checks: [{ kind: "github", secret: "GH_SECRET" }],
+  rules: [{ when: { kind: "every", n: 4 }, do: "reply", reply: { status: 503, headers: [{ name: "Retry-After", value: "2" }] } }],
+});
+const events = [
+  { action: "opened", number: 7, pull_request: { title: "Add retries to the exporter", user: { login: "octo-dev" } } },
+  { action: "synchronize", number: 7, before: "9f1c2e4", after: "4b8d0a7" },
+  { action: "created", issue: { number: 12 }, comment: { body: "Looks good to me" } },
+  { action: "closed", number: 7, pull_request: { merged: true } },
+  { action: "opened", number: 8, pull_request: { title: "Bump the SDK", user: { login: "dependabot" } } },
+  { action: "labeled", number: 8, label: { name: "dependencies" } },
+];
+for (const [i, e] of events.entries()) {
+  const body = JSON.stringify(e);
+  await send("/github/webhooks", body, {
+    "X-GitHub-Event": i === 2 ? "issue_comment" : "pull_request",
+    "X-GitHub-Delivery": `7f0d6b2e-1c3a-4e8f-9b5d-00000000000${i}`,
+    "X-Hub-Signature-256": `sha256=${hmac(i === 4 ? "old_secret" : "gh_test_secret", body)}`,
+    "User-Agent": "GitHub-Hookshot/5c3e1b2",
+  });
+}
+await shot("register", `${UI}/e/${gh}`);
+
+// docs/replies.md: /billing/notify fails every 3rd delivery and fails the
+// first two with Retry-After: 2; /slack/events echoes the challenge.
+const billing = (await api("POST", "/endpoints", { path: "/billing/notify" })).json.id;
+await behave(billing, {
+  rules: [
+    { when: { kind: "first", n: 2 }, do: "reply", reply: { status: 503, headers: [{ name: "Retry-After", value: "2" }] } },
+    { when: { kind: "every", n: 3 }, do: "reply", reply: { status: 500 } },
+  ],
+});
+for (let i = 1; i <= 4; i++) await send("/billing/notify", JSON.stringify({ invoice: `in_${i}` }), { "User-Agent": "curl/8.7.1" });
+await shot("behaviour-rules", `${UI}/e/${billing}/behaviour?tab=rules`);
+await shot("behaviour-rule-edit", `${UI}/e/${billing}/behaviour?tab=rules&edit=rule-0`, { selector: dialog });
+const slack = (await api("POST", "/endpoints", { path: "/slack/events" })).json.id;
+await behave(slack, {
+  default: { status: 200, headers: [{ name: "Content-Type", value: "application/json" }], body: '{"challenge":"{{.JSON "challenge"}}"}' },
+});
+await shot("behaviour-default", `${UI}/e/${slack}/behaviour?tab=default`, { maxHeight: 1000 });
+
+// docs/authorization.md: protect /hooks with the token API_TOKEN,
+// step by step, then the three requests of its example.
+const hooks = (await api("POST", "/endpoints", { path: "/hooks" })).json.id;
+await shot("secret-new", `${UI}/e/${hooks}/behaviour?tab=secrets&edit=secret-new`, {
+  step: steps(type("name", "API_TOKEN"), choose("secret_kind", "token"), type("value", "tok_test_123")), selector: dialog });
+await api("PUT", `/endpoints/${hooks}/secrets/API_TOKEN`, { kind: "token", value: "tok_test_123" });
+await shot("check-new", `${UI}/e/${hooks}/behaviour?tab=checks&edit=check-new`, {
+  step: steps(choose("kind", "bearer"), choose("secret", "API_TOKEN")), selector: dialog });
+await behave(hooks, { checks: [{ kind: "bearer", secret: "API_TOKEN" }] });
+await shot("checks", `${UI}/e/${hooks}/behaviour?tab=checks`);
+await shot("secrets", `${UI}/e/${hooks}/behaviour?tab=secrets`);
+for (const auth of ["Bearer tok_test_123", "Bearer wrong", null]) {
+  await send("/hooks", JSON.stringify({ order: 42 }), { "User-Agent": "curl/8.7.1", ...(auth ? { Authorization: auth } : {}) });
+}
+await shot("auth-fail", `${UI}/e/${hooks}/r/${await byNo(hooks, 2)}`, { maxHeight: 1000 });
+
+// docs/schemas.md: /orders/events with the page's OrderPaid schema picked by
+// /type, the three requests of its example, two shipped orders to draft
+// from, and a receipt whose scan is a declared image.
+const orders = (await api("POST", "/endpoints", { path: "/orders/events" })).json.id;
+const orderPaid = '{"type":"object","required":["order_id","amount"],\n "properties":{"order_id":{"type":"integer"},"amount":{"type":"integer","minimum":1},\n               "paid_at":{"type":"string","format":"date-time"}}}';
+const receipt = {
+  type: "object", required: ["order_id", "scan"],
+  properties: { order_id: { type: "integer" }, scan: { type: "string", contentEncoding: "base64", contentMediaType: "image/png" } },
+};
+await behave(orders, {
+  schemas: [{ name: "OrderPaid", text: orderPaid }, { name: "ReceiptScanned", text: JSON.stringify(receipt, null, 2) }],
+  checks: [{ kind: "schema", select: { from: "body", key: "/type",
+    map: [{ value: "order.paid", schema: "OrderPaid" }, { value: "receipt.scanned", schema: "ReceiptScanned" }] } }],
+});
+const png = readFileSync(new URL("receipt.png", import.meta.url)).toString("base64");
+for (const b of [
+  '{"type":"order.paid","order_id":42,"amount":1999,"paid_at":"2026-10-12T17:28:07Z"}',
+  '{"type":"order.paid","order_id":"42","paid_at":"yesterday"}',
+  '{"type":"order.created","order_id":43}',
+  JSON.stringify({ type: "order.shipped", order_id: 42, carrier: "DHL", shipped_at: "2026-10-13T08:02:51Z", items: [{ sku: "A-1", qty: 2 }] }),
+  JSON.stringify({ type: "order.shipped", order_id: 44, carrier: "UPS", shipped_at: "2026-10-13T09:40:31Z", items: [{ sku: "C-2", qty: 1 }], tracking: "https://track.example.com/1Z999" }),
+  JSON.stringify({ type: "receipt.scanned", order_id: 42, scan: png }),
+]) await send("/orders/events", b, { "User-Agent": "curl/8.7.1" });
+await shot("schemas", `${UI}/e/${orders}/behaviour?tab=schemas`);
+await shot("schema-check", `${UI}/e/${orders}/behaviour?tab=checks&edit=check-0`, { selector: dialog, maxHeight: 1400 });
+await shot("schema-fail", `${UI}/e/${orders}/r/${await byNo(orders, 2)}`, { maxHeight: 1100 });
+await shot("draft-dialog", `${UI}/e/${orders}?draft&value=order.shipped`, { selector: dialog });
+await shot("draft-editor", `${UI}/e/${orders}/behaviour?tab=schemas&edit=schema-draft&by=value&value=order.shipped`, { maxHeight: 1100 });
+await shot("payload-images", `${UI}/e/${orders}/r/${await byNo(orders, 6)}`, { maxHeight: 900 });
+
+// docs/reports.md: the report of the GitHub register above.
 await shot("report-dialog", `${UI}/e/${gh}?report`, { selector: dialog, maxHeight: 1400 });
 if (!only.length || only.includes("report-html")) {
   const res = await fetch(`${API}/endpoints/${gh}/report?format=html`);
   writeFileSync(join(work, "report.html"), await res.text());
 }
 await shot("report-html", `file://${join(work, "report.html")}`, { maxHeight: 1000 });
+
+// docs/troubleshooting.md, docs/deployment.md: the UI opened by a name that
+// is not allowed.
 await shot("host-refused", `http://hooks.example.com:${port}/admin/`, { maxHeight: 80 });
 ws.close();
 process.exit(0);

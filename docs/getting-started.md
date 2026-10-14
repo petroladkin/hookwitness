@@ -42,12 +42,12 @@ Hookwitness catches; it starts empty.
    empty for a random one.
 3. Click **Create endpoint**.
 
-![The New endpoint dialog over the Endpoints page](images/new-endpoint.webp)
+![The New endpoint dialog with the path /stripe/webhooks](images/new-endpoint.webp)
 
 The list now shows the endpoint with its **catch URL**: the address to give
 the sender.
 
-![The Endpoints page with three endpoints, their catch URLs and counts](images/endpoints.webp)
+![The Endpoints page with /stripe/webhooks and its catch URL](images/endpoints.webp)
 
 ## 3. Send it a webhook
 
@@ -71,7 +71,7 @@ method, path and query, the headers in the order the sender wrote them, the
 body (pretty JSON, raw text, or a hex view for binary) and what Hookwitness
 answered.
 
-![An endpoint's register with a request open: the body, a failed signature verdict, the answer and the headers](images/request.webp)
+![The register of /stripe/webhooks with the invoice.paid request open: its body, the 200 answer and the headers](images/first-request.webp)
 
 ## Next
 

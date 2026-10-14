@@ -24,13 +24,13 @@ verdict for each request.
    `tok_test_123` and save. From now on the value is never shown again, only
    its fingerprint.
 
-   ![The New secret dialog](images/secret-new.webp)
+   ![The New secret dialog: API_TOKEN, token or password](images/secret-new.webp)
 
 3. Open the **Checks** tab and click **New check**. Choose the kind **Bearer
    token** and the secret `API_TOKEN`. Leave **Enforce** off to only record
    verdicts, or switch it on to refuse requests that do not pass.
 
-   ![The New check dialog with the kind GitHub signature](images/check-new.webp)
+   ![The New check dialog: Bearer token with the secret API_TOKEN](images/check-new.webp)
 
 4. Click **Save check**. The next request gets a verdict:
 
@@ -45,7 +45,7 @@ curl -s -d '{"order":42}' $H                                           # fail: h
 The register counts the verdicts, each row shows its own, and the strip draws
 a red bar under failed requests. The request's page gives the reason.
 
-![A request whose GitHub signature failed: the reason, the expected signature's first characters and the received one](images/request.webp)
+![The second request of the example: Bearer token fail, token does not match](images/auth-fail.webp)
 
 ## The checks
 
@@ -61,7 +61,7 @@ a red bar under failed requests. The request's page gives the reason.
 Signatures need a **signing key** secret; bearer and basic need a **token or
 password** secret.
 
-![The Checks tab of /github/webhooks with one GitHub signature check](images/checks.webp)
+![The Checks tab of /hooks with the Bearer token check](images/checks.webp)
 
 ### Reading a failed signature
 
@@ -103,7 +103,7 @@ stay as they were sent.
 The **Secrets** tab lists the endpoint's secrets: name, kind, fingerprint and
 the checks that use it.
 
-![The Secrets tab: GH_SECRET, a signing key used by check 1](images/secrets.webp)
+![The Secrets tab: API_TOKEN, a token used by check 1](images/secrets.webp)
 
 - **Write-only.** Once saved, a value is never shown again, in the UI, the
   API, logs or reports; only an 8-character fingerprint, so you can tell

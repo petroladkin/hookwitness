@@ -32,7 +32,7 @@ in the sender's URL, a missing or extra trailing slash, a forgotten
 curl -s -X POST http://127.0.0.1:8080/stripe/webhook -d '{}'   # 404: kept under Unmatched
 ```
 
-![The Unmatched register with a request to /github/webhook, one letter short](images/unmatched.webp)
+![The Unmatched register with the request to /stripe/webhook, one letter short](images/unmatched.webp)
 
 ## The register
 
@@ -49,6 +49,7 @@ the header says the feed is connected.
 - With checks configured, each row carries its verdict (`CHECKS PASS`,
   `CHECKS FAIL`) and the register counts them; **Re-check** verifies every
   kept request again after you change a secret or a schema.
+- A body delivered again is marked `RETRY 1`, `RETRY 2`… on its row.
 - **Show older** loads more rows; **Clear** deletes the endpoint's requests.
 - The number is the request's place since the endpoint was created; it is
   never reused, so "request 7" stays request 7 in a report.

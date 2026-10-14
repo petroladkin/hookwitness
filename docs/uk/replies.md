@@ -9,7 +9,7 @@
 ній вкладки за частинами: **Checks**, **Rules**, **Default**, **Variables**,
 **Secrets**, **Schemas**. Зміни діють з наступного запиту.
 
-![Сторінка Behaviour ендпоінта /billing/notify на вкладці Rules: два правила і лічильник](../images/behaviour-rules.webp)
+![Вкладка Rules ендпоінта /billing/notify: перші 2 запити отримують 503, далі кожен 3-й — 500](../images/behaviour-rules.webp)
 
 ## Як обирається відповідь
 
@@ -36,7 +36,7 @@
   розкидом), `time out: hold, never answer` (тримати і не відповідати) або
   `drop: reset the connection` (обірвати з'єднання).
 
-![Діалог Rule 1: перші 2 запити, відповідь 503 із Retry-After: 1](../images/behaviour-rule-edit.webp)
+![Діалог Rule 1: перші 2 запити, відповідь 503 із Retry-After: 2](../images/behaviour-rule-edit.webp)
 
 Стрілки пересувають правило вгору чи вниз; порядок має значення. Лічильник
 на вкладці Rules рахує запити, які бачили правила; **Reset counter**
@@ -114,7 +114,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -d '{}' http://127.0.0.1:8080/billing/c
 перевірка і не підійшло жодне правило: статус, заголовки, тіло, затримку і
 розкид.
 
-![Вкладка Default: 200 через 300 мс із JSON-тілом, що рахує запити](../images/behaviour-default.webp)
+![Вкладка Default ендпоінта /slack/events: 200 і challenge у JSON-тілі](../images/behaviour-default.webp)
 
 ### Повернути challenge для перевірки адреси
 

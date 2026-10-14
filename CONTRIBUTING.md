@@ -61,7 +61,9 @@ the same pull request.
   `sh` blocks; a repository test checks that, the relative links and anchors,
   and that every image is used.
 - Screenshots in `docs/images/` come from `make media` (Node 22+ and Chrome):
-  a seeded instance shot at 1280 px in the light theme. Regenerate them when
+  a seeded instance shot at 1280 px in the light theme. Each shot shows what
+  its page's text creates, with the same paths, values and requests: the
+  script follows the page step by step, so change both together. Regenerate them when
   the UI visibly changes; the times on the pages differ on every run, so
   commit the images whose content changed, not every file git reports.
 

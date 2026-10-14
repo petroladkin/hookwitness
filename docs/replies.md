@@ -8,7 +8,7 @@ Open it with **Behaviour** on the Endpoints page or on the register. It has a
 tab per part: **Checks**, **Rules**, **Default**, **Variables**, **Secrets**,
 **Schemas**. Changes apply to the next request.
 
-![The Behaviour page of /billing/notify on its Rules tab: two rules and the counter](images/behaviour-rules.webp)
+![The Rules tab of /billing/notify: the first 2 requests answered 503, then every 3rd answered 500](images/behaviour-rules.webp)
 
 ## How a request is answered
 
@@ -34,7 +34,7 @@ On the **Rules** tab, click **New rule**, then choose:
 - **Do**: `reply as below` (a status, headers, a body, a delay with random
   jitter), `time out: hold, never answer`, or `drop: reset the connection`.
 
-![The Rule 1 dialog: the first 2 requests, reply 503 with Retry-After: 1](images/behaviour-rule-edit.webp)
+![The Rule 1 dialog: the first 2 requests, reply 503 with Retry-After: 2](images/behaviour-rule-edit.webp)
 
 The arrows move a rule up or down; order matters. The counter on the Rules
 tab counts the requests the rules have seen; **Reset counter** starts it
@@ -111,7 +111,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -d '{}' http://127.0.0.1:8080/billing/c
 The **Default** tab sets the answer for requests no check refused and no rule
 matched: status, headers, body, delay and jitter.
 
-![The Default tab: 200 after 300 ms with a JSON body that counts requests](images/behaviour-default.webp)
+![The Default tab of /slack/events: 200 with the challenge echoed in a JSON body](images/behaviour-default.webp)
 
 ### Echo a verification challenge
 

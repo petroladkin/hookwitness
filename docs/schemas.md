@@ -17,7 +17,7 @@ request's body and records a verdict next to the authorization ones:
 2. Open the **Checks** tab, click **New check** and choose the kind **JSON
    Schema**. Pick the schema, and save.
 
-![The Schemas tab of /shop/events with two schemas](images/schemas.webp)
+![The Schemas tab of /orders/events: OrderPaid and ReceiptScanned](images/schemas.webp)
 
 The schema of the example below:
 
