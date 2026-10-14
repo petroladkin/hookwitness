@@ -7,12 +7,12 @@ Catch webhooks, get a verdict, attach the evidence.
 [![Go version](https://img.shields.io/github/go-mod/go-version/petroladkin/hookwitness/dev)](go.mod)
 [![Container image](https://img.shields.io/badge/image-ghcr.io%2Fpetroladkin%2Fhookwitness-24308C)](https://github.com/petroladkin/hookwitness/pkgs/container/hookwitness)
 
-<img src="docs/images/demo.gif" width="760" alt="A 20-second run: GitHub webhooks arrive live on the register; the third is answered 503 by a rule; one signed with the wrong secret turns red and its page says the signature does not match; then the report is downloaded and opened.">
-
 <!-- docs-check: skip: starts a long-running container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data ghcr.io/petroladkin/hookwitness:edge
 ```
+
+<img src="docs/images/demo.gif" width="760" alt="A 20-second run: GitHub webhooks arrive live on the register; the third is answered 503 by a rule; one signed with the wrong secret turns red and its page says the signature does not match; then the report is downloaded and opened.">
 
 - **A verdict for every request.** Signatures (GitHub, Stripe, Standard
   Webhooks, any HMAC), bearer tokens, Basic credentials and JSON Schema, each
