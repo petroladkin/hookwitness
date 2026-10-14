@@ -30,7 +30,7 @@ api-smoke: build
 docs-check: build
 	go run ./scripts/docscheck -bin bin/hookwitness README.md $(wildcard docs/*.md)
 
-## media: regenerate the documentation's screenshots (Node 22+, Chrome)
+## media: regenerate the documentation's screenshots, the README's demo GIF and the social preview (Node 22+, Chrome, Docker)
 media: build
 	node scripts/media/media.mjs bin/hookwitness docs/images
 

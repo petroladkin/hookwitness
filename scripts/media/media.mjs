@@ -4,11 +4,13 @@
 // Protocol (light theme, 1280 px wide, 2x pixels, WebP). No npm packages.
 //
 // Usage: node scripts/media/media.mjs <hookwitness binary> <out dir> [name...]
-// Needs Node 22+ and Chrome or Chromium (CHROME=<path> to choose one).
+// Needs Node 22+, Chrome or Chromium (CHROME=<path> to choose one) and, for
+// the README's demo GIF, Docker (ffmpeg runs in a container). The social
+// preview goes to <out dir>/../media.
 // With names, only those shots are taken. `make media` runs it.
 import { spawn, execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -312,6 +314,131 @@ if (!only.length || only.includes("strip")) {
   await at(72); await send("/payments/webhooks", b, auth);         // the same body again
   await at(73);
   await shot("strip", `${UI}/e/${pay}`, { selector: "section.strip", step: "new Promise((r) => setTimeout(r, 300))" });
+}
+
+// README.md, the demo: a GIF of one real run. Webhooks arrive live, every
+// 3rd is answered 503 by a rule, a badly signed one turns red and its page
+// gives the reason, and it ends with the report downloaded and opened.
+// Frames come from the DevTools screencast; ffmpeg in a container encodes
+// them (a palette per GIF, frame times kept).
+const FFMPEG = "linuxserver/ffmpeg:7.1.1@sha256:aea59a11c54291ac456bb2d67000445e5a8994f70bc3d96cdc29f022fbbf89fb";
+if (!only.length || only.includes("demo")) {
+  const ev = (await api("POST", "/endpoints", { path: "/github/events" })).json.id;
+  await api("PUT", `/endpoints/${ev}/secrets/GH_SECRET`, { kind: "key", value: "gh_test_secret" });
+  await behave(ev, {
+    checks: [{ kind: "github", secret: "GH_SECRET" }],
+    rules: [{ when: { kind: "every", n: 3 }, do: "reply", reply: { status: 503 } }],
+  });
+  const deliver = (e, key = "gh_test_secret") => {
+    const body = JSON.stringify(e);
+    return send("/github/events", body, {
+      "X-GitHub-Event": "pull_request", "X-Hub-Signature-256": `sha256=${hmac(key, body)}`,
+      "User-Agent": "GitHub-Hookshot/5c3e1b2",
+    });
+  };
+  const frames = join(work, "frames");
+  mkdirSync(frames);
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 1100, height: 620, deviceScaleFactor: 1, mobile: false });
+  await cdp("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: work });
+  await cdp("Page.navigate", { url: `${UI}/e/${ev}` });
+  await sleep(1200);
+  const got = [];
+  const onFrame = (m) => {
+    const msg = JSON.parse(m.data);
+    if (msg.method !== "Page.screencastFrame") return;
+    got.push({ at: msg.params.metadata.timestamp, data: msg.params.data });
+    cdp("Page.screencastFrameAck", { sessionId: msg.params.sessionId });
+  };
+  ws.addEventListener("message", onFrame);
+  await cdp("Page.startScreencast", { format: "png", everyNthFrame: 1 });
+  const click = (sel) => js(`document.querySelector(${JSON.stringify(sel)}).click()`);
+  const reqID = async (no) => (await reqs(ev)).find((r) => r.no === no).id;
+  await sleep(1500);
+  await deliver({ action: "opened", number: 7, pull_request: { title: "Add retries to the exporter" } });
+  await sleep(1400);
+  await deliver({ action: "synchronize", number: 7, after: "4b8d0a7" });
+  await sleep(1400);
+  await deliver({ action: "labeled", number: 7, label: { name: "ready" } });   // the 3rd: 503
+  await sleep(1600);
+  await deliver({ action: "opened", number: 8, pull_request: { title: "Bump the SDK" } }, "an_old_secret");
+  await sleep(1400);
+  // Opened as after a reload: the register's verdict counts are not live yet.
+  await cdp("Page.navigate", { url: `${UI}/e/${ev}/r/${await reqID(4)}` });   // the reason
+  await sleep(3200);
+  await deliver({ action: "closed", number: 7, pull_request: { merged: true } });
+  await sleep(1000);
+  await deliver({ action: "reopened", number: 8 });                            // the 6th: 503
+  await sleep(1800);
+  await cdp("Page.navigate", { url: `${UI}/e/${ev}?report` });
+  await sleep(1800);
+  await click("dialog[open] button[type=submit]");                             // Download report
+  let report;
+  for (let i = 0; i < 50 && !report; i++) {
+    await sleep(100);
+    report = readdirSync(work).find((f) => f.endsWith(".html") && f !== "report.html");
+  }
+  await sleep(600);
+  await cdp("Page.navigate", { url: `file://${join(work, report)}` });
+  await sleep(2600);
+  await js("window.scrollTo({ top: 420, behavior: 'smooth' })");
+  await sleep(2000);
+  await cdp("Page.stopScreencast");
+  ws.removeEventListener("message", onFrame);
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false });
+  // Each frame lasts until the next one; the last holds a second.
+  let list = "ffconcat version 1.0\n";
+  got.forEach((f, i) => {
+    const name = `f${String(i).padStart(5, "0")}.png`;
+    writeFileSync(join(frames, name), Buffer.from(f.data, "base64"));
+    const next = i + 1 < got.length ? got[i + 1].at : f.at + 1;
+    list += `file ${name}\nduration ${Math.max(0.001, next - f.at).toFixed(3)}\n`;
+  });
+  list += `file f${String(got.length - 1).padStart(5, "0")}.png\n`;
+  writeFileSync(join(frames, "list.txt"), list);
+  execFileSync("docker", ["run", "--rm", "-v", `${frames}:/f`, "--entrypoint", "ffmpeg", FFMPEG, "-loglevel", "error", "-y",
+    "-f", "concat", "-i", "/f/list.txt", "-vf",
+    "fps=12,split[a][b];[a]palettegen=max_colors=96:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle",
+    "-loop", "0", "/f/demo.gif"], { stdio: "inherit" });
+  const gif = readFileSync(join(frames, "demo.gif"));
+  writeFileSync(join(outDir, "demo.gif"), gif);
+  console.log(`${join(outDir, "demo.gif")}  ${Math.round(gif.length / 1024)} KiB, ${got.length} frames`);
+}
+
+// The repository's social preview (1280×640 PNG, uploaded by hand in the
+// repository settings): the name, the line, and the strip shot above.
+if (!only.length || only.includes("social")) {
+  const media = join(outDir, "..", "media");
+  mkdirSync(media, { recursive: true });
+  const strip = resolve(outDir, "strip.webp");
+  // The UI's fonts, inlined: a file:// page may not load them from the server.
+  const vendor = new URL("../../internal/web/static/vendor/", import.meta.url);
+  const font = (family, file, weight) => `@font-face{font-family:"${family}";font-weight:${weight};src:url(data:font/woff2;base64,${
+    readFileSync(new URL(file, vendor)).toString("base64")}) format("woff2")}`;
+  writeFileSync(join(work, "social.html"), `<!doctype html><meta charset="utf-8">
+<style>
+  ${font("Saira Stencil One", "saira-stencil-one/saira-stencil-one-latin-400-normal.woff2", 400)}
+  ${font("Atkinson Hyperlegible", "atkinson-hyperlegible/atkinson-hyperlegible-latin-400-normal.woff2", 400)}
+  ${font("Martian Mono", "martian-mono/martian-mono-latin-400-normal.woff2", 400)}
+  html,body{margin:0;width:1280px;height:640px;overflow:hidden;background:#E6ECE7}
+  main{box-sizing:border-box;padding:64px 72px;display:flex;flex-direction:column;gap:26px}
+  h1{margin:0;font:400 116px/1 "Saira Stencil One",sans-serif;letter-spacing:.04em;color:#24308C;text-transform:uppercase}
+  p{margin:0;font:400 42px/1.25 "Atkinson Hyperlegible",sans-serif;color:#17201B}
+  small{font:400 21px/1.4 "Martian Mono",monospace;color:#58695F}
+  /* the strip shot carries a margin of its neighbours: show the strip only */
+  div{position:absolute;left:0;bottom:28px;width:1280px;height:150px;overflow:hidden}
+  img{display:block;width:1280px;margin:-17px 0 0 0}
+</style>
+<main><h1>Hookwitness</h1>
+<p>Catch webhooks, get a verdict, attach the evidence.</p>
+<small>self-hosted · signature and JSON Schema verdicts · fault scenarios · reports</small></main>
+<div><img src="file://${strip}"></div>`);
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 640, deviceScaleFactor: 1, mobile: false });
+  await cdp("Page.navigate", { url: `file://${join(work, "social.html")}` });
+  await sleep(1200);
+  const { data } = await cdp("Page.captureScreenshot", { format: "png", clip: { x: 0, y: 0, width: 1280, height: 640, scale: 1 } });
+  writeFileSync(join(media, "social-preview.png"), Buffer.from(data, "base64"));
+  console.log(`${join(media, "social-preview.png")}  ${Math.round(Buffer.byteLength(data, "base64") / 1024)} KiB`);
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false });
 }
 
 // docs/troubleshooting.md, docs/deployment.md: the UI opened by a name that

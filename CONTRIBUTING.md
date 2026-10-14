@@ -66,9 +66,17 @@ the same pull request.
   script follows the page step by step, so change both together. The strip
   is shot from a real minute of traffic, so a full run takes about two
   minutes; `node scripts/media/media.mjs bin/hookwitness docs/images <name>`
-  takes one shot. Regenerate them when
-  the UI visibly changes; the times on the pages differ on every run, so
-  commit the images whose content changed, not every file git reports.
+  takes one shot. Regenerate them when the UI visibly changes; the times on
+  the pages differ on every run, so commit the images whose content changed,
+  not every file git reports.
+- The README's demo (`docs/images/demo.gif`) is recorded by the same script
+  from a real run and encoded by ffmpeg in a container, so it needs Docker
+  too; it must stay under 5 MB. Regenerate it with `make media` (or the
+  `demo` shot alone) when the register, a request page or the report dialog
+  visibly changes. The repository's social preview
+  (`docs/media/social-preview.png`, 1280×640) comes from the `social` shot;
+  GitHub has no API for it, so a maintainer uploads it under Settings →
+  General → Social preview.
 
 ## Reporting a problem
 

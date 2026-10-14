@@ -1,28 +1,44 @@
 # Hookwitness
 
-Catch webhooks, get a verdict, attach the evidence. Self-hosted, a single
-binary.
+Catch webhooks, get a verdict, attach the evidence.
 
-**Status: early development.** Catch endpoints with a live register, scripted
-responses, authorization and JSON Schema verdicts, reports (Markdown, HTML,
-PDF) and the REST API work; the MCP server comes next.
-
-## What it is for
-
-You send webhooks to someone else's endpoint and need to prove they actually
-left your side, correctly signed and shaped. Hookwitness gives you catch
-endpoints with a live register, scriptable responses (status, delay, timeout,
-dropped connection, every Nth request failing), pass/fail verdicts for
-signatures and JSON Schema, and a report you can attach to a ticket. A REST
-API lets tests and AI agents drive it; an MCP server will follow.
-
-## Quick start
+[![CI](https://github.com/petroladkin/hookwitness/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/petroladkin/hookwitness/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/github/license/petroladkin/hookwitness)](LICENSE)
+[![Go version](https://img.shields.io/github/go-mod/go-version/petroladkin/hookwitness/dev)](go.mod)
+[![Container image](https://img.shields.io/badge/image-ghcr.io%2Fpetroladkin%2Fhookwitness-24308C)](https://github.com/petroladkin/hookwitness/pkgs/container/hookwitness)
 
 <!-- docs-check: skip: starts a long-running container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
   ghcr.io/petroladkin/hookwitness:edge
 ```
+
+<img src="docs/images/demo.gif" width="760" alt="A 20-second run: GitHub webhooks arrive live on the register; the third is answered 503 by a rule; one signed with the wrong secret turns red and its page says the signature does not match; then the report is downloaded and opened.">
+
+- **A verdict for every request.** Signatures (GitHub, Stripe, Standard
+  Webhooks, any HMAC), bearer tokens, Basic credentials and JSON Schema, each
+  pass or fail with the reason.
+- **Faults on purpose.** Fail every Nth delivery or the first N, answer late,
+  hang, reset the connection, and watch the sender's retries on the strip.
+- **Evidence for the ticket.** A Markdown, HTML or PDF report of what arrived
+  and what was answered.
+
+Self-hosted: one binary or a container image. **Status: early development.**
+The catcher, scripted replies, verdicts, reports and the REST API work; an
+MCP server comes next.
+
+## A short tour
+
+| | |
+|---|---|
+| ![The register of /github/webhooks with its strip and verdicts](docs/images/register.webp) | ![A request whose bearer token failed, with the reason](docs/images/auth-fail.webp) |
+| **The register.** Requests arrive live, with their answer and verdict; the strip shows the last two minutes. | **A request in full.** Headers in the order sent, the body, the answer, and why a check failed. |
+| ![The Rules tab with the rule every 3rd → 500](docs/images/behaviour-rules.webp) | ![A request whose body failed its JSON Schema, problems marked](docs/images/schema-fail.webp) |
+| **Behaviour.** Checks, rules, the default reply, variables, secrets and schemas, one tab each. | **JSON Schema.** The problems listed and marked in the body. |
+
+## Quick start
+
+With the container above running:
 
 1. Open <http://127.0.0.1:8080/admin/>, click **New endpoint** and create
    `/stripe/webhooks`.
@@ -49,7 +65,7 @@ serve` (Go 1.27+). [Getting started](docs/getting-started.md) walks through it.
   register with a recorder strip, an Unmatched register for typos, retries
   marked.
 - **[Scripted replies](docs/replies.md)**: fail every Nth delivery, the first
-  N, or at random; delay, hang, drop the connection; templated bodies.
+  N or at random; delay, hang, drop the connection; templated bodies.
 - **[Authorization checks](docs/authorization.md)**: GitHub, Stripe, Standard
   Webhooks (Svix), generic HMAC, bearer, basic; a verdict per request, enforced
   if you want; write-only secrets.
@@ -60,6 +76,18 @@ serve` (Go 1.27+). [Getting started](docs/getting-started.md) walks through it.
   PDF, with a summary and optional header masking.
 - **[REST API](docs/api.md)**: everything the UI does, plus long-poll waits;
   an [agent skill](docs/agents.md) for testing senders with Claude Code.
+
+## How it compares
+
+What each tool's own documentation says, checked on 2026-10-14. Every cell
+links to its source.
+
+| | Self-hosted | Signature and credential verdicts | Fault scenarios | Reports | MCP server |
+|---|---|---|---|---|---|
+| **Hookwitness** | [one binary or a container image](docs/deployment.md) | [GitHub, Stripe, Standard Webhooks, generic HMAC, bearer, Basic; JSON Schema](docs/authorization.md) | [status, delay, timeout, connection reset; every Nth, first N, random](docs/replies.md) | [Markdown, HTML, PDF](docs/reports.md) | [planned](docs/agents.md#mcp) |
+| **[webhook.site](https://webhook.site)** | [open-source edition with Docker Compose](https://docs.webhook.site/open-source.html) | [none built in; paid Custom Actions can compute an HMAC in a script](https://docs.webhook.site/webhookscript/functions/string.html) | [status; delay up to 30 s (10 s in the open-source edition)](https://docs.webhook.site/api/tokens.html) | [CSV export on paid plans; JSON API](https://docs.webhook.site/api/requests.html) | [user-contributed servers](https://docs.webhook.site/api/about.html#mcp-servers) |
+| **[webhook-tester](https://github.com/tarampampam/webhook-tester)** | [container image, binaries, Helm chart](https://github.com/tarampampam/webhook-tester#readme) | [not in its documentation](https://github.com/tarampampam/webhook-tester#readme) | [status, headers, body; delay up to 30 s](https://github.com/tarampampam/webhook-tester/blob/master/api/openapi.yml) | [JSON API](https://github.com/tarampampam/webhook-tester/blob/master/api/openapi.yml) | not in its documentation |
+| **[WireMock](https://wiremock.org)** | [container image, JAR, Java library](https://wiremock.org/docs/download-and-installation/) | [request matching on headers and Basic credentials picks a stub; no verdict](https://wiremock.org/docs/request-matching/#basic-authentication) | [status; fixed and random delays; connection reset, empty and malformed responses](https://wiremock.org/docs/simulating-faults/) | [JSON request journal](https://wiremock.org/docs/verifying/#getting-all-requests) | [WireMock Cloud only](https://docs.wiremock.io/ai-mcp/mcp-installation) |
 
 ## Documentation
 
