@@ -166,7 +166,7 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 			<section class="register" aria-label="Caught requests">
 				<div class="reg-head">
 					<span class="reg-name">{ title(reg) }</span>
-					<span><span id="kept">{ strconv.Itoa(reg.Count) }</span> kept</span>
+					<span><span id="kept" data-count="kept">{ strconv.Itoa(reg.Count) }</span> kept</span>
 				</div>
 				<div class="reg-tools">
 					if reg.ID == store.Unmatched {
@@ -183,14 +183,12 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 				if reg.Verdicts.On {
 					<div class="verdict-counts">
 						<span>Verdicts</span>
-						<b class="v-pass">{ strconv.Itoa(reg.Verdicts.Pass) } pass</b>
-						<b class="v-fail">{ strconv.Itoa(reg.Verdicts.Fail) } fail</b>
-						<b class="v-nv">{ strconv.Itoa(reg.Verdicts.NV) } n/v</b>
-						if reg.Verdicts.NC > 0 {
-							<b class="v-nv">{ strconv.Itoa(reg.Verdicts.NC) } n/c</b>
-						}
+						<b class="v-pass"><span data-count="pass">{ strconv.Itoa(reg.Verdicts.Pass) }</span> pass</b>
+						<b class="v-fail"><span data-count="fail">{ strconv.Itoa(reg.Verdicts.Fail) }</span> fail</b>
+						<b class="v-nv"><span data-count="nv">{ strconv.Itoa(reg.Verdicts.NV) }</span> n/v</b>
+						<b class="v-nv" hidden?={ reg.Verdicts.NC == 0 }><span data-count="nc">{ strconv.Itoa(reg.Verdicts.NC) }</span> n/c</b>
 						<form method="post" action={ templ.SafeURL(reg.Base + "/recheck") } data-confirm={ "Re-check the " + strconv.Itoa(reg.Count) + " kept requests with the current checks, secrets and schemas? Their replies stay as sent." }>
-							<button class="btn quiet" type="submit">Re-check { strconv.Itoa(reg.Count) }</button>
+							<button class="btn quiet" type="submit">Re-check <span data-count="kept">{ strconv.Itoa(reg.Count) }</span></button>
 						</form>
 					</div>
 					if reg.Verdicts.Rechecked != "" {

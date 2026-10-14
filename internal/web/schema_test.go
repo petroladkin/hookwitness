@@ -151,7 +151,7 @@ func TestSchemaVerdictOnTheExhibit(t *testing.T) {
 	if strings.Contains(page, `<span class="k bad">&#34;amount&#34;</span>`) {
 		t.Fatal("a member without a problem is marked")
 	}
-	if !strings.Contains(e.do("GET", base, nil).Body.String(), `<b class="v-fail">1 fail</b>`) {
+	if !strings.Contains(e.do("GET", base, nil).Body.String(), `<b class="v-fail"><span data-count="fail">1</span> fail</b>`) {
 		t.Fatal("register counts")
 	}
 
@@ -177,7 +177,7 @@ func TestSchemaNotCheckedCount(t *testing.T) {
 	r := e.add(t, ep.ID, `{}`, nil)
 	e.do("POST", "/admin/e/"+id(ep.ID)+"/recheck", url.Values{})
 	page := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(r.ID), nil).Body.String()
-	if !strings.Contains(page, `<b class="v-nv">1 n/c</b>`) || !strings.Contains(page, "Schema: not checked") || !strings.Contains(page, "no header X-Event in the request") {
+	if !strings.Contains(page, `<b class="v-nv"><span data-count="nc">1</span> n/c</b>`) || !strings.Contains(page, "Schema: not checked") || !strings.Contains(page, "no header X-Event in the request") {
 		t.Fatal("n/c not shown")
 	}
 }
