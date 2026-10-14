@@ -1,11 +1,15 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"sync"
 	"testing"
 
@@ -211,4 +215,66 @@ func TestSchemasThroughTheAPI(t *testing.T) {
 		http.StatusUnprocessableEntity, "invalid", "schemas")
 	wantError(t, e.putBehaviour(ep.ID, tag, `{"checks":[{"kind":"schema","schema":"Missing"}],"schemas":[{"name":"A","text":"{}"}]}`),
 		http.StatusUnprocessableEntity, "invalid", "checks[0]")
+}
+
+// TestSchemaAlternativesThroughTheAPI: several schemas and a select's
+// default go in and come back as written; a configuration without them
+// reads without them.
+func TestSchemaAlternativesThroughTheAPI(t *testing.T) {
+	e := newEnv(t)
+	ep := e.endpoint(t, "/tasks")
+	_, tag := e.behaviour(t, ep.ID)
+	schemas := `"schemas":[{"name":"V1","text":"{\"required\":[\"method\"]}"},{"name":"V2","text":"{\"required\":[\"version\"]}"},{"name":"P","text":"{}"}]`
+	rec := e.putBehaviour(ep.ID, tag, `{`+schemas+`,"checks":[{"kind":"schema","schemas":["V1","V2"]},
+		{"kind":"schema","select":{"from":"body","key":"/event","map":[{"value":"ping","schema":"P"}],"default":"V1"}},
+		{"kind":"schema","select":{"from":"header","key":"X-V","map":[{"value":"p","schema":"P"}],"default":["V1","V2"]}}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body)
+	}
+	sch, err := compiler(t).Compile(docURL + "#/components/schemas/Behaviour")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := jsonschema.UnmarshalJSON(bytes.NewReader(rec.Body.Bytes()))
+	if err := sch.Validate(doc); err != nil {
+		t.Fatalf("the answer does not match openapi.json: %v", err)
+	}
+	var got struct {
+		Checks []json.RawMessage
+	}
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	for i, want := range []string{`"schemas":["V1","V2"]`, `"default":"V1"`, `"default":["V1","V2"]`} {
+		if !strings.Contains(string(compact(t, got.Checks[i])), want) {
+			t.Errorf("check %d: %s, want %s", i, got.Checks[i], want)
+		}
+	}
+	_, tag = e.behaviour(t, ep.ID)
+	rec = e.putBehaviour(ep.ID, tag, `{`+schemas+`,"checks":[{"kind":"schema","schema":"V1"},{"kind":"schema","select":{"from":"body","key":"/e","map":[{"value":"p","schema":"P"}]}}]}`)
+	got.Checks = nil
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	for i, c := range got.Checks {
+		if b := compact(t, c); rec.Code != http.StatusOK || strings.Contains(string(b), `"schemas"`) || strings.Contains(string(b), `"default"`) {
+			t.Fatalf("old shape, check %d: %d %s", i, rec.Code, b)
+		}
+	}
+	for body, msg := range map[string]string{
+		`{` + schemas + `,"checks":[{"kind":"schema","schemas":["V1","Nope"]}]}`:                                                            "Nope",
+		`{` + schemas + `,"checks":[{"kind":"schema","schema":"V1","schemas":["V2"]}]}`:                                                     "not both",
+		`{` + schemas + `,"checks":[{"kind":"schema","select":{"from":"body","key":"/e","map":[{"value":"p","schema":"P"}],"default":5}}]}`: "",
+	} {
+		_, tag = e.behaviour(t, ep.ID)
+		rec := e.putBehaviour(ep.ID, tag, body)
+		if rec.Code/100 != 4 || !strings.Contains(rec.Body.String(), msg) {
+			t.Errorf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+}
+
+func compact(t *testing.T, b []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, b); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }

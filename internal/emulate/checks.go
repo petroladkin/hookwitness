@@ -91,7 +91,7 @@ func (ch Check) Label() string {
 		if ch.Select != nil {
 			return "JSON Schema by " + ch.Select.Label()
 		}
-		return "JSON Schema " + ch.Schema
+		return "JSON Schema " + strings.Join(ch.alternatives(), " or ")
 	}
 	return ch.Kind
 }

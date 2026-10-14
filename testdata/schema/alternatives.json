@@ -1,0 +1,367 @@
+{
+ "schemas": [
+  {
+   "name": "V1",
+   "text": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"required\": [\n    \"method\",\n    \"params\"\n  ],\n  \"properties\": {\n    \"method\": {\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"task_id\"\n      ],\n      \"properties\": {\n        \"task_id\": {\n          \"type\": \"integer\"\n        }\n      }\n    }\n  }\n}"
+  },
+  {
+   "name": "V2",
+   "text": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"required\": [\n    \"version\",\n    \"event\",\n    \"data\"\n  ],\n  \"properties\": {\n    \"version\": {\n      \"const\": 2\n    },\n    \"event\": {\n      \"type\": \"string\"\n    },\n    \"data\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"task_id\"\n      ],\n      \"properties\": {\n        \"task_id\": {\n          \"type\": \"integer\"\n        }\n      }\n    }\n  }\n}"
+  },
+  {
+   "name": "Ping",
+   "text": "{\n  \"type\": \"object\",\n  \"required\": [\n    \"ping\"\n  ],\n  \"properties\": {\n    \"ping\": {\n      \"const\": true\n    }\n  }\n}"
+  },
+  {
+   "name": "V2Strict",
+   "text": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"required\": [\n    \"version\",\n    \"event\",\n    \"data\"\n  ],\n  \"properties\": {\n    \"version\": {\n      \"const\": 2\n    },\n    \"event\": {\n      \"type\": \"string\"\n    },\n    \"data\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"task_id\"\n      ],\n      \"properties\": {\n        \"task_id\": {\n          \"type\": \"integer\",\n          \"minimum\": 100\n        }\n      }\n    }\n  }\n}"
+  }
+ ],
+ "cases": [
+  {
+   "name": "any of: the second matches",
+   "check": {
+    "kind": "schema",
+    "schemas": [
+     "V1",
+     "V2"
+    ]
+   },
+   "body": "{\"version\":2,\"event\":\"task.done\",\"data\":{\"task_id\":42}}",
+   "headers": [],
+   "want": {
+    "result": "pass",
+    "reason": "matches V2"
+   }
+  },
+  {
+   "name": "any of: the first matches",
+   "check": {
+    "kind": "schema",
+    "schemas": [
+     "V1",
+     "V2"
+    ]
+   },
+   "body": "{\"method\":\"task.done\",\"params\":{\"task_id\":42}}",
+   "headers": [],
+   "want": {
+    "result": "pass",
+    "reason": "matches V1"
+   }
+  },
+  {
+   "name": "any of: both match, the first in order is named",
+   "check": {
+    "kind": "schema",
+    "schemas": [
+     "V1",
+     "V2"
+    ]
+   },
+   "body": "{\"method\":\"task.done\",\"params\":{\"task_id\":42},\"version\":2,\"event\":\"task.done\",\"data\":{\"task_id\":42}}",
+   "headers": [],
+   "want": {
+    "result": "pass",
+    "reason": "matches V1"
+   }
+  },
+  {
+   "name": "any of: none matches, the closest one's problems (the right shape beats a wrong one)",
+   "check": {
+    "kind": "schema",
+    "schemas": [
+     "V1",
+     "V2"
+    ]
+   },
+   "body": "{\"version\":2,\"event\":\"task.done\",\"data\":{\"task_id\":\"42\"}}",
+   "headers": [],
+   "want": {
+    "result": "fail",
+    "reason": "matches none of V1, V2; closest V2 with 1 error (V1: 1 error)",
+    "problems": [
+     "/data/task_id"
+    ]
+   }
+  },
+  {
+   "name": "any of: none matches, the order breaks a tie",
+   "check": {
+    "kind": "schema",
+    "schemas": [
+     "V2",
+     "V1"
+    ]
+   },
+   "body": "{\"task_id\":42}",
+   "headers": [],
+   "want": {
+    "result": "fail",
+    "reason": "matches none of V2, V1; closest V2 with 1 error (V1: 1 error)",
+    "problems": [
+     ""
+    ]
+   }
+  },
+  {
+   "name": "any of: none matches, the right shape wins even with more problems",
+   "check": {
+    "kind": "schema",
+    "schemas": [
+     "V1",
+     "V2"
+    ]
+   },
+   "body": "{\"version\":3,\"event\":7,\"data\":{\"task_id\":42}}",
+   "headers": [],
+   "want": {
+    "result": "fail",
+    "reason": "matches none of V1, V2; closest V2 with 2 errors (V1: 1 error)",
+    "problems": [
+     "/version",
+     "/event"
+    ]
+   }
+  },
+  {
+   "name": "any of: none matches, at the same depth the fewer problems win, whatever the order",
+   "check": {
+    "kind": "schema",
+    "schemas": [
+     "V2Strict",
+     "V2"
+    ]
+   },
+   "body": "{\"version\":3,\"event\":\"task.done\",\"data\":{\"task_id\":5}}",
+   "headers": [],
+   "want": {
+    "result": "fail",
+    "reason": "matches none of V2Strict, V2; closest V2 with 1 error (V2Strict: 2 errors)",
+    "problems": [
+     "/version"
+    ]
+   }
+  },
+  {
+   "name": "any of: not JSON",
+   "check": {
+    "kind": "schema",
+    "schemas": [
+     "V1",
+     "V2"
+    ]
+   },
+   "body": "{\"method\":",
+   "headers": [],
+   "want": {
+    "result": "fail",
+    "reason_prefix": "not JSON"
+   }
+  },
+  {
+   "name": "any of: an empty body",
+   "check": {
+    "kind": "schema",
+    "schemas": [
+     "V1",
+     "V2"
+    ]
+   },
+   "body": "",
+   "headers": [],
+   "want": {
+    "result": "fail",
+    "reason": "empty body"
+   }
+  },
+  {
+   "name": "one schema in a list is the same as schema",
+   "check": {
+    "kind": "schema",
+    "schemas": [
+     "V2"
+    ]
+   },
+   "body": "{\"version\":1,\"event\":\"task.done\",\"data\":{\"task_id\":42}}",
+   "headers": [],
+   "want": {
+    "result": "fail",
+    "reason": "1 error against V2",
+    "problems": [
+     "/version"
+    ]
+   }
+  },
+  {
+   "name": "select: a mapped value uses its mapping, not the default",
+   "check": {
+    "kind": "schema",
+    "select": {
+     "from": "body",
+     "key": "/event",
+     "map": [
+      {
+       "value": "ping",
+       "schema": "Ping"
+      }
+     ],
+     "default": "V2"
+    }
+   },
+   "body": "{\"event\":\"ping\",\"ping\":true}",
+   "headers": [],
+   "want": {
+    "result": "pass",
+    "reason": "matches Ping"
+   }
+  },
+  {
+   "name": "select: an unmapped value falls to the default",
+   "check": {
+    "kind": "schema",
+    "select": {
+     "from": "body",
+     "key": "/event",
+     "map": [
+      {
+       "value": "ping",
+       "schema": "Ping"
+      }
+     ],
+     "default": "V2"
+    }
+   },
+   "body": "{\"version\":2,\"event\":\"task.done\",\"data\":{\"task_id\":42}}",
+   "headers": [],
+   "want": {
+    "result": "pass",
+    "reason": "matches V2"
+   }
+  },
+  {
+   "name": "select: a missing value falls to the default",
+   "check": {
+    "kind": "schema",
+    "select": {
+     "from": "body",
+     "key": "/event",
+     "map": [
+      {
+       "value": "ping",
+       "schema": "Ping"
+      }
+     ],
+     "default": [
+      "V1",
+      "V2"
+     ]
+    }
+   },
+   "body": "{\"method\":\"task.done\",\"params\":{\"task_id\":42}}",
+   "headers": [],
+   "want": {
+    "result": "pass",
+    "reason": "matches V1"
+   }
+  },
+  {
+   "name": "select: a default of several, none matches",
+   "check": {
+    "kind": "schema",
+    "select": {
+     "from": "body",
+     "key": "/event",
+     "map": [
+      {
+       "value": "ping",
+       "schema": "Ping"
+      }
+     ],
+     "default": [
+      "V1",
+      "V2"
+     ]
+    }
+   },
+   "body": "{\"event\":\"task.done\"}",
+   "headers": [],
+   "want": {
+    "result": "fail",
+    "reason_prefix": "matches none of V1, V2; closest "
+   }
+  },
+  {
+   "name": "select without a default: an unmapped value is not checked",
+   "check": {
+    "kind": "schema",
+    "select": {
+     "from": "body",
+     "key": "/event",
+     "map": [
+      {
+       "value": "ping",
+       "schema": "Ping"
+      }
+     ]
+    }
+   },
+   "body": "{\"version\":2,\"event\":\"task.done\",\"data\":{\"task_id\":42}}",
+   "headers": [],
+   "want": {
+    "result": "n/c",
+    "reason": "no schema for /event \"task.done\""
+   }
+  },
+  {
+   "name": "select without a default: a missing value is not checked",
+   "check": {
+    "kind": "schema",
+    "select": {
+     "from": "body",
+     "key": "/event",
+     "map": [
+      {
+       "value": "ping",
+       "schema": "Ping"
+      }
+     ]
+    }
+   },
+   "body": "{\"method\":\"task.done\",\"params\":{\"task_id\":42}}",
+   "headers": [],
+   "want": {
+    "result": "n/c",
+    "reason": "no /event in the request"
+   }
+  },
+  {
+   "name": "select by header with a default",
+   "check": {
+    "kind": "schema",
+    "select": {
+     "from": "header",
+     "key": "X-Api-Version",
+     "map": [
+      {
+       "value": "2",
+       "schema": "V2"
+      }
+     ],
+     "default": "V1"
+    }
+   },
+   "body": "{\"method\":\"task.done\",\"params\":{\"task_id\":42}}",
+   "headers": [
+    [
+     "X-Api-Version",
+     "1"
+    ]
+   ],
+   "want": {
+    "result": "pass",
+    "reason": "matches V1"
+   }
+  }
+ ]
+}
