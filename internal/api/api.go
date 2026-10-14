@@ -5,6 +5,7 @@
 package api
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,29 +58,53 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	}
 	h := &Handler{store: st, live: broker, log: log, o: o, base: Base(o.Prefix), mux: http.NewServeMux()}
 	b := h.base
-	h.mux.HandleFunc("GET "+b+"/endpoints", h.listEndpoints)
-	h.mux.HandleFunc("POST "+b+"/endpoints", h.createEndpoint)
-	h.mux.HandleFunc("GET "+b+"/endpoints/{id}", h.getEndpoint)
-	h.mux.HandleFunc("PATCH "+b+"/endpoints/{id}", h.patchEndpoint)
-	h.mux.HandleFunc("DELETE "+b+"/endpoints/{id}", h.deleteEndpoint)
-	h.mux.HandleFunc("POST "+b+"/endpoints/{id}/reset-counter", h.resetCounter)
-	h.mux.HandleFunc("POST "+b+"/endpoints/{id}/recheck", h.recheck)
-	h.mux.HandleFunc("GET "+b+"/endpoints/{id}/report", h.endpointReport)
-	h.mux.HandleFunc("DELETE "+b+"/endpoints/{id}/requests", h.clearRequests)
-	h.mux.HandleFunc("GET "+b+"/endpoints/{id}/behaviour", h.getBehaviour)
-	h.mux.HandleFunc("PUT "+b+"/endpoints/{id}/behaviour", h.putBehaviour)
-	h.mux.HandleFunc("PUT "+b+"/endpoints/{id}/secrets/{name}", h.putSecret)
-	h.mux.HandleFunc("DELETE "+b+"/endpoints/{id}/secrets/{name}", h.deleteSecret)
-	h.mux.HandleFunc("GET "+b+"/endpoints/{id}/requests", h.listRequests)
-	h.mux.HandleFunc("GET "+b+"/requests/{id}", h.getRequest)
-	h.mux.HandleFunc("GET "+b+"/requests/{id}/image", h.getImage)
-	h.mux.HandleFunc("GET "+b+"/requests/{id}/body", h.rawBody)
-	h.mux.HandleFunc("GET "+b+"/unmatched/requests", h.listUnmatched)
-	h.mux.HandleFunc("GET "+b+"/unmatched/report", h.unmatchedReport)
+	for _, rt := range h.routes() {
+		h.mux.HandleFunc(rt.method+" "+b+rt.path, rt.fn)
+	}
+	h.mux.HandleFunc("GET "+b+"/openapi.json", serveOpenAPI)
 	h.mux.HandleFunc(b+"/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no route %s %s", r.Method, r.URL.Path), "")
 	})
 	return h
+}
+
+// route is one operation of the API; openapi.json documents each.
+type route struct {
+	method, path string
+	fn           http.HandlerFunc
+}
+
+func (h *Handler) routes() []route {
+	return []route{
+		{"GET", "/endpoints", h.listEndpoints},
+		{"POST", "/endpoints", h.createEndpoint},
+		{"GET", "/endpoints/{id}", h.getEndpoint},
+		{"PATCH", "/endpoints/{id}", h.patchEndpoint},
+		{"DELETE", "/endpoints/{id}", h.deleteEndpoint},
+		{"GET", "/endpoints/{id}/behaviour", h.getBehaviour},
+		{"PUT", "/endpoints/{id}/behaviour", h.putBehaviour},
+		{"PUT", "/endpoints/{id}/secrets/{name}", h.putSecret},
+		{"DELETE", "/endpoints/{id}/secrets/{name}", h.deleteSecret},
+		{"POST", "/endpoints/{id}/reset-counter", h.resetCounter},
+		{"POST", "/endpoints/{id}/recheck", h.recheck},
+		{"GET", "/endpoints/{id}/report", h.endpointReport},
+		{"GET", "/endpoints/{id}/requests", h.listRequests},
+		{"DELETE", "/endpoints/{id}/requests", h.clearRequests},
+		{"GET", "/requests/{id}", h.getRequest},
+		{"GET", "/requests/{id}/body", h.rawBody},
+		{"GET", "/requests/{id}/image", h.getImage},
+		{"GET", "/unmatched/requests", h.listUnmatched},
+		{"GET", "/unmatched/report", h.unmatchedReport},
+	}
+}
+
+//go:embed openapi.json
+var openAPI []byte
+
+// serveOpenAPI is the API's description (OpenAPI 3.1).
+func serveOpenAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Write(openAPI)
 }
 
 // Base is where the API is mounted under an admin prefix.

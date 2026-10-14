@@ -33,9 +33,11 @@ request) has the UI's access rules; docs in `docs/api.md`, an agent skill in
 `skills/hookwitness`. Reports: a register's requests (all, a time range or
 picked by number) download from the UI as Markdown, self-contained HTML or a
 native PDF, with a summary (answers by class, verdicts per check, retry
-groups, the strip of the range) and optional header masking. No report API
-route, the rest of the API (rename/delete, clear, raw body, actions,
-Unmatched list, filters, OpenAPI) or MCP yet. `hookwitness
+groups, the strip of the range) and optional header masking. The REST API
+covers the UI: endpoints (create, change path, delete), behaviour, secrets,
+requests with filters and long-poll, the Unmatched register, the raw body,
+images, clear, reset counter, re-check, reports, and its OpenAPI 3.1
+description (`internal/api/openapi.json`, checked by tests). No MCP yet. `hookwitness
 version` prints the build identity; `hookwitness health` probes `/healthz`
 (the container's health check). A container image (distroless, non-root, data
 in the `/data` volume) is built, smoke-tested and published to GHCR by CI.
@@ -104,6 +106,9 @@ that makes it false.
   error shape, unknown fields refused, behaviour replaced with If-Match
   (store compare-and-set), secrets sealed by `emulate.SealSecret`, request
   lists wait on `internal/live`. Secret values never reach an answer or log.
+  Routes are one table (`routes()`); `openapi.json` must document each — a
+  test validates it against the official schema (`testdata/openapi`,
+  third-party) and real answers against its schemas.
 - `internal/web` — the UI (and its report dialog and download, `report.go`): templ components (`views.templ`, generated
   `views_templ.go` is committed), handlers, SSE feed, embedded `static/`
   (our `app.css`, `app.js`; vendored htmx, htmx-ext-sse and fonts under

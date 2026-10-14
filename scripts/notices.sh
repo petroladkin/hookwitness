@@ -4,7 +4,8 @@
 # license and notice file at the module's root (BSD and MIT require the text
 # to travel with binary distributions); then every asset bundled under
 # internal/web/static/vendor/<name>/ and internal/report/fonts/<name>/ (a
-# LICENSE and a SOURCE file beside it).
+# LICENSE and a SOURCE file beside it); then third-party test material, the
+# testdata/<name>/ directories that hold a SOURCE file.
 #
 # Fails when a module's license is not one of the permissive licenses this
 # project accepts, so a copyleft dependency cannot slip in unnoticed.
@@ -86,8 +87,8 @@ source tree each directory holds the files, their LICENSE and a SOURCE note
 (package, version, origin).
 ASSETS
 
-for dir in $(ls -d internal/web/static/vendor/*/ internal/report/fonts/*/ | LC_ALL=C sort); do
-  dir=${dir%/}
+notice_dir() {
+  dir=$1
   if [ ! -f "$dir/LICENSE" ] || [ ! -f "$dir/SOURCE" ]; then
     echo "notices: $dir needs a LICENSE and a SOURCE file" >&2
     exit 1
@@ -103,4 +104,21 @@ for dir in $(ls -d internal/web/static/vendor/*/ internal/report/fonts/*/ | LC_A
   cat "$dir/LICENSE"
   case "$(tail -c1 "$dir/LICENSE")" in "") ;; *) echo ;; esac
   printf '`````\n'
+}
+
+for dir in $(ls -d internal/web/static/vendor/*/ internal/report/fonts/*/ | LC_ALL=C sort); do
+  notice_dir "${dir%/}"
+done
+
+cat <<'TESTDATA'
+
+# Third-party test material
+
+Not built into the binary; present in the source tree for the tests. Each
+directory under testdata/ that holds third-party files has their LICENSE
+and a SOURCE note.
+TESTDATA
+
+for src in $(ls testdata/*/SOURCE | LC_ALL=C sort); do
+  notice_dir "$(dirname "$src")"
 done

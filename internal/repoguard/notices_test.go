@@ -70,8 +70,12 @@ func TestNoticesCoverEveryModule(t *testing.T) {
 // web UI's scripts and fonts, and the fonts of the PDF reports.
 var assetDirs = []string{"internal/web/static/vendor/", "internal/report/fonts/"}
 
+// testDataDir holds test fixtures; those of its directories that hold a
+// SOURCE file are third-party material and are noticed like assets.
+const testDataDir = "testdata/"
+
 func isAsset(heading string) bool {
-	for _, d := range assetDirs {
+	for _, d := range append(assetDirs, testDataDir) {
 		if strings.HasPrefix(heading, d) {
 			return true
 		}
@@ -102,6 +106,20 @@ func TestNoticesCoverEveryBundledAsset(t *testing.T) {
 					t.Errorf("%s has no %s", dir, f)
 				}
 			}
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(root, testDataDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		dir := testDataDir + e.Name()
+		if _, err := os.Stat(filepath.Join(root, dir, "SOURCE")); err != nil {
+			continue // our own fixtures
+		}
+		dirs[dir] = true
+		if _, err := os.Stat(filepath.Join(root, dir, "LICENSE")); err != nil {
+			t.Errorf("%s has a SOURCE but no LICENSE", dir)
 		}
 	}
 	notices, err := os.ReadFile(filepath.Join(root, "THIRD-PARTY-NOTICES.md"))
