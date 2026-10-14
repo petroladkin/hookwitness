@@ -196,6 +196,15 @@ func (s *Store) SetConfigIf(ctx context.Context, id int64, old, config string) (
 }
 
 // ResetCounter starts an endpoint's request count again from zero.
+// SetPath moves an endpoint to another path; its requests stay with it.
+func (s *Store) SetPath(ctx context.Context, id int64, path string) error {
+	err := s.updateEndpoint(ctx, `UPDATE endpoints SET path = ? WHERE id = ?`, path, id)
+	if err != nil && isUnique(err) {
+		return ErrDuplicatePath
+	}
+	return err
+}
+
 func (s *Store) ResetCounter(ctx context.Context, id int64) error {
 	return s.updateEndpoint(ctx, `UPDATE endpoints SET counter = 0 WHERE id = ?`, id)
 }
@@ -546,6 +555,48 @@ func (s *Store) Requests(ctx context.Context, endpointID, beforeID int64, limit 
 func (s *Store) RequestsAfter(ctx context.Context, endpointID, afterID int64) ([]Request, error) {
 	return s.listRequests(ctx, `SELECT `+requestColumns+` FROM requests
 		WHERE endpoint_id IS ? AND id > ? ORDER BY id`, register(endpointID), afterID)
+}
+
+// ListQuery is a page of a register's requests: newest first older than
+// Before (0: from the newest), or with HasAfter the ones above After, oldest
+// first; at most Limit; only those with the Verdict and Status when set.
+type ListQuery struct {
+	Before, After int64
+	HasAfter      bool
+	Limit         int
+	Verdict       string // pass, fail, n/v, n/c; "" for any
+	Status        int    // 0 for any; -1 for "nothing sent" (status 0)
+}
+
+// List lists a register's requests per q, without bodies.
+func (s *Store) List(ctx context.Context, endpointID int64, q ListQuery) ([]Request, error) {
+	where := "endpoint_id IS ?"
+	args := []any{register(endpointID)}
+	order := "id DESC"
+	if q.HasAfter {
+		where += " AND id > ?"
+		args = append(args, q.After)
+		order = "id"
+	} else if q.Before > 0 {
+		where += " AND id < ?"
+		args = append(args, q.Before)
+	}
+	if q.Verdict != "" {
+		where += " AND verdict = ?"
+		args = append(args, q.Verdict)
+	}
+	switch {
+	case q.Status > 0:
+		where += " AND status = ?"
+		args = append(args, q.Status)
+	case q.Status < 0: // nothing was sent
+		where += " AND status = 0"
+	}
+	query := `SELECT ` + requestColumns + ` FROM requests WHERE ` + where + ` ORDER BY ` + order
+	if q.Limit > 0 {
+		query += ` LIMIT ` + strconv.Itoa(q.Limit)
+	}
+	return s.listRequests(ctx, query, args...)
 }
 
 // Request returns one request with its body.

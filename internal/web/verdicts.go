@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
+	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
@@ -71,21 +72,11 @@ func (h *Handler) recheck(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "re-check", err)
 		return
 	}
-	cfg, err := emulate.Parse(ep.Config)
-	if err != nil {
-		h.fail(w, "re-check", err)
-		return
+	var keys emulate.Keyring
+	if h.keys != nil {
+		keys = h.keys
 	}
-	n := 0
-	err = h.store.EachRequest(ctx, reg, func(req store.Request) error {
-		er := emulate.Request{Method: req.Method, Path: req.Path, RawQuery: req.RawQuery, Body: req.Body}
-		for _, hd := range req.Headers {
-			er.Headers = append(er.Headers, emulate.Header{Name: hd.Name, Value: hd.Value})
-		}
-		vs, _ := cfg.Verify(er, req.ReceivedAt, !req.TooLarge, h.keys)
-		n++
-		return h.store.SetVerdicts(ctx, req.ID, emulate.Overall(vs), emulate.VerdictsJSON(vs))
-	})
+	n, err := catch.Recheck(ctx, h.store, ep, keys)
 	if err != nil {
 		h.fail(w, "re-check", err)
 		return

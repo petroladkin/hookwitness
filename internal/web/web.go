@@ -29,6 +29,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
+	"github.com/petroladkin/hookwitness/internal/version"
 )
 
 //go:embed static
@@ -109,10 +110,11 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	h.csrf = http.NewCrossOriginProtection()
 	h.mux = h.csrf.Handler(mux)
 
-	ao := api.Options{Prefix: prefix, MaxWait: h.maxWait, Stop: h.stop}
+	ao := api.Options{Prefix: prefix, MaxWait: h.maxWait, Stop: h.stop, Version: version.Version}
 	if o.Keys != nil {
-		ao.Keys = o.Keys // a nil *secret.Key must stay a nil Sealer
+		ao.Keys, ao.Keyring = o.Keys, o.Keys // a nil *secret.Key must stay a nil interface
 	}
+	ao.Fonts, _ = fs.Sub(staticFS, "static")
 	h.api = api.New(st, broker, log, ao)
 	return h
 }

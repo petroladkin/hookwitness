@@ -64,6 +64,14 @@ PUT: `"schemas":[{"name":"OrderPaid","text":"<schema JSON as a string>"}]`,
 `"checks":[{"kind":"schema","schema":"OrderPaid"}]`, or pick the schema by the
 event type with `"select":{"from":"body","key":"/type","map":[{"value":"order.paid","schema":"OrderPaid"}]}`.
 A failed schema verdict lists `problems` (`path`, `keyword`, `message`).
+
+Between test cases: `DELETE $API/endpoints/<id>/requests` clears an endpoint,
+`POST $API/endpoints/<id>/reset-counter` (body `{}`, JSON) restarts "every Nth"
+rules, `POST $API/endpoints/<id>/recheck` re-verifies kept requests after you
+fix a secret or schema. `?verdict=fail` (or `status=401`) on a request list
+finds the failures; `GET $API/unmatched/requests` shows requests that went to
+a wrong path (a typo in the sender's URL). `GET $API/endpoints/<id>/report?format=md`
+is evidence to attach; `$API/openapi.json` describes every route.
 A string the schema marks `"contentEncoding":"base64","contentMediaType":"image/png"`
 (or `image/jpeg`, `image/gif`, `image/webp`, `image/*`; a `data:image/...` URL
 works too) is checked to really be that image; the request's `images` list it

@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -17,13 +16,6 @@ import (
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/version"
 )
-
-// maxPicked bounds a hand-picked selection.
-const maxPicked = 1000
-
-// localLayout is the value of an <input type="datetime-local"> with seconds
-// and milliseconds; the dialog reads and writes it as UTC.
-const localLayout = "2006-01-02T15:04:05.000"
 
 // exportView is the report dialog.
 type exportView struct {
@@ -80,153 +72,22 @@ type exportError struct{ field, msg string }
 func (e exportError) Error() string { return e.msg }
 
 // readExport reads the dialog's query into the view and the report's
-// selection; a bad value is an exportError.
-func (h *Handler) readExport(q url.Values, v *exportView) (store.Selection, []string, error) {
-	var sel store.Selection
+// request; a bad value is an exportError.
+func (h *Handler) readExport(q url.Values, v *exportView) (report.Query, error) {
 	v.Format, v.Scope = q.Get("format"), q.Get("scope")
 	v.From, v.To, v.Pick, v.Other = q.Get("from"), q.Get("to"), q.Get("pick"), q.Get("mask_other")
 	if v.Images = q.Get("images"); v.Images != "listed" {
 		v.Images = "shown"
 	}
-	masked := q["mask"]
 	for i := range v.Masks {
-		v.Masks[i].On = slices.Contains(masked, v.Masks[i].Name)
+		v.Masks[i].On = slices.Contains(q["mask"], v.Masks[i].Name)
 	}
-	if _, err := report.ParseFormat(v.Format); err != nil {
-		return sel, nil, exportError{"format", "choose Markdown, HTML or PDF"}
+	rq, err := report.ParseQuery(q)
+	var fe *report.FieldError
+	if errors.As(err, &fe) {
+		return rq, exportError{fe.Field, fe.Message}
 	}
-	switch v.Scope {
-	case "all":
-	case "range":
-		var err error
-		if sel.From, err = parseLocal(v.From); err != nil {
-			return sel, nil, exportError{"from", "the start " + err.Error()}
-		}
-		if sel.To, err = parseLocal(v.To); err != nil {
-			return sel, nil, exportError{"to", "the end " + err.Error()}
-		}
-		if sel.From.IsZero() && sel.To.IsZero() {
-			return sel, nil, exportError{"from", "give the start, the end or both"}
-		}
-		if !sel.From.IsZero() && !sel.To.IsZero() && sel.To.Before(sel.From) {
-			return sel, nil, exportError{"to", "the end is before the start"}
-		}
-	case "picked":
-		nos, err := parseNumbers(v.Pick)
-		if err != nil {
-			return sel, nil, exportError{"pick", err.Error()}
-		}
-		sel.Nos = nos
-	default:
-		return sel, nil, exportError{"scope", "choose what the report covers"}
-	}
-	var names []string
-	for _, n := range masked {
-		if headerName(n) {
-			names = append(names, n)
-		}
-	}
-	for n := range strings.SplitSeq(v.Other, ",") {
-		n = strings.TrimSpace(n)
-		if n == "" {
-			continue
-		}
-		if !headerName(n) {
-			return sel, nil, exportError{"mask_other", fmt.Sprintf("%q is not a header name", n)}
-		}
-		names = append(names, n)
-	}
-	return sel, names, nil
-}
-
-// headerName reports a valid HTTP header name.
-func headerName(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, c := range []byte(s) {
-		if c <= ' ' || c >= 0x7f || strings.IndexByte(`"(),/:;<=>?@[\]{}`, c) >= 0 {
-			return false
-		}
-	}
-	return true
-}
-
-// parseLocal reads a datetime-local value as UTC; empty is zero.
-func parseLocal(s string) (time.Time, error) {
-	if s == "" {
-		return time.Time{}, nil
-	}
-	for _, layout := range []string{localLayout, "2006-01-02T15:04:05", "2006-01-02T15:04"} {
-		if t, err := time.ParseInLocation(layout, s, time.UTC); err == nil {
-			return t, nil
-		}
-	}
-	return time.Time{}, errors.New("is not a date and time")
-}
-
-// parseNumbers reads "3, 5-9" into request numbers, in order, each once.
-func parseNumbers(s string) ([]int64, error) {
-	var out []int64
-	seen := map[int64]bool{}
-	add := func(n int64) error {
-		if !seen[n] {
-			seen[n] = true
-			out = append(out, n)
-		}
-		if len(out) > maxPicked {
-			return fmt.Errorf("at most %d requests can be picked; use a time range", maxPicked)
-		}
-		return nil
-	}
-	for part := range strings.SplitSeq(strings.ReplaceAll(s, " ", ","), ",") {
-		if part == "" {
-			continue
-		}
-		a, b, isRange := strings.Cut(strings.TrimPrefix(part, "#"), "-")
-		lo, err1 := strconv.ParseInt(a, 10, 64)
-		hi, err2 := lo, error(nil)
-		if isRange {
-			hi, err2 = strconv.ParseInt(strings.TrimPrefix(b, "#"), 10, 64)
-		}
-		if err1 != nil || err2 != nil || lo < 1 || hi < lo {
-			return nil, fmt.Errorf("%q is not a request number or a range like 5-9", part)
-		}
-		if hi-lo >= maxPicked {
-			return nil, fmt.Errorf("at most %d requests can be picked; use a time range", maxPicked)
-		}
-		for n := lo; n <= hi; n++ {
-			if err := add(n); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if len(out) == 0 {
-		return nil, errors.New("give the request numbers, e.g. 3, 5-9")
-	}
-	slices.Sort(out)
-	return out, nil
-}
-
-// selectionWords is how the report names its selection.
-func selectionWords(v *exportView, sel store.Selection) string {
-	switch v.Scope {
-	case "range":
-		from, to := "the first request", "the last"
-		if !sel.From.IsZero() {
-			from = sel.From.Format("2006-01-02T15:04:05.000Z")
-		}
-		if !sel.To.IsZero() {
-			to = sel.To.Format("2006-01-02T15:04:05.000Z")
-		}
-		return "received from " + from + " to " + to
-	case "picked":
-		if len(sel.Nos) == 1 {
-			return "request #" + strconv.FormatInt(sel.Nos[0], 10)
-		}
-		return "picked requests " + v.Pick
-	}
-	return "whole register"
+	return rq, err
 }
 
 // report writes a register's report as a download, or shows the dialog
@@ -248,24 +109,24 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := h.exportDefaults(reg, ep, nil, h.regPath(reg))
-	sel, mask, err := h.readExport(r.URL.Query(), v)
+	rq, err := h.readExport(r.URL.Query(), v)
 	var bad exportError
 	if errors.As(err, &bad) {
 		v.Error, v.Field = bad.msg, bad.field
 		h.showRegister(w, r, reg, ep, nil, v, http.StatusUnprocessableEntity)
 		return
 	}
-	format, _ := report.ParseFormat(v.Format)
+	format, sel := rq.Format, rq.Selection
 	now := time.Now().UTC()
 	o := report.Options{
 		Endpoint:  ep.Path,
-		Selection: selectionWords(v, sel),
+		Selection: rq.Words,
 		From:      sel.From,
 		To:        sel.To,
-		Mask:      mask,
+		Mask:      rq.Mask,
 		Version:   version.Version,
 		Generated: now,
-		NoImages:  v.Images == "listed",
+		NoImages:  rq.NoImages,
 	}
 	if format == report.HTML {
 		o.Fonts, _ = fs.Sub(staticFS, "static")

@@ -5,8 +5,7 @@ MCP-ready.
 
 **Status: early development.** Catch endpoints with a live view, scripted
 responses, authorization and JSON Schema verdicts, reports (Markdown, HTML,
-PDF) and the core of the REST API work; the rest of the API and MCP come
-next.
+PDF) and the REST API work; the MCP server comes next.
 
 ## What it is for
 
@@ -370,8 +369,10 @@ curl -s "$API/endpoints/$ID/requests?after=0&wait=30s" | jq -c '.requests[] | {i
 `wait` holds the call until a request arrives (up to 60 s), so a test needs
 no polling loop. The API has the UI's access rules: it answers on IP
 addresses, `localhost` and `-admin-hosts` names, and writes must be JSON.
-Every route, the behaviour document, errors and more recipes:
-[docs/api.md](docs/api.md). A Claude Code skill that teaches an agent to test
+The API also changes and deletes endpoints, clears them, filters requests by
+verdict and status, re-checks, downloads reports and raw bodies, and
+describes itself at `/admin/api/v1/openapi.json` (OpenAPI 3.1). Every route,
+the behaviour document, errors and more recipes: [docs/api.md](docs/api.md). A Claude Code skill that teaches an agent to test
 a webhook sender with hookwitness in Docker:
 [skills/hookwitness](skills/hookwitness/SKILL.md).
 

@@ -7,7 +7,8 @@ webhooks and read them with their verdicts. Everything is JSON.
 - [Access](#access)
 - [Conventions and errors](#conventions-and-errors)
 - [Routes](#routes): [endpoints](#endpoints), [behaviour](#behaviour),
-  [secrets](#secrets), [requests](#requests)
+  [secrets](#secrets), [requests](#requests), [actions](#actions),
+  [reports](#reports), [OpenAPI](#openapi)
 - [Recipes](#recipes): [wait for a webhook](#wait-for-a-webhook-and-read-its-verdict),
   [Basic credentials](#require-basic-credentials),
   [GitHub signature](#require-a-github-signature)
@@ -74,6 +75,8 @@ into the Unmatched register with a `404`.
 | `GET /endpoints` | all endpoints, by path; `?path=/x` finds one (an empty list when there is none) |
 | `POST /endpoints` | create: `{"path": "/x"}`; no path or an empty one picks a random path. `201`, `Location` |
 | `GET /endpoints/{id}` | one endpoint |
+| `PATCH /endpoints/{id}` | change its path: `{"path": "/y"}`, validated as on create; its requests and behaviour stay. `200` with the endpoint |
+| `DELETE /endpoints/{id}` | delete it and its requests. `204` |
 
 ```sh
 $ curl -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/orders/events"}'
@@ -205,7 +208,11 @@ $ curl -X PUT $API/endpoints/1/secrets/ORDERS_PASSWORD -H 'Content-Type: applica
 | `GET /endpoints/{id}/requests` | newest first; `limit` (default 50, at most 500), `before=<id>` pages back |
 | `GET /endpoints/{id}/requests?after=<id>` | the requests newer than `<id>`, **oldest first** |
 | `GET /endpoints/{id}/requests?after=<id>&wait=30s` | the same, but when there are none yet, wait until one arrives (at most `60s`; `wait=30` means seconds); an empty list when the time is up |
+| `…/requests?verdict=fail&status=401` | filters, with any of the above: `verdict` is `pass`, `fail`, `n/v` or `n/c`; `status` an answer status (`0`: nothing sent) |
+| `DELETE /endpoints/{id}/requests` | clear the endpoint's requests (numbering goes on). `204` |
+| `GET /unmatched/requests` | the Unmatched register (requests to paths no endpoint has), with the same parameters; read-only |
 | `GET /requests/{id}` | one request in full, Unmatched ones too |
+| `GET /requests/{id}/body` | the exact body as received, with the sender's `Content-Type`, always as a download (`attachment`, `nosniff`, a `sandbox` CSP): whatever a sender sent never runs as a page; `404 not_kept` when it was over the limit |
 | `GET /requests/{id}/image?path=<pointer>` | the decoded bytes of an image in the body (`path=` empty for a body that is an image), typed by what they are; `404 not_found` without a value there, `422 not_an_image` when it is no image |
 
 A list item:
@@ -261,6 +268,43 @@ One request adds:
 **Waiting without missing anything:** keep the id of the last request you have
 handled (0 at the start) and ask for `after=<that id>&wait=…`. Requests that
 arrive between two calls are returned by the next one; none is returned twice.
+
+### Actions
+
+Writes, so send them as JSON (an empty object is enough):
+
+| Route | Does |
+|---|---|
+| `POST /endpoints/{id}/reset-counter` | start the rules' count again ("every 3rd" counts from the next request). `200` with the endpoint |
+| `POST /endpoints/{id}/recheck` | verify the kept requests again with the current checks, secrets and schemas — after fixing a secret or a schema. Only verdicts change. `200 {"rechecked": N}` |
+
+```sh
+curl -s -X POST $API/endpoints/1/recheck -H 'Content-Type: application/json' -d '{}'
+```
+
+### Reports
+
+| Route | Does |
+|---|---|
+| `GET /endpoints/{id}/report` | the report the UI exports, as a download |
+| `GET /unmatched/report` | the same for the Unmatched register |
+
+Parameters as in the UI's dialog: `format` (`md`, `html`, `pdf`; required),
+`scope` (`all`, `range` with `from` / `to`, `picked` with `pick=3,5-9`),
+`mask` (a header name; repeat it) and `mask_other` (comma-separated),
+`images` (`shown` or `listed`). Times are RFC 3339 (`2026-10-13T09:00:00Z`) or
+a date-time without a zone, read as UTC. A wrong parameter is `422 invalid`
+naming it.
+
+```sh
+curl -s -o report.pdf "$API/endpoints/1/report?format=pdf&scope=picked&pick=3-5&mask=Authorization"
+```
+
+### OpenAPI
+
+`GET /openapi.json` describes every route, parameter and answer (OpenAPI
+3.1), for clients and code generators. The repository's tests check that it
+is valid, lists every route, and that real answers match its schemas.
 
 ## Recipes
 

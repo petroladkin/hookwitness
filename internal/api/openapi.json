@@ -1,0 +1,2005 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Hookwitness API",
+    "version": "1",
+    "summary": "Catch webhooks, script the answers, read the verdicts.",
+    "description": "JSON under <admin prefix>/api/v1 (/admin/api/v1 by default), with the UI's access rules: it answers on IP addresses, localhost and -admin-hosts names; writes must be application/json. Every error has one shape (Error). See docs/api.md for recipes.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "/admin/api/v1",
+      "description": "The default admin prefix."
+    }
+  ],
+  "paths": {
+    "/endpoints": {
+      "get": {
+        "operationId": "listEndpoints",
+        "summary": "List endpoints",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Only the endpoint with this path."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "endpoints": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Endpoint"
+                      }
+                    }
+                  },
+                  "required": [
+                    "endpoints"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createEndpoint",
+        "summary": "Create an endpoint",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "description": "Empty or absent for a random path."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created; Location names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The path is taken (`duplicate_path`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A parameter or field is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not the JSON expected (`bad_json`, `unknown_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "A write was not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/endpoints/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getEndpoint",
+        "summary": "Read an endpoint",
+        "responses": {
+          "200": {
+            "description": "The endpoint.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "changeEndpointPath",
+        "summary": "Change an endpoint's path",
+        "description": "Validated as the UI validates a new path; its requests and behaviour stay.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The endpoint.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The path is taken (`duplicate_path`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A parameter or field is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not the JSON expected (`bad_json`, `unknown_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "A write was not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteEndpoint",
+        "summary": "Delete an endpoint and its requests",
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/endpoints/{id}/behaviour": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getBehaviour",
+        "summary": "Read how an endpoint answers",
+        "responses": {
+          "200": {
+            "description": "The behaviour; ETag is its version.",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Behaviour"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "putBehaviour",
+        "summary": "Replace how an endpoint answers",
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The ETag read."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Behaviour"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The behaviour now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Behaviour"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Changed since it was read (`stale_version`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "If-Match is missing (`version_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A parameter or field is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not the JSON expected (`bad_json`, `unknown_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "A write was not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The behaviour kept changing during the call (`conflict`); try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/endpoints/{id}/secrets/{name}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        },
+        {
+          "$ref": "#/components/parameters/name"
+        }
+      ],
+      "put": {
+        "operationId": "putSecret",
+        "summary": "Set a secret (write-only)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The secret, described.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A parameter or field is not valid (`invalid`): a bad name, kind or value, or no secret key to seal with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not the JSON expected (`bad_json`, `unknown_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "A write was not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSecret",
+        "summary": "Delete a secret",
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A check uses it (`secret_in_use`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/endpoints/{id}/reset-counter": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "post": {
+        "operationId": "resetCounter",
+        "summary": "Reset the rules' counter",
+        "description": "Send {} as application/json.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The endpoint, counter 0.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "A write was not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/endpoints/{id}/recheck": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "post": {
+        "operationId": "recheck",
+        "summary": "Re-check the kept requests",
+        "description": "With the current checks, secrets and schemas; only verdicts change. Send {} as application/json.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "How many were checked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rechecked"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "A write was not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/endpoints/{id}/report": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "endpointReport",
+        "summary": "Report of an endpoint's requests",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/format"
+          },
+          {
+            "$ref": "#/components/parameters/scope"
+          },
+          {
+            "$ref": "#/components/parameters/from"
+          },
+          {
+            "$ref": "#/components/parameters/to"
+          },
+          {
+            "$ref": "#/components/parameters/pick"
+          },
+          {
+            "$ref": "#/components/parameters/mask"
+          },
+          {
+            "$ref": "#/components/parameters/mask_other"
+          },
+          {
+            "$ref": "#/components/parameters/images"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report, as a download.",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "application/pdf"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A parameter or field is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/endpoints/{id}/requests": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "listRequests",
+        "summary": "List an endpoint's requests",
+        "description": "Newest first; with after, the newer ones oldest first, waiting up to wait for the first.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/after"
+          },
+          {
+            "$ref": "#/components/parameters/before"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/wait"
+          },
+          {
+            "$ref": "#/components/parameters/verdict"
+          },
+          {
+            "$ref": "#/components/parameters/status"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The requests, without bodies.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A parameter or field is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "clearRequests",
+        "summary": "Clear an endpoint's requests",
+        "responses": {
+          "204": {
+            "description": "Cleared; numbering goes on."
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/requests/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getRequest",
+        "summary": "Read one request in full",
+        "responses": {
+          "200": {
+            "description": "The request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Request"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/requests/{id}/body": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getRequestBody",
+        "summary": "The exact body as received",
+        "description": "With the sender's Content-Type, always as an attachment (nosniff, CSP sandbox).",
+        "responses": {
+          "200": {
+            "description": "The body.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such request (`not_found`), or the body was not kept (`not_kept`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/requests/{id}/image": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getRequestImage",
+        "summary": "The decoded bytes of an image in a request",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The image, typed by what it is.",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The value is not an image (`not_an_image`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/unmatched/requests": {
+      "get": {
+        "operationId": "listUnmatched",
+        "summary": "List the Unmatched register",
+        "description": "Requests to paths no endpoint has; read-only.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/after"
+          },
+          {
+            "$ref": "#/components/parameters/before"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/wait"
+          },
+          {
+            "$ref": "#/components/parameters/verdict"
+          },
+          {
+            "$ref": "#/components/parameters/status"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The requests, without bodies.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A parameter or field is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/unmatched/report": {
+      "get": {
+        "operationId": "unmatchedReport",
+        "summary": "Report of the Unmatched register",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/format"
+          },
+          {
+            "$ref": "#/components/parameters/scope"
+          },
+          {
+            "$ref": "#/components/parameters/from"
+          },
+          {
+            "$ref": "#/components/parameters/to"
+          },
+          {
+            "$ref": "#/components/parameters/pick"
+          },
+          {
+            "$ref": "#/components/parameters/mask"
+          },
+          {
+            "$ref": "#/components/parameters/mask_other"
+          },
+          {
+            "$ref": "#/components/parameters/images"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report, as a download.",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "application/pdf"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A parameter or field is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "openapi",
+        "summary": "This description",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "A machine-readable code: not_found, invalid, duplicate_path, stale_version, version_required, conflict, secret_in_use, unknown_field, bad_json, unsupported_media_type, not_an_image, not_kept, too_large, internal."
+              },
+              "message": {
+                "type": "string",
+                "description": "What went wrong and what to do, for a person."
+              },
+              "field": {
+                "type": "string",
+                "description": "The part of the request at fault: a field (checks[0].secret) or a parameter."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false,
+        "description": "The one error shape of every route."
+      },
+      "Endpoint": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "path": {
+            "type": "string",
+            "description": "The exact path senders deliver to."
+          },
+          "url": {
+            "type": "string",
+            "description": "Where senders deliver, as reached by this call."
+          },
+          "requests": {
+            "type": "integer",
+            "description": "Requests kept."
+          },
+          "counter": {
+            "type": "integer",
+            "description": "Requests that passed its checks since the counter was reset; the rules count these."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_request_at": {
+            "type": "string",
+            "description": "The newest kept request; absent when none.",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "url",
+          "requests",
+          "counter",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "Header": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string",
+            "description": "A template in replies."
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "Reply": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "100-599; 0 reads as 200.",
+            "minimum": 0,
+            "maximum": 599
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Header"
+            }
+          },
+          "body": {
+            "type": "string",
+            "description": "A Go template."
+          },
+          "delay_ms": {
+            "type": "integer",
+            "description": "Wait before replying.",
+            "minimum": 0
+          },
+          "jitter_ms": {
+            "type": "integer",
+            "description": "A random extra delay, 0..jitter_ms.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Condition": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "every",
+              "first",
+              "random"
+            ]
+          },
+          "n": {
+            "type": "integer",
+            "description": "every N, first N."
+          },
+          "percent": {
+            "type": "number",
+            "description": "random: 0 < percent <= 100."
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "additionalProperties": false
+      },
+      "Rule": {
+        "type": "object",
+        "properties": {
+          "when": {
+            "$ref": "#/components/schemas/Condition"
+          },
+          "do": {
+            "type": "string",
+            "enum": [
+              "reply",
+              "timeout",
+              "drop"
+            ]
+          },
+          "reply": {
+            "$ref": "#/components/schemas/Reply"
+          }
+        },
+        "required": [
+          "when",
+          "do"
+        ],
+        "additionalProperties": false
+      },
+      "Mapping": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "string",
+            "description": "A schema's name."
+          }
+        },
+        "required": [
+          "value",
+          "schema"
+        ],
+        "additionalProperties": false
+      },
+      "Select": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "enum": [
+              "body",
+              "header"
+            ]
+          },
+          "key": {
+            "type": "string",
+            "description": "A JSON pointer into the body, or a header name."
+          },
+          "map": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Mapping"
+            }
+          }
+        },
+        "required": [
+          "from",
+          "key",
+          "map"
+        ],
+        "additionalProperties": false
+      },
+      "Check": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Absent or header: a required header.",
+            "enum": [
+              "header",
+              "github",
+              "stripe",
+              "standard",
+              "hmac",
+              "bearer",
+              "basic",
+              "schema"
+            ]
+          },
+          "header": {
+            "type": "string",
+            "description": "header: the header; hmac: the signature header."
+          },
+          "match": {
+            "type": "string",
+            "enum": [
+              "present",
+              "equals",
+              "regex"
+            ]
+          },
+          "value": {
+            "type": "string"
+          },
+          "error": {
+            "$ref": "#/components/schemas/Reply"
+          },
+          "enforce": {
+            "type": "boolean",
+            "description": "Refuse what does not pass (otherwise only the verdict is recorded)."
+          },
+          "secret": {
+            "type": "string",
+            "description": "The secret's name."
+          },
+          "user": {
+            "type": "string",
+            "description": "basic: the user name."
+          },
+          "algo": {
+            "type": "string",
+            "enum": [
+              "sha1",
+              "sha256",
+              "sha512"
+            ]
+          },
+          "encoding": {
+            "type": "string",
+            "enum": [
+              "hex",
+              "base64"
+            ]
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string",
+            "description": "hmac: a template of the signed content; the raw body when empty."
+          },
+          "tolerance_s": {
+            "type": "integer"
+          },
+          "ignore_timestamp": {
+            "type": "boolean"
+          },
+          "schema": {
+            "type": "string",
+            "description": "schema: one schema by name."
+          },
+          "select": {
+            "$ref": "#/components/schemas/Select"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Var": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "Schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "The JSON Schema as a JSON string."
+          }
+        },
+        "required": [
+          "name",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "Secret": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "key",
+              "token"
+            ]
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "A keyed fingerprint; never the value."
+          },
+          "standard": {
+            "type": "boolean",
+            "description": "A whsec_ key, usable by standard checks."
+          },
+          "used_by": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "fingerprint",
+          "used_by"
+        ],
+        "additionalProperties": false,
+        "description": "A secret, described: its value is never returned."
+      },
+      "Behaviour": {
+        "type": "object",
+        "properties": {
+          "default": {
+            "$ref": "#/components/schemas/Reply"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            }
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            }
+          },
+          "vars": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Var"
+            }
+          },
+          "schemas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Schema"
+            }
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Secret"
+            },
+            "description": "Read-only here; set them on the secrets route. Sent back as read, it is ignored."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SecretIn": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Required for a new secret; a replacement keeps the kind.",
+            "enum": [
+              "key",
+              "token"
+            ]
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "RequestSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "endpoint_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Absent (null) for the Unmatched register."
+          },
+          "no": {
+            "type": "integer",
+            "description": "Its number in the register."
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "description": "What Hookwitness answered; 0 while a timeout holds it or when nothing was sent."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "Overall: fail, else n/v, else pass, else n/c; empty without checks.",
+            "enum": [
+              "",
+              "pass",
+              "fail",
+              "n/v",
+              "n/c"
+            ]
+          },
+          "body_size": {
+            "type": "integer"
+          },
+          "body_kept": {
+            "type": "boolean",
+            "description": "False when the body was over the limit (413)."
+          },
+          "content_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "no",
+          "received_at",
+          "method",
+          "path",
+          "query",
+          "status",
+          "verdict",
+          "body_size",
+          "body_kept",
+          "content_type"
+        ],
+        "additionalProperties": false
+      },
+      "RequestList": {
+        "type": "object",
+        "properties": {
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestSummary"
+            }
+          }
+        },
+        "required": [
+          "requests"
+        ],
+        "additionalProperties": false
+      },
+      "Problem": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "A JSON pointer into the body; empty for the whole body."
+          },
+          "keyword": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "keyword",
+          "message"
+        ]
+      },
+      "Image": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "declared": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "size"
+        ]
+      },
+      "Verdict": {
+        "type": "object",
+        "properties": {
+          "check": {
+            "type": "integer",
+            "description": "1-based position of the check."
+          },
+          "label": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail",
+              "n/v",
+              "n/c"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          },
+          "received": {
+            "type": "string"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Image"
+            }
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "check",
+          "label",
+          "result",
+          "reason",
+          "at"
+        ]
+      },
+      "RequestImage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Image"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "schema",
+                  "data URL",
+                  "body"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "description": "The decoded bytes."
+              }
+            },
+            "required": [
+              "source"
+            ]
+          }
+        ]
+      },
+      "Request": {
+        "type": "object",
+        "description": "One request in full: the summary's fields and these.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "endpoint_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Absent (null) for the Unmatched register."
+          },
+          "no": {
+            "type": "integer",
+            "description": "Its number in the register."
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "description": "What Hookwitness answered; 0 while a timeout holds it or when nothing was sent."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "Overall: fail, else n/v, else pass, else n/c; empty without checks.",
+            "enum": [
+              "",
+              "pass",
+              "fail",
+              "n/v",
+              "n/c"
+            ]
+          },
+          "body_size": {
+            "type": "integer"
+          },
+          "body_kept": {
+            "type": "boolean",
+            "description": "False when the body was over the limit (413)."
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "proto": {
+            "type": "string"
+          },
+          "remote_addr": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "As received: order, case and repeats kept; [name, value]."
+          },
+          "body_text": {
+            "type": "string",
+            "description": "The body when it is UTF-8."
+          },
+          "body_base64": {
+            "type": "string",
+            "description": "The body otherwise."
+          },
+          "outcome": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "What was done: source, action, the reply sent, delay_ms, waited_ms, counter."
+          },
+          "verdicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Verdict"
+            }
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestImage"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "no",
+          "received_at",
+          "method",
+          "path",
+          "query",
+          "status",
+          "verdict",
+          "body_size",
+          "body_kept",
+          "content_type",
+          "proto",
+          "remote_addr",
+          "headers",
+          "outcome",
+          "verdicts",
+          "images"
+        ],
+        "additionalProperties": false
+      },
+      "Rechecked": {
+        "type": "object",
+        "properties": {
+          "rechecked": {
+            "type": "integer",
+            "description": "Requests checked again."
+          }
+        },
+        "required": [
+          "rechecked"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "parameters": {
+      "id": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "name": {
+        "name": "name",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Letters, digits and _, not starting with a digit."
+      },
+      "after": {
+        "name": "after",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "description": "Only requests with a larger id, oldest first (0 for the start)."
+      },
+      "before": {
+        "name": "before",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "description": "Only requests with a smaller id (newest first). Not with after."
+      },
+      "limit": {
+        "name": "limit",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 50
+        }
+      },
+      "wait": {
+        "name": "wait",
+        "in": "query",
+        "schema": {
+          "type": "string"
+        },
+        "description": "With after: wait for a request up to this long (30s, or 30 for seconds; at most 60s)."
+      },
+      "verdict": {
+        "name": "verdict",
+        "in": "query",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "n/v",
+            "n/c"
+          ]
+        }
+      },
+      "status": {
+        "name": "status",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 599
+        },
+        "description": "Only this answer status; 0 for nothing sent."
+      },
+      "format": {
+        "name": "format",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "md",
+            "html",
+            "pdf"
+          ]
+        }
+      },
+      "scope": {
+        "name": "scope",
+        "in": "query",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "all",
+            "range",
+            "picked"
+          ],
+          "default": "all"
+        }
+      },
+      "from": {
+        "name": "from",
+        "in": "query",
+        "schema": {
+          "type": "string"
+        },
+        "description": "scope=range: RFC 3339, or a local date-time read as UTC."
+      },
+      "to": {
+        "name": "to",
+        "in": "query",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "pick": {
+        "name": "pick",
+        "in": "query",
+        "schema": {
+          "type": "string"
+        },
+        "description": "scope=picked: request numbers, e.g. 3, 5-9 (at most 1000)."
+      },
+      "mask": {
+        "name": "mask",
+        "in": "query",
+        "schema": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "style": "form",
+        "explode": true,
+        "description": "Header names whose values are masked; repeat it."
+      },
+      "mask_other": {
+        "name": "mask_other",
+        "in": "query",
+        "schema": {
+          "type": "string"
+        },
+        "description": "More header names to mask, comma-separated."
+      },
+      "images": {
+        "name": "images",
+        "in": "query",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "shown",
+            "listed"
+          ],
+          "default": "shown"
+        }
+      },
+      "path": {
+        "name": "path",
+        "in": "query",
+        "schema": {
+          "type": "string"
+        },
+        "description": "A JSON pointer to the image in the body; empty for a body that is an image."
+      }
+    }
+  }
+}
