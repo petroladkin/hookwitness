@@ -60,5 +60,79 @@ curl -s "$API/endpoints/$ID/requests?after=0&wait=30s" | jq -c '.requests[] | {i
 
 ## MCP
 
-MCP-сервер, щоб агенти керували Hookwitness як інструментами без shell,
-заплановано, але його ще немає.
+Hookwitness — це ще й MCP-сервер, тож агент може керувати ним через
+інструменти замість shell. Він відповідає по MCP через Streamable HTTP на
+`http://127.0.0.1:8080/admin/mcp`, з тими самими правилами доступу, що й
+REST API. `hookwitness mcp` з'єднує його з клієнтами, які вміють лише stdio.
+
+Додайте його в Claude Code:
+
+<!-- docs-check: skip: adds the server to your Claude Code configuration -->
+```sh
+claude mcp add --transport http hookwitness http://127.0.0.1:8080/admin/mcp
+```
+
+Для клієнта, що вміє лише stdio, запустіть міст. Це може бути бінарник
+або той, що всередині контейнера:
+
+<!-- docs-check: skip: adds the server to your Claude Code configuration -->
+```sh
+claude mcp add hookwitness -- hookwitness mcp -url http://127.0.0.1:8080
+claude mcp add hookwitness -- docker exec -i hookwitness /hookwitness mcp -url http://127.0.0.1:8080
+```
+
+Інші клієнти приймають те саме у своєму конфігураційному файлі:
+
+```json
+{
+  "mcpServers": {
+    "hookwitness": { "type": "http", "url": "http://127.0.0.1:8080/admin/mcp" }
+  }
+}
+```
+
+```json
+{
+  "mcpServers": {
+    "hookwitness": { "command": "hookwitness", "args": ["mcp", "-url", "http://127.0.0.1:8080"] }
+  }
+}
+```
+
+Перевірте, що сервер відповідає по MCP:
+
+```sh
+curl -s -X POST http://127.0.0.1:8080/admin/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}' \
+  | grep -o '"name":"hookwitness"'
+# "name":"hookwitness"
+```
+
+Інструменти побудовані під задачі. Кожен результат — рядок-підсумок, а за
+ним компактний JSON.
+
+| Інструмент | Що робить |
+|---|---|
+| `create_endpoint` | ендпоінт і його catch URL, адреса для відправника |
+| `list_endpoints`, `get_endpoint` | ендпоінти; один — з поведінкою і секретами (лише імена й відбитки) |
+| `configure_endpoint` | задає частини поведінки (`default`, `rules`, `checks`, `vars`, `schemas`); те, чого не передали, лишається |
+| `set_secret` | ключ підпису чи токен для перевірок; лише на запис, у відповідь — відбиток |
+| `wait_for_request` | чекає на наступний запит, що підходить (вердикт, статус, текст, значення в JSON), до 300 с, і повертає його повністю |
+| `list_requests`, `get_request` | запити з тими самими фільтрами; один повністю, тіло обрізане на 16 KiB із розміром |
+| `expect` | перевіряє, що N потрібних запитів прийдуть за певний час: pass або fail із тим, що прийшло, і причинами |
+| `reset_endpoint`, `recheck`, `delete_endpoint` | скинути лічильник чи очистити запити, перевірити знову, видалити |
+
+`delete_endpoint` і `reset_endpoint` позначені як деструктивні, а
+інструменти читання — як read-only, тож клієнт може спитати вас перед
+деструктивними. Сесія виглядає так:
+
+1. `create_endpoint` із `/github/events`, потім дайте його URL відправнику;
+2. `set_secret` `GH` як ключ і `configure_endpoint` з перевіркою
+   `{"kind": "github", "secret": "GH"}`;
+3. запустіть відправника, потім `expect` з `verdict: pass`: ви отримаєте
+   `pass` або `fail: … #2 fail GitHub signature: signature does not match`.
+
+Заголовки впійманого запиту — це доказ, тож токен чи пароль, що надіслав
+відправник, видно в `get_request`, як і в API. Значення секретів, які ви
+задаєте, не показуються ніколи.

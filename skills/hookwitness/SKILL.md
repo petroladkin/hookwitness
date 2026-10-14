@@ -12,6 +12,11 @@ set it up and read what arrived without a browser.
 
 Full reference: https://github.com/petroladkin/hookwitness/blob/dev/docs/api.md
 
+If your MCP client has the `hookwitness` server (`claude mcp add --transport
+http hookwitness http://localhost:8080/admin/mcp`), its tools do the same
+steps: `create_endpoint`, `set_secret`, `configure_endpoint`,
+`wait_for_request`, `expect`. The REST calls below work without it.
+
 ## 1. Start it
 
 ```sh

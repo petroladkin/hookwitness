@@ -34,6 +34,10 @@ the UI's access rules and no login of its own yet:
 Catch endpoints themselves (where senders deliver webhooks) answer to any
 host name: only the admin prefix is restricted.
 
+The same server answers MCP at `/admin/mcp` (Streamable HTTP), with the same
+access rules; its tools are built on these routes. See
+[MCP](agents.md#mcp).
+
 ## Conventions and errors
 
 - Bodies are JSON objects; unknown fields are refused (`400 unknown_field`).

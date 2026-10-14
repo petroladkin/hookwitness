@@ -24,8 +24,8 @@ docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
   and what was answered.
 
 Self-hosted: one binary or a container image. **Status: early development.**
-The catcher, scripted replies, verdicts, reports and the REST API work; an
-MCP server comes next.
+The catcher, scripted replies, verdicts, reports, the REST API and the MCP
+server work.
 
 ## A short tour
 
@@ -74,8 +74,10 @@ serve` (Go 1.27+). [Getting started](docs/getting-started.md) walks through it.
   schemas drafted from caught bodies; images in the payload decoded.
 - **[Reports](docs/reports.md)**: the evidence as Markdown, one HTML file or a
   PDF, with a summary and optional header masking.
-- **[REST API](docs/api.md)**: everything the UI does, plus long-poll waits;
-  an [agent skill](docs/agents.md) for testing senders with Claude Code.
+- **[REST API](docs/api.md)** and **[MCP server](docs/agents.md#mcp)**:
+  everything the UI does, plus long-poll waits and an `expect` assertion for
+  agents; an [agent skill](docs/agents.md) for testing senders with Claude
+  Code.
 
 ## How it compares
 
@@ -84,7 +86,7 @@ links to its source.
 
 | | Self-hosted | Signature and credential verdicts | Fault scenarios | Reports | MCP server |
 |---|---|---|---|---|---|
-| **Hookwitness** | [one binary or a container image](docs/deployment.md) | [GitHub, Stripe, Standard Webhooks, generic HMAC, bearer, Basic; JSON Schema](docs/authorization.md) | [status, delay, timeout, connection reset; every Nth, first N, random](docs/replies.md) | [Markdown, HTML, PDF](docs/reports.md) | [planned](docs/agents.md#mcp) |
+| **Hookwitness** | [one binary or a container image](docs/deployment.md) | [GitHub, Stripe, Standard Webhooks, generic HMAC, bearer, Basic; JSON Schema](docs/authorization.md) | [status, delay, timeout, connection reset; every Nth, first N, random](docs/replies.md) | [Markdown, HTML, PDF](docs/reports.md) | [built in: Streamable HTTP, and stdio through a bridge](docs/agents.md#mcp) |
 | **[webhook.site](https://webhook.site)** | [open-source edition with Docker Compose](https://docs.webhook.site/open-source.html) | [none built in; paid Custom Actions can compute an HMAC in a script](https://docs.webhook.site/webhookscript/functions/string.html) | [status; delay up to 30 s (10 s in the open-source edition)](https://docs.webhook.site/api/tokens.html) | [CSV export on paid plans; JSON API](https://docs.webhook.site/api/requests.html) | [user-contributed servers](https://docs.webhook.site/api/about.html#mcp-servers) |
 | **[webhook-tester](https://github.com/tarampampam/webhook-tester)** | [container image, binaries, Helm chart](https://github.com/tarampampam/webhook-tester#readme) | [not in its documentation](https://github.com/tarampampam/webhook-tester#readme) | [status, headers, body; delay up to 30 s](https://github.com/tarampampam/webhook-tester/blob/master/api/openapi.yml) | [JSON API](https://github.com/tarampampam/webhook-tester/blob/master/api/openapi.yml) | not in its documentation |
 | **[WireMock](https://wiremock.org)** | [container image, JAR, Java library](https://wiremock.org/docs/download-and-installation/) | [request matching on headers and Basic credentials picks a stub; no verdict](https://wiremock.org/docs/request-matching/#basic-authentication) | [status; fixed and random delays; connection reset, empty and malformed responses](https://wiremock.org/docs/simulating-faults/) | [JSON request journal](https://wiremock.org/docs/verifying/#getting-all-requests) | [WireMock Cloud only](https://docs.wiremock.io/ai-mcp/mcp-installation) |
