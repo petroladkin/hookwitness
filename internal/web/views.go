@@ -34,7 +34,8 @@ type registerView struct {
 	Selected int64
 	Keep     int // retention: the register never holds more
 	Verdicts verdictsView
-	Export   *exportView // the report dialog, when open
+	Export   *exportView      // the report dialog, when open
+	Draft    *draftDialogView // the schema draft dialog, when open
 }
 
 // rowView is one line of the register.

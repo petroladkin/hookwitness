@@ -46,11 +46,7 @@ func DraftSchema(cfg emulate.Config, path string, reqs []store.Request) (SchemaD
 			return SchemaDraft{}, fmt.Errorf("request %d: %s", r.No, msg)
 		}
 		bodies = append(bodies, r.Body)
-		er := emulate.Request{Method: r.Method, Path: r.Path, RawQuery: r.RawQuery, Body: r.Body}
-		for _, hd := range r.Headers {
-			er.Headers = append(er.Headers, emulate.Header{Name: hd.Name, Value: hd.Value})
-		}
-		ers = append(ers, er)
+		ers = append(ers, toEmulate(r))
 		d.Requests = append(d.Requests, r.ID)
 	}
 	text, err := schema.Draft(bodies)
@@ -92,4 +88,18 @@ func DraftRequests(ctx context.Context, st *store.Store, endpointID int64, ids [
 		reqs = append(reqs, r)
 	}
 	return reqs, "", nil
+}
+
+func toEmulate(r store.Request) emulate.Request {
+	er := emulate.Request{Method: r.Method, Path: r.Path, RawQuery: r.RawQuery, Body: r.Body}
+	for _, hd := range r.Headers {
+		er.Headers = append(er.Headers, emulate.Header{Name: hd.Name, Value: hd.Value})
+	}
+	return er
+}
+
+// DiscriminatorValue is the value a request carries for the endpoint's
+// first discriminator check; "" without one, or when it lacks the value.
+func DiscriminatorValue(cfg emulate.Config, r store.Request) string {
+	return cfg.DraftHint("", []emulate.Request{toEmulate(r)}).Value
 }

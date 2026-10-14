@@ -31,6 +31,7 @@ type behaviourView struct {
 	Tab     string // checks, rules, default or vars
 	Saved   string // the section the last edit saved ("rule-2", "counter", ...)
 	Error   string // the last edit was refused: why
+	NoDraft string // a schema draft was asked for and none could be made: why
 	Editor  *editor
 }
 
@@ -43,6 +44,7 @@ type editor struct {
 	Var    emulate.Var
 	Secret emulate.Secret // never with a value: secrets are write-only
 	Schema emulate.Schema
+	Draft  *draftView    // the schema was drafted from requests
 	Reply  emulate.Reply // the default reply
 }
 
@@ -154,7 +156,14 @@ func (h *Handler) behaviourPage(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	v := h.behaviourView(ep, cfg)
-	if q.Has("edit") {
+	if q.Get("edit") == "schema-draft" {
+		ed, why, err := h.openDraft(r.Context(), ep, cfg, q)
+		if err != nil {
+			h.fail(w, "schema draft", err)
+			return
+		}
+		v.Editor, v.NoDraft = ed, why
+	} else if q.Has("edit") {
 		v.Editor = openEditor(cfg, q.Get("edit"))
 		// "Add a check that uses it" from a secret: start from that secret.
 		if e := v.Editor; e != nil && e.Kind == "check" && e.I == "new" {
@@ -250,6 +259,12 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 			// Reopen the editor on what was typed (applied to the copy).
 			if ed = openEditor(cfg, section); ed != nil && ed.Kind != "default" {
 				ed.I = r.PostFormValue("i")
+			}
+			// A refused drafted schema keeps its offer to map the value.
+			if ed != nil && ed.Kind == "schema" && r.PostFormValue("draft_from") != "" {
+				n, _ := strconv.Atoi(r.PostFormValue("map_check"))
+				ed.Draft = &draftView{From: r.PostFormValue("draft_from"), MapCheck: n,
+					MapLabel: r.PostFormValue("map_label"), MapValue: r.PostFormValue("map_value")}
 			}
 			// A refused replacement shows the secret as it is still stored.
 			if ed != nil && ed.Kind == "secret" {
@@ -383,6 +398,11 @@ func applyEdit(cfg *emulate.Config, op string, r *http.Request, keys *secret.Key
 			return "schemas", nil
 		}
 		sc, err := formSchema(r)
+		if r.PostFormValue("map") == "on" && err == nil {
+			// A drafted schema mapped in the discriminator check it came from.
+			n, _ := strconv.Atoi(r.PostFormValue("map_check"))
+			cfg.MapValue(n, r.PostFormValue("map_value"), sc.Name)
+		}
 		if i == len(cfg.Schemas) {
 			cfg.Schemas = append(cfg.Schemas, sc)
 		} else {

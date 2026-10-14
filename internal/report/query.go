@@ -68,7 +68,7 @@ func ParseQuery(q url.Values) (Query, error) {
 		}
 		rq.Words = "received from " + from + " to " + to
 	case "picked":
-		nos, err := parseNumbers(q.Get("pick"))
+		nos, err := ParseNumbers(q.Get("pick"), MaxPicked, "; use a time range")
 		if err != nil {
 			return bad("pick", err.Error())
 		}
@@ -128,8 +128,9 @@ func parseTime(s string) (time.Time, error) {
 	return time.Time{}, errors.New("is not a date and time")
 }
 
-// parseNumbers reads "3, 5-9" into request numbers, in order, each once.
-func parseNumbers(s string) ([]int64, error) {
+// ParseNumbers reads "3, 5-9" into request numbers, in order, each once;
+// more than limit is an error ending with tooMany.
+func ParseNumbers(s string, limit int, tooMany string) ([]int64, error) {
 	var out []int64
 	seen := map[int64]bool{}
 	add := func(n int64) error {
@@ -137,8 +138,8 @@ func parseNumbers(s string) ([]int64, error) {
 			seen[n] = true
 			out = append(out, n)
 		}
-		if len(out) > MaxPicked {
-			return fmt.Errorf("at most %d requests can be picked; use a time range", MaxPicked)
+		if len(out) > limit {
+			return fmt.Errorf("at most %d requests can be picked%s", limit, tooMany)
 		}
 		return nil
 	}
@@ -155,8 +156,8 @@ func parseNumbers(s string) ([]int64, error) {
 		if err1 != nil || err2 != nil || lo < 1 || hi < lo {
 			return nil, fmt.Errorf("%q is not a request number or a range like 5-9", part)
 		}
-		if hi-lo >= MaxPicked {
-			return nil, fmt.Errorf("at most %d requests can be picked; use a time range", MaxPicked)
+		if hi-lo >= int64(limit) {
+			return nil, fmt.Errorf("at most %d requests can be picked%s", limit, tooMany)
 		}
 		for n := lo; n <= hi; n++ {
 			if err := add(n); err != nil {

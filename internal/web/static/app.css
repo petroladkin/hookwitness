@@ -348,3 +348,7 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 .viewer-stage img{width:100%;height:100%;object-fit:contain}
 .viewer.actual .viewer-stage{place-items:start}
 .viewer.actual .viewer-stage img{width:auto;height:auto}
+/* The schema draft dialog: by a discriminator value or by number. */
+.card:has(select[name=by] option[value=pick]:checked) .for-value,
+.card:has(select[name=by] option[value=value]:checked) .for-pick{display:none}
+.changes{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:2px;font-size:12px}

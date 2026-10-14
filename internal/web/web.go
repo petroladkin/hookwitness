@@ -357,12 +357,19 @@ func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Has("report") {
 		export = h.exportDefaults(reg, ep, ex, r.URL.Path)
 	}
-	h.showRegister(w, r, reg, ep, ex, export, http.StatusOK)
+	var draft *draftDialogView
+	if r.URL.Query().Has("draft") && reg != store.Unmatched {
+		if draft, err = h.draftDefaults(ctx, ep, ex, r.URL.Path); err != nil {
+			h.fail(w, "schema draft", err)
+			return
+		}
+	}
+	h.showRegister(w, r, reg, ep, ex, export, draft, http.StatusOK)
 }
 
 // showRegister renders a register page, with an exhibit and the report
 // dialog when given.
-func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64, ep store.Endpoint, ex *exhibitView, export *exportView, status int) {
+func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64, ep store.Endpoint, ex *exhibitView, export *exportView, draft *draftDialogView, status int) {
 	ctx := r.Context()
 	reqs, err := h.store.Requests(ctx, reg, 0, pageSize+1)
 	if err != nil {
@@ -402,6 +409,7 @@ func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64
 		Selected: selectedID(ex),
 		Keep:     h.keep,
 		Export:   export,
+		Draft:    draft,
 	}, ex))
 }
 

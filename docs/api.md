@@ -296,9 +296,23 @@ Writes, so send them as JSON (an empty object is enough):
 |---|---|
 | `POST /endpoints/{id}/reset-counter` | start the rules' count again ("every 3rd" counts from the next request). `200` with the endpoint |
 | `POST /endpoints/{id}/recheck` | verify the kept requests again with the current checks, secrets and schemas — after fixing a secret or a schema. Only verdicts change. `200 {"rechecked": N}` |
+| `POST /endpoints/{id}/schema-draft` `{"requests":[ids]}` | draft a JSON Schema (2020-12) from the bodies of up to 100 of the endpoint's requests; **nothing is stored**. `200` with `name` (suggested), `text`, `exists` and `changes` (how it differs from a stored schema of that name), `discriminator` (the check that picks by a value, the value the requests share, and what it maps to now). `422` (field `requests`) for a body not kept or not JSON, or a request of another endpoint |
 
 ```sh
 curl -s -X POST $API/endpoints/1/recheck -H 'Content-Type: application/json' -d '{}'
+```
+
+A draft holds the types seen, objects with their properties (required when
+every body has the key; other keys allowed), array items merged from all
+elements, `integer` when every number is whole, `null` in the type list, and
+a `format` (date-time, date, uuid, email, uri) only when every string there
+has it. It never guesses enums, patterns, ranges or lengths: review it, then
+save it with the behaviour (and map it, if a check picks by a value):
+
+```sh
+D=$(curl -s -X POST $API/endpoints/$ID/schema-draft -H 'Content-Type: application/json' -d '{"requests":[7,8]}')
+printf '%s\n' "$D" | jq -r .text > OrderShipped.json     # review and edit
+printf '%s\n' "$D" | jq '{name, exists, changes, discriminator}'
 ```
 
 ### Reports
