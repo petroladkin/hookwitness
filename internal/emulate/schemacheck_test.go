@@ -267,7 +267,10 @@ func TestSchemaAlternatives(t *testing.T) {
 				for _, p := range v.Problems {
 					paths = append(paths, p.Path)
 				}
-				if !slices.Equal(paths, w.Problems) {
+				// The validator's order of problems is not stable; compare as sets.
+				slices.Sort(paths)
+				want := slices.Sorted(slices.Values(w.Problems))
+				if !slices.Equal(paths, want) {
 					t.Fatalf("problems at %v, want %v", paths, w.Problems)
 				}
 			}
