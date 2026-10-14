@@ -219,7 +219,7 @@ func classify(r store.Request, o emulate.Outcome) string {
 	switch {
 	case o.Action == emulate.ActRefused:
 		return classRefused
-	case o.Action == emulate.ActTimeout:
+	case o.HeldUp():
 		return classTimeout
 	case o.Action == emulate.ActDrop:
 		return classDrop
@@ -354,7 +354,7 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 // markKind is how the strip draws a request, as in the UI.
 func markKind(r store.Request, o emulate.Outcome) string {
 	switch {
-	case o.Action == emulate.ActTimeout:
+	case o.HeldUp():
 		return "timeout"
 	case o.Action == emulate.ActDrop:
 		return "drop"
@@ -432,6 +432,7 @@ type Answer struct {
 	DelayMs  int64
 	WaitedMs int64
 	Error    string
+	Would    int // the sender left: the status the reply would have had
 }
 
 func (h *Head) item(r store.Request) Item {
@@ -459,6 +460,9 @@ func (h *Head) item(r store.Request) Item {
 	it.Body = viewBody(r, h.bodyLimit)
 	o := emulate.ParseOutcome(r.Outcome, r.Status)
 	it.Answer = Answer{Stamp: o.Stamp(), Why: o.Why(), DelayMs: o.DelayMs, WaitedMs: o.WaitedMs, Error: o.Error}
+	if o.Action == emulate.ActAbandoned {
+		it.Answer.Would = o.Would
+	}
 	if o.Action == emulate.ActReply && r.Status == 0 && !r.TooLarge {
 		it.Answer.Stamp = "nothing sent"
 	}
@@ -631,11 +635,16 @@ func answerLine(a Answer) string {
 	if a.Why != "" {
 		parts = append(parts, a.Why)
 	}
-	if a.DelayMs > 0 {
-		parts = append(parts, "after "+ms(a.DelayMs))
-	}
-	if a.WaitedMs > 0 {
-		parts = append(parts, "held "+ms(a.WaitedMs))
+	switch {
+	case a.Would > 0:
+		parts = append(parts, "left after "+ms(a.WaitedMs)+" of a "+ms(a.DelayMs)+" delay; nothing sent, would have been "+strconv.Itoa(a.Would))
+	default:
+		if a.DelayMs > 0 {
+			parts = append(parts, "after "+ms(a.DelayMs))
+		}
+		if a.WaitedMs > 0 {
+			parts = append(parts, "held "+ms(a.WaitedMs))
+		}
 	}
 	if a.Error != "" {
 		parts = append(parts, a.Error)

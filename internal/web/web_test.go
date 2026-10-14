@@ -501,3 +501,27 @@ func TestHostCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestSenderLeftShown(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/slow")
+	r := e.add(t, ep.ID, `{}`, func(r *store.Request) {
+		r.Status = 0
+		r.Outcome = `{"source":"default","action":"abandoned","status":0,"would_status":200,"delay_ms":15000,"waited_ms":10003}`
+	})
+	base := "/admin/e/" + id(ep.ID)
+	page := e.do("GET", base+"/r/"+id(r.ID), nil).Body.String()
+	for _, want := range []string{
+		`data-mark="timeout"`,
+		`>sender left</span>`,
+		"The sender left after 10.0 s, before the reply&#39;s 15.0 s delay ran out, so nothing was sent; it would have been 200",
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("page lacks %q", want)
+		}
+	}
+	md := e.do("GET", base+"/report?format=md&scope=all", nil).Body.String()
+	if !strings.Contains(md, "| 0 | 0 | 0 | 1 | 0 | 0 |") || !strings.Contains(md, "sender left · default reply · left after 10.0 s of a 15.0 s delay; nothing sent, would have been 200") {
+		t.Fatalf("report:\n%s", md)
+	}
+}

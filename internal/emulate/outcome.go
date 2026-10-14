@@ -18,8 +18,9 @@ const (
 
 // Outcome actions besides ActReply, ActTimeout and ActDrop.
 const (
-	ActRefused = "refused" // a check failed; the refusal reply was sent
-	ActError   = "error"   // the reply could not be rendered; 500 was sent
+	ActRefused   = "refused"   // a check failed; the refusal reply was sent
+	ActError     = "error"     // the reply could not be rendered; 500 was sent
+	ActAbandoned = "abandoned" // the sender left during the reply's delay; nothing was sent
 )
 
 // maxRecordedBody bounds the reply body kept with the request.
@@ -39,7 +40,8 @@ type Outcome struct {
 	DelayMs  int64    `json:"delay_ms,omitempty"`
 	WaitedMs int64    `json:"waited_ms,omitempty"` // a timeout: how long the sender waited
 	Error    string   `json:"error,omitempty"`
-	Counter  int64    `json:"counter,omitempty"` // the request's number since the reset
+	Would    int      `json:"would_status,omitempty"` // abandoned: the status the reply would have had
+	Counter  int64    `json:"counter,omitempty"`      // the request's number since the reset
 }
 
 // SetReply records the reply actually sent.
@@ -77,6 +79,8 @@ func (o Outcome) Stamp() string {
 		return "dropped"
 	case ActRefused:
 		return strconv.Itoa(o.Status) + " refused"
+	case ActAbandoned:
+		return "sender left"
 	}
 	return strconv.Itoa(o.Status) + " sent"
 }
@@ -111,6 +115,17 @@ func (o Outcome) StampWhy() string {
 	}
 	return w
 }
+
+// Abandon records that the sender left after waited, before the reply's
+// delay ran out: nothing was sent. The reply stays for reference.
+func (o *Outcome) Abandon(waited int64) {
+	o.Would, o.Status = o.Status, 0
+	o.Action, o.WaitedMs = ActAbandoned, waited
+}
+
+// HeldUp reports an answer the sender never got: a timeout hold, or a
+// reply it did not wait for. The strip and reports count both as timeouts.
+func (o Outcome) HeldUp() bool { return o.Action == ActTimeout || o.Action == ActAbandoned }
 
 // Good reports a 2xx answer; the strip marks the rest.
 func (o Outcome) Good() bool {

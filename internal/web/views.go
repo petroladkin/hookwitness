@@ -149,7 +149,7 @@ func tryCommand(host, path string) string {
 // status, a refusal, a render error, a refused body), "timeout" or "drop".
 func (r rowView) mark() string {
 	switch {
-	case r.Outcome.Action == emulate.ActTimeout:
+	case r.Outcome.HeldUp():
 		return "timeout"
 	case r.Outcome.Action == emulate.ActDrop:
 		return "drop"
@@ -166,6 +166,8 @@ func (r rowView) tag() string {
 	switch {
 	case o.Action == emulate.ActTimeout:
 		return "timeout"
+	case o.Action == emulate.ActAbandoned:
+		return "sender left"
 	case o.Action == emulate.ActDrop:
 		return "dropped"
 	case o.Action == emulate.ActRefused:

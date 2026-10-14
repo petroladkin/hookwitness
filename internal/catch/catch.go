@@ -237,7 +237,15 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 	}
 	pl.out.SetReply(rendered)
 	if d := pl.reply.Delay(h.maxWait()); d > 0 && err == nil {
-		pl.out.DelayMs = h.wait(r, d).Milliseconds()
+		waited := h.wait(r, d)
+		pl.out.DelayMs = waited.Milliseconds()
+		if r.Context().Err() != nil {
+			// The sender gave up before the delay ran out: it never got
+			// this reply, so it is not recorded as one.
+			pl.out.DelayMs = d.Milliseconds()
+			pl.out.Abandon(waited.Milliseconds())
+			return true
+		}
 	}
 	hd := w.Header()
 	hd["Content-Type"] = nil // no sniffing: only the configured headers

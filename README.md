@@ -114,7 +114,10 @@ part (checks, rules, default reply, variables, secrets):
 
 Requests refused by a check do not count towards the rules. Every request
 records what was done with it: the rule or the default, the status and headers
-sent, the measured delay, how long a timed-out sender waited.
+sent, the measured delay, how long a timed-out sender waited. A sender that
+gives up during a reply's delay never got that reply: it is recorded as
+**sender left** (nothing sent, the status it would have had kept for
+reference) and counted as a timeout, not as a success.
 
 Header values and bodies are Go templates over the request:
 `{{.Header "X-Request-Id"}}`, `{{.Query "name"}}`, `{{.JSON "event.items.0.id"}}`

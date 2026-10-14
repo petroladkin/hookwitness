@@ -332,3 +332,54 @@ func TestWaitRecordsTheHoldBeforeShutdown(t *testing.T) {
 		t.Fatalf("after Wait: %+v, want the hold's wait recorded", o)
 	}
 }
+
+// TestSenderLeftDuringDelay: a reply the sender gave up on before its delay
+// ran out was never delivered, so it is not recorded as one.
+func TestSenderLeftDuringDelay(t *testing.T) {
+	h, st, _ := setup(t, 1<<20)
+	url := serve(t, h)
+	ep := configure(t, st, "/slow", emulate.Config{Default: emulate.Reply{Status: 200, DelayMs: 800}})
+	impatient := &http.Client{Timeout: 200 * time.Millisecond}
+	if _, _, err := do(t, impatient, "POST", url+"/slow", "x"); err == nil {
+		t.Fatal("the sender got an answer before its timeout")
+	}
+	var r store.Request
+	var o emulate.Outcome
+	for range 50 { // the handler records it once it notices the sender left
+		if r, o = lastOutcome(t, st, ep); o.Action == emulate.ActAbandoned {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if o.Action != emulate.ActAbandoned || r.Status != 0 || o.Status != 0 || o.Would != 200 || o.DelayMs != 800 ||
+		o.WaitedMs < 100 || o.WaitedMs >= 800 {
+		t.Fatalf("status %d, outcome %+v", r.Status, o)
+	}
+	if o.Good() || !o.HeldUp() || o.Stamp() != "sender left" {
+		t.Fatalf("classified %v %v %q", o.Good(), o.HeldUp(), o.Stamp())
+	}
+
+	// A delayed refusal the sender does not wait for is the same.
+	refuse := configure(t, st, "/strict", emulate.Config{Default: emulate.Reply{Status: 200},
+		Checks: []emulate.Check{{Kind: emulate.KindHeader, Header: "X-Key", Match: emulate.MatchPresent,
+			Error: &emulate.Reply{Status: 403, DelayMs: 800}}}})
+	do(t, impatient, "POST", url+"/strict", "x")
+	for range 50 {
+		if _, o = lastOutcome(t, st, refuse); o.Action == emulate.ActAbandoned {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if o.Action != emulate.ActAbandoned || o.Would != 403 || o.Source != emulate.FromCheck {
+		t.Fatalf("refusal: %+v", o)
+	}
+
+	// A sender that waits the delay out gets its reply, recorded as one.
+	patient := configure(t, st, "/patient", emulate.Config{Default: emulate.Reply{Status: 201, DelayMs: 100}})
+	if resp, _, err := do(t, http.DefaultClient, "POST", url+"/patient", "x"); err != nil || resp.StatusCode != 201 {
+		t.Fatalf("patient: %v %v", resp, err)
+	}
+	if r, o := lastOutcome(t, st, patient); o.Action != emulate.ActReply || r.Status != 201 || o.Would != 0 {
+		t.Fatalf("patient: %d %+v", r.Status, o)
+	}
+}

@@ -243,9 +243,13 @@ One request adds:
   the body was not kept.
 - `outcome` says what was done: `source` (`default`, `rule` with `rule` and
   `label`, `check` with the refusing `check`, `limit`), `action` (`reply`,
-  `timeout`, `drop`, `refused`, `error`), the reply sent (`status`, `headers`
-  as `{name, value}`, the first 64 KiB of `body`), `delay_ms`, `waited_ms`
-  for a timeout, `counter`.
+  `timeout`, `drop`, `refused`, `error`, `abandoned`), the reply sent
+  (`status`, `headers` as `{name, value}`, the first 64 KiB of `body`),
+  `delay_ms`, `waited_ms` for a timeout, `counter`. `abandoned`: the sender
+  gave up during the reply's delay, so nothing was sent — `status` is `0`,
+  `waited_ms` how long the sender stayed, `delay_ms` the delay it did not
+  wait out, `would_status` the reply it would have got; reports count it as
+  a timeout.
 - `verdicts` has one entry per authorization or schema check: `check` (its
   1-based position), `label`, `result`, `reason`, `at`; a failed schema check
   adds `problems` (up to 20 of `{path, keyword, message}`, `path` a JSON
