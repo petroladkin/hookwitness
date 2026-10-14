@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -97,6 +98,29 @@ func TestSchemaEditing(t *testing.T) {
 	}
 	if rec := e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"schema"}, "select_from": {"body"}, "select_key": {"/t"}, "select_map": {"no equals sign"}}); rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("bad mapping line: %d", rec.Code)
+	}
+
+	// Several schemas (any of), and a discriminator's default.
+	if rec := e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"schema"}, "schema": {"OrderPaid", "Address"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("any of: %d %s", rec.Code, errorOf(rec.Body.String()))
+	}
+	if rec := e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"0"}, "kind": {"schema"}, "select_from": {"body"}, "select_key": {"/type"},
+		"select_map": {"order.paid = OrderPaid\n"}, "select_default": {"Address", "OrderPaid"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("default: %d %s", rec.Code, errorOf(rec.Body.String()))
+	}
+	cs := e.config(t, ep.ID).Checks
+	if !slices.Equal(cs[1].Schemas, []string{"OrderPaid", "Address"}) || cs[1].Schema != "" || !slices.Equal(cs[0].Select.Default, []string{"Address", "OrderPaid"}) {
+		t.Fatalf("checks %+v", cs)
+	}
+	checks = e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=checks", nil).Body.String()
+	for _, want := range []string{"JSON Schema OrderPaid or Address</b>", "other values → Address or OrderPaid"} {
+		if !strings.Contains(checks, want) {
+			t.Errorf("summary lacks %q", want)
+		}
+	}
+	form := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=checks&edit=check-1", nil).Body.String()
+	if strings.Count(form, `name="schema" value="OrderPaid" checked`)+strings.Count(form, `name="schema" value="Address" checked`) != 2 {
+		t.Errorf("the editor does not tick both schemas")
 	}
 }
 

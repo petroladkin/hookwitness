@@ -21,8 +21,8 @@ reply, template variables; every request records its outcome. Authorization
 checks (GitHub, Stripe, Standard Webhooks/Svix, generic HMAC, bearer, basic)
 give each request pass / fail / n/v verdicts, optionally enforced, with
 re-check; their secrets are write-only (signing keys sealed, tokens hashed).
-JSON Schema checks validate bodies against the endpoint's schemas (one, or
-picked by a body pointer or header; verdicts pass / fail with problems / n/v /
+JSON Schema checks validate bodies against the endpoint's schemas (one, any of
+several, or picked by a body pointer or header with an optional default; verdicts pass / fail with problems / n/v /
 n/c; offending paths marked in the body view); images in payloads declared
 with contentMediaType image/* are decoded and checked, recorded in the
 verdict, previewed under the body with a viewer, served by the API and shown

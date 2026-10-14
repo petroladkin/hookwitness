@@ -1,6 +1,10 @@
 package emulate
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -145,6 +149,12 @@ func TestSchemaCheckValidation(t *testing.T) {
 		{schemaConfig(Check{Kind: KindSchema, Select: &Select{From: FromBody, Key: "/t"}}), "at least one value"},
 		{schemaConfig(Check{Kind: KindSchema, Select: &Select{From: FromBody, Key: "/t", Map: []Mapping{{"a", "OrderPaid"}, {"a", "OrderPaid"}}}}), "mapped twice"},
 		{schemaConfig(Check{Kind: KindSchema, Select: &Select{From: FromBody, Key: "/t", Map: []Mapping{{"a", "Ghost"}}}}), `no schema named "Ghost"`},
+		{schemaConfig(Check{Kind: KindSchema, Schema: "OrderPaid", Schemas: []string{"OrderRefunded"}}), "not both"},
+		{schemaConfig(Check{Kind: KindSchema, Schemas: []string{"OrderPaid", "OrderPaid"}}), "names OrderPaid twice"},
+		{schemaConfig(Check{Kind: KindSchema, Schemas: []string{"OrderPaid", "Ghost"}}), `no schema named "Ghost"`},
+		{schemaConfig(Check{Kind: KindSchema, Schemas: []string{"OrderPaid"}, Select: byType()}), "come from its mapping"},
+		{schemaConfig(Check{Kind: KindSchema, Select: &Select{From: FromBody, Key: "/t", Map: byType().Map, Default: Names{"Ghost"}}}), `no schema named "Ghost"`},
+		{schemaConfig(Check{Kind: KindSchema, Select: &Select{From: FromBody, Key: "/t", Map: byType().Map, Default: Names{"OrderPaid", "OrderPaid"}}}), "the default names OrderPaid twice"},
 		// A broken schema is refused at save even before a check uses it.
 		{Config{Default: Reply{Status: 200}, Schemas: []Schema{{Name: "Remote", Text: `{"$ref":"https://example.com/s.json"}`}}}, "never fetched"},
 	} {
@@ -155,6 +165,34 @@ func TestSchemaCheckValidation(t *testing.T) {
 	}
 	if err := schemaConfig(Check{Kind: KindSchema, Select: byType(), Enforce: true}).Validate(time.Minute); err != nil {
 		t.Fatalf("valid: %v", err)
+	}
+	cfg := schemaConfig(Check{Kind: KindSchema, Schemas: []string{"OrderPaid", "OrderRefunded"}})
+	if err := cfg.Validate(time.Minute); err != nil || cfg.Checks[0].Label() != "JSON Schema OrderPaid or OrderRefunded" {
+		t.Fatalf("any of: %v %q", err, cfg.Checks[0].Label())
+	}
+	if u := cfg.SchemaUsers("OrderRefunded"); len(u) != 1 {
+		t.Fatalf("users of an alternative: %v", u)
+	}
+	sel := byType()
+	sel.Map, sel.Default = sel.Map[:1], Names{"OrderRefunded"}
+	if u := schemaConfig(Check{Kind: KindSchema, Select: sel}).SchemaUsers("OrderRefunded"); len(u) != 1 {
+		t.Fatalf("users of a default: %v", u)
+	}
+}
+
+func TestNamesJSON(t *testing.T) {
+	for in, want := range map[string]string{`"V1"`: `"V1"`, `["V1"]`: `"V1"`, `["V1","V2"]`: `["V1","V2"]`} {
+		var n Names
+		if err := json.Unmarshal([]byte(in), &n); err != nil {
+			t.Fatal(err)
+		}
+		if b, _ := json.Marshal(n); string(b) != want {
+			t.Errorf("%s: %s, want %s", in, b, want)
+		}
+	}
+	var n Names
+	if err := json.Unmarshal([]byte(`5`), &n); err == nil {
+		t.Fatal("a number is not a schema name")
 	}
 }
 
@@ -175,5 +213,67 @@ func TestSchemaCheckImages(t *testing.T) {
 	v, _ = verifyOne(t, cfg, `{"photo":"aGVsbG8="}`, true)
 	if v.Result != auth.Fail || len(v.Images) != 1 || v.Images[0].Error == "" || v.Problems[0].Path != "/photo" {
 		t.Fatalf("text as an image: %+v", v)
+	}
+}
+
+// TestSchemaAlternatives runs testdata/schema/alternatives.json: any of
+// several schemas, and a discriminator's default.
+func TestSchemaAlternatives(t *testing.T) {
+	b, err := os.ReadFile("../../testdata/schema/alternatives.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Schemas []Schema
+		Cases   []struct {
+			Name    string
+			Check   json.RawMessage
+			Body    string
+			Headers [][2]string
+			Want    struct {
+				Result       auth.Result
+				Reason       string
+				ReasonPrefix string `json:"reason_prefix"`
+				Problems     []string
+			}
+		}
+	}
+	if err := json.Unmarshal(b, &file); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range file.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			var ch Check
+			dec := json.NewDecoder(bytes.NewReader(tc.Check))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&ch); err != nil {
+				t.Fatal(err)
+			}
+			cfg := Config{Default: Reply{Status: 200}, Schemas: file.Schemas, Checks: []Check{ch}}
+			if err := cfg.Validate(time.Minute); err != nil {
+				t.Fatalf("the check is refused: %v", err)
+			}
+			var hs []Header
+			for _, h := range tc.Headers {
+				hs = append(hs, Header{Name: h[0], Value: h[1]})
+			}
+			v, _ := verifyOne(t, cfg, tc.Body, true, hs...)
+			w := tc.Want
+			if v.Result != w.Result || (w.Reason != "" && v.Reason != w.Reason) || !strings.HasPrefix(v.Reason, w.ReasonPrefix) {
+				t.Fatalf("%s %q, want %s %q%q", v.Result, v.Reason, w.Result, w.Reason, w.ReasonPrefix)
+			}
+			if w.Problems != nil {
+				var paths []string
+				for _, p := range v.Problems {
+					paths = append(paths, p.Path)
+				}
+				// The validator's order of problems is not stable; compare as sets.
+				slices.Sort(paths)
+				want := slices.Sorted(slices.Values(w.Problems))
+				if !slices.Equal(paths, want) {
+					t.Fatalf("problems at %v, want %v", paths, w.Problems)
+				}
+			}
+		})
 	}
 }

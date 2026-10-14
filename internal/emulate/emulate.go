@@ -89,8 +89,9 @@ type Check struct {
 	ToleranceS      int64  `json:"tolerance_s,omitempty"`      // KindStripe, KindStandard; 0 = auth.DefaultTolerance
 	IgnoreTimestamp bool   `json:"ignore_timestamp,omitempty"` // KindStripe, KindStandard
 
-	Schema string  `json:"schema,omitempty"` // KindSchema: the schema's name, when there is no Select
-	Select *Select `json:"select,omitempty"` // KindSchema: pick the schema by a value of the request
+	Schema  string   `json:"schema,omitempty"`  // KindSchema: the schema's name, when there is no Select
+	Schemas []string `json:"schemas,omitempty"` // KindSchema: instead of Schema, several: the body must match one of them
+	Select  *Select  `json:"select,omitempty"`  // KindSchema: pick the schema by a value of the request
 }
 
 // Var is an endpoint variable: a test value in plain text, never a secret.

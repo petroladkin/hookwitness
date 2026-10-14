@@ -1265,6 +1265,21 @@
             "items": {
               "$ref": "#/components/schemas/Mapping"
             }
+          },
+          "default": {
+            "description": "For a value with no mapping, or none in the request: one schema, or several (any of). Without it such requests are not checked (n/c).",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              }
+            ]
           }
         },
         "required": [
@@ -1352,6 +1367,14 @@
           "schema": {
             "type": "string",
             "description": "schema: one schema by name."
+          },
+          "schemas": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "description": "schema: instead of schema, several by name; the body must match one of them. The verdict names the one it matched, or, when none did, the closest one with its problems and how many the others had."
           },
           "select": {
             "$ref": "#/components/schemas/Select"
