@@ -62,7 +62,8 @@ the same pull request.
   and that every image is used.
 - Screenshots in `docs/images/` come from `make media` (Node 22+ and Chrome):
   a seeded instance shot at 1280 px in the light theme. Regenerate them when
-  the UI visibly changes, and commit only the ones that changed.
+  the UI visibly changes; the times on the pages differ on every run, so
+  commit the images whose content changed, not every file git reports.
 
 ## Reporting a problem
 

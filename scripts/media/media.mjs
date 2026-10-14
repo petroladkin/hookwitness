@@ -47,7 +47,9 @@ const port = await new Promise((ok) => {
   const s = createServer().once("error", () => ok(freePort())).listen(8080, "127.0.0.1", () => s.close(() => ok(8080)));
 });
 children.push(spawn(resolve(bin), ["serve", "-addr", `127.0.0.1:${port}`, "-db", join(work, "hw.db"),
-  "-admin-hosts", "localhost"], { stdio: "ignore" }));
+  "-admin-hosts", "localhost"], { stdio: "ignore",
+  // A fixed test key: secrets' fingerprints in the shots stay the same.
+  env: { ...process.env, HOOKWITNESS_SECRET_KEY: "bWVkaWEtc2NyaXB0LXRlc3Qta2V5LTMyLWJ5dGVzISE=" } }));
 const HW = `http://127.0.0.1:${port}`;
 const API = `${HW}/admin/api/v1`;
 for (let i = 0; ; i++) {
