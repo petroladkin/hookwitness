@@ -1782,7 +1782,7 @@
               "object",
               "null"
             ],
-            "description": "What was done: source, action, the reply sent, delay_ms, waited_ms, counter."
+            "description": "What was done: source, action (reply, timeout, drop, refused, error, abandoned — the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent, delay_ms, waited_ms, counter."
           },
           "verdicts": {
             "type": "array",

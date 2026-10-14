@@ -959,6 +959,12 @@ func answerText(o emulate.Outcome) string {
 			s += " for " + duration(o.WaitedMs)
 		}
 		s += ", then closed"
+	case emulate.ActAbandoned:
+		s = "The sender left after " + duration(o.WaitedMs) + ", before the reply"
+		if o.DelayMs > 0 {
+			s += "'s " + duration(o.DelayMs) + " delay ran out"
+		}
+		s += ", so nothing was sent; it would have been " + strconv.Itoa(o.Would)
 	case emulate.ActDrop:
 		s = "Connection reset without an answer, as a crashed receiver would"
 	case emulate.ActError:
