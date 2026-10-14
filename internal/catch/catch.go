@@ -37,6 +37,10 @@ type Handler struct {
 	// Keys opens signing keys and matches tokens of authorization checks.
 	Keys emulate.Keyring
 
+	// after starts a wait's timer; tests replace it to see the durations
+	// asked for without waiting. Nil means a real timer.
+	after func(time.Duration) <-chan time.Time
+
 	stopOnce sync.Once
 	stop     chan struct{}
 	initOnce sync.Once
@@ -265,10 +269,16 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 // returns how long it actually waited.
 func (h *Handler) wait(r *http.Request, d time.Duration) time.Duration {
 	start := time.Now()
-	t := time.NewTimer(d)
-	defer t.Stop()
+	var fired <-chan time.Time
+	if h.after != nil {
+		fired = h.after(d)
+	} else {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		fired = t.C
+	}
 	select {
-	case <-t.C:
+	case <-fired:
 	case <-r.Context().Done():
 	case <-h.stopping():
 	}
