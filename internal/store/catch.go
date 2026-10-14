@@ -559,16 +559,22 @@ func (s *Store) RequestsAfter(ctx context.Context, endpointID, afterID int64) ([
 
 // ListQuery is a page of a register's requests: newest first older than
 // Before (0: from the newest), or with HasAfter the ones above After, oldest
-// first; at most Limit; only those with the Verdict and Status when set.
+// first; at most Limit; only those with the Verdict and Status when set,
+// whose body contains Contains, and that Match accepts.
 type ListQuery struct {
 	Before, After int64
 	HasAfter      bool
 	Limit         int
 	Verdict       string // pass, fail, n/v, n/c; "" for any
 	Status        int    // 0 for any; -1 for "nothing sent" (status 0)
+	Contains      []byte // a byte substring of the kept body; nil for any
+	// Match, when set, is asked about each kept body that passed the other
+	// filters; requests without a kept body never match.
+	Match    func(body []byte) bool
+	WithBody bool // fill Body (always read when Match is set)
 }
 
-// List lists a register's requests per q, without bodies.
+// List lists a register's requests per q; bodies only with q.WithBody.
 func (s *Store) List(ctx context.Context, endpointID int64, q ListQuery) ([]Request, error) {
 	where := "endpoint_id IS ?"
 	args := []any{register(endpointID)}
@@ -592,11 +598,42 @@ func (s *Store) List(ctx context.Context, endpointID int64, q ListQuery) ([]Requ
 	case q.Status < 0: // nothing was sent
 		where += " AND status = 0"
 	}
-	query := `SELECT ` + requestColumns + ` FROM requests WHERE ` + where + ` ORDER BY ` + order
-	if q.Limit > 0 {
+	if q.Contains != nil {
+		where += " AND instr(body, ?) > 0" // both blobs: a byte search
+		args = append(args, q.Contains)
+	}
+	if q.Match != nil {
+		where += " AND NOT too_large"
+	}
+	withBody := q.WithBody || q.Match != nil
+	cols := requestColumns
+	if withBody {
+		cols += ", body"
+	}
+	query := `SELECT ` + cols + ` FROM requests WHERE ` + where + ` ORDER BY ` + order
+	if q.Limit > 0 && q.Match == nil { // with Match the rows are counted as they pass
 		query += ` LIMIT ` + strconv.Itoa(q.Limit)
 	}
-	return s.listRequests(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list requests: %w", err)
+	}
+	defer rows.Close()
+	var out []Request
+	for rows.Next() && (q.Limit <= 0 || len(out) < q.Limit) {
+		r, err := scanRequest(rows, withBody)
+		if err != nil {
+			return nil, err
+		}
+		if q.Match != nil && !q.Match(r.Body) {
+			continue
+		}
+		if !q.WithBody {
+			r.Body = nil
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // Request returns one request with its body.

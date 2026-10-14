@@ -717,7 +717,7 @@
       "get": {
         "operationId": "listRequests",
         "summary": "List an endpoint's requests",
-        "description": "Newest first; with after, the newer ones oldest first, waiting up to wait for the first.",
+        "description": "Newest first; with after, the newer ones oldest first, waiting up to wait for the first. The filters (verdict, status, q, json) apply either way; include=body adds the bodies.",
         "parameters": [
           {
             "$ref": "#/components/parameters/after"
@@ -736,11 +736,20 @@
           },
           {
             "$ref": "#/components/parameters/status"
+          },
+          {
+            "$ref": "#/components/parameters/q"
+          },
+          {
+            "$ref": "#/components/parameters/json"
+          },
+          {
+            "$ref": "#/components/parameters/include"
           }
         ],
         "responses": {
           "200": {
-            "description": "The requests, without bodies.",
+            "description": "The requests; bodies only with include=body.",
             "content": {
               "application/json": {
                 "schema": {
@@ -910,7 +919,7 @@
       "get": {
         "operationId": "listUnmatched",
         "summary": "List the Unmatched register",
-        "description": "Requests to paths no endpoint has; read-only.",
+        "description": "Requests to paths no endpoint has; read-only. The same parameters as an endpoint's list.",
         "parameters": [
           {
             "$ref": "#/components/parameters/after"
@@ -929,11 +938,20 @@
           },
           {
             "$ref": "#/components/parameters/status"
+          },
+          {
+            "$ref": "#/components/parameters/q"
+          },
+          {
+            "$ref": "#/components/parameters/json"
+          },
+          {
+            "$ref": "#/components/parameters/include"
           }
         ],
         "responses": {
           "200": {
-            "description": "The requests, without bodies.",
+            "description": "The requests; bodies only with include=body.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1096,13 +1114,11 @@
             "description": "Requests that passed its checks since the counter was reset; the rules count these."
           },
           "created_at": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "last_request_at": {
-            "type": "string",
-            "description": "The newest kept request; absent when none.",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "The newest kept request; absent when none."
           }
         },
         "required": [
@@ -1491,8 +1507,7 @@
             "description": "Its number in the register."
           },
           "received_at": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "method": {
             "type": "string"
@@ -1527,6 +1542,14 @@
           },
           "content_type": {
             "type": "string"
+          },
+          "body_text": {
+            "type": "string",
+            "description": "With include=body: the body when it is UTF-8 text. Absent when the body was not kept."
+          },
+          "body_base64": {
+            "type": "string",
+            "description": "With include=body: the body in base64 when it is not UTF-8."
           }
         },
         "required": [
@@ -1656,8 +1679,7 @@
             }
           },
           "at": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           }
         },
         "required": [
@@ -1714,8 +1736,7 @@
             "description": "Its number in the register."
           },
           "received_at": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "method": {
             "type": "string"
@@ -1830,6 +1851,15 @@
           "rechecked"
         ],
         "additionalProperties": false
+      },
+      "Timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "RFC 3339 in UTC with exactly three fraction digits, so that times sort and slice as text.",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+        "examples": [
+          "2026-10-13T18:48:01.380Z"
+        ]
       }
     },
     "parameters": {
@@ -1877,7 +1907,8 @@
           "minimum": 1,
           "maximum": 500,
           "default": 50
-        }
+        },
+        "description": "At most 500, or 100 with include=body; a larger one is capped."
       },
       "wait": {
         "name": "wait",
@@ -1999,6 +2030,47 @@
           "type": "string"
         },
         "description": "A JSON pointer to the image in the body; empty for a body that is an image."
+      },
+      "q": {
+        "name": "q",
+        "in": "query",
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": "Only requests whose kept body contains this text: a byte substring, case-sensitive."
+      },
+      "json": {
+        "name": "json",
+        "in": "query",
+        "style": "form",
+        "explode": true,
+        "schema": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^/[^=]*="
+          }
+        },
+        "description": "<JSON pointer>=<value>, repeatable, all must match: only requests whose JSON body has at the pointer a string equal to the value, or a number, true, false or null written exactly as the value. The pointer ends at the first =.",
+        "examples": {
+          "task": {
+            "value": [
+              "/taskId=42"
+            ]
+          }
+        }
+      },
+      "include": {
+        "name": "include",
+        "in": "query",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "body"
+          ]
+        },
+        "description": "body: each request carries body_text or body_base64, as one request does; limit is then at most 100."
       }
     }
   }

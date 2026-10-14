@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -13,13 +12,13 @@ import (
 
 // endpointJSON is an endpoint as the API shows it.
 type endpointJSON struct {
-	ID       int64      `json:"id"`
-	Path     string     `json:"path"`
-	URL      string     `json:"url"` // where senders deliver, as reached by this API call
-	Requests int        `json:"requests"`
-	Counter  int64      `json:"counter"` // requests that passed its checks since the last reset
-	Created  time.Time  `json:"created_at"`
-	Last     *time.Time `json:"last_request_at,omitempty"`
+	ID       int64  `json:"id"`
+	Path     string `json:"path"`
+	URL      string `json:"url"` // where senders deliver, as reached by this API call
+	Requests int    `json:"requests"`
+	Counter  int64  `json:"counter"` // requests that passed its checks since the last reset
+	Created  stamp  `json:"created_at"`
+	Last     *stamp `json:"last_request_at,omitempty"`
 }
 
 func endpointView(r *http.Request, ep store.Endpoint) endpointJSON {
@@ -28,9 +27,10 @@ func endpointView(r *http.Request, ep store.Endpoint) endpointJSON {
 		scheme = "https"
 	}
 	v := endpointJSON{ID: ep.ID, Path: ep.Path, URL: scheme + "://" + r.Host + ep.Path,
-		Requests: ep.Count, Counter: ep.Counter, Created: ep.CreatedAt}
+		Requests: ep.Count, Counter: ep.Counter, Created: stamp(ep.CreatedAt)}
 	if !ep.LastAt.IsZero() {
-		v.Last = &ep.LastAt
+		last := stamp(ep.LastAt)
+		v.Last = &last
 	}
 	return v
 }

@@ -103,6 +103,22 @@ the time is up). With `after` the list is **oldest first**, and none is
 returned twice if you always pass the last id you saw; without `after` it is
 newest first (`limit`, `before=<id>` to page back).
 
+On a busy endpoint, pick the one you want instead of fetching each request:
+`json=/taskId=42` keeps JSON bodies with that value at the pointer (string, or
+number/true/false/null as written; repeat for AND), `q=<text>` keeps bodies
+containing the text (bytes, case-sensitive), and `include=body` puts
+`body_text`/`body_base64` into the list (limit then at most 100). The wait ends
+at the first match. Take the cursor before triggering, one per thing you wait
+for: a filtered answer's id skips the non-matching requests in between.
+
+```sh
+LAST=$(curl -s "$API/endpoints/$ID/requests?limit=1" | jq '.requests[0].id // 0')
+# ... start task 42 ...
+R=$(curl -s "$API/endpoints/$ID/requests?after=$LAST&wait=30s&json=/taskId=42&include=body" | jq '.requests[0]')
+```
+
+Times in answers always have three fraction digits (`…T18:48:01.380Z`).
+
 ## 5. Assert
 
 ```sh

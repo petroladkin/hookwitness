@@ -65,7 +65,7 @@ func TestListRequests(t *testing.T) {
 	}
 	s := e.list(t, "?limit=1").Requests[0]
 	if s.EndpointID == nil || *s.EndpointID != ep.ID || s.No != 5 || s.Method != "POST" || s.ContentType != "application/json" ||
-		s.BodySize != 7 || !s.BodyKept || s.Status != 200 || s.ReceivedAt.IsZero() {
+		s.BodySize != 7 || !s.BodyKept || s.Status != 200 || time.Time(s.ReceivedAt).IsZero() {
 		t.Fatalf("summary %+v", s)
 	}
 
@@ -86,7 +86,7 @@ func TestGetRequest(t *testing.T) {
 		r.Headers = []store.Header{{Name: "content-type", Value: "application/json"}, {Name: "X-Dup", Value: "1"},
 			{Name: "Authorization", Value: "Basic c2VuZGVyOnB3"}, {Name: "x-dup", Value: "2"}}
 		r.Verdict = "pass"
-		r.Verdicts = `[{"check":1,"label":"Basic credentials","result":"pass"}]`
+		r.Verdicts = `[{"check":1,"label":"Basic credentials","result":"pass","reason":"user and password match","at":"2026-10-13T18:48:01.38Z"}]`
 		r.Outcome = `{"action":"reply","status":200}`
 	})
 	rec := e.do("GET", fmt.Sprintf("/requests/%d", r.ID), "")
@@ -100,7 +100,7 @@ func TestGetRequest(t *testing.T) {
 	if got["body_text"] != `{"event":"push"}` || got["body_base64"] != nil || got["query"] != "a=1&a=2" || got["verdict"] != "pass" {
 		t.Fatalf("request %v", got)
 	}
-	if fmt.Sprint(got["verdicts"]) != "[map[check:1 label:Basic credentials result:pass]]" || fmt.Sprint(got["outcome"]) != "map[action:reply status:200]" {
+	if fmt.Sprint(got["verdicts"]) != "[map[at:2026-10-13T18:48:01.380Z check:1 label:Basic credentials reason:user and password match result:pass]]" || fmt.Sprint(got["outcome"]) != "map[action:reply status:200]" {
 		t.Fatalf("verdicts %v, outcome %v", got["verdicts"], got["outcome"])
 	}
 

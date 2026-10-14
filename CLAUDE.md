@@ -35,9 +35,11 @@ picked by number) download from the UI as Markdown, self-contained HTML or a
 native PDF, with a summary (answers by class, verdicts per check, retry
 groups, the strip of the range) and optional header masking. The REST API
 covers the UI: endpoints (create, change path, delete), behaviour, secrets,
-requests with filters and long-poll, the Unmatched register, the raw body,
+requests with filters (verdict, status, text in the body, a value at a
+JSON pointer), bodies in lists and long-poll, the Unmatched register, the raw body,
 images, clear, reset counter, re-check, reports, and its OpenAPI 3.1
-description (`internal/api/openapi.json`, checked by tests). No MCP yet. `hookwitness
+description (`internal/api/openapi.json`, checked by tests); every time
+in an answer has exactly three fraction digits. No MCP yet. `hookwitness
 version` prints the build identity; `hookwitness health` probes `/healthz`
 (the container's health check). A container image (distroless, non-root, data
 in the `/data` volume) is built, smoke-tested and published to GHCR by CI.

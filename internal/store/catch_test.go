@@ -515,3 +515,65 @@ func TestListFiltersAndSetPath(t *testing.T) {
 	}
 	_ = other
 }
+
+func TestListByContent(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	ep, _ := s.CreateEndpoint(ctx, "/c")
+	var ids []int64
+	for _, body := range []string{`{"task":"A-1"}`, `{"task":"a-1"}`, "\xff\xfeA-1", `{"task":"A-1","n":2}`, ""} {
+		r := sample(ep.ID, body)
+		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, r.ID)
+	}
+	big := sample(ep.ID, "")
+	big.Body, big.TooLarge, big.Size = nil, true, 1<<30
+	if err := s.AddRequest(ctx, big, 1000, nil); err != nil {
+		t.Fatal(err)
+	}
+	ids = append(ids, big.ID)
+	got := func(q ListQuery) string {
+		rs, err := s.List(ctx, ep.ID, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, r := range rs {
+			if (r.Body != nil) != q.WithBody {
+				t.Errorf("%+v: request %d body %q", q, r.ID, r.Body)
+			}
+			for i, id := range ids {
+				if id == r.ID {
+					out = append(out, fmt.Sprint(i))
+				}
+			}
+		}
+		return fmt.Sprint(out)
+	}
+	hasN := func(b []byte) bool { return bytes.Contains(b, []byte(`"n"`)) }
+	asked := 0
+	counting := func(b []byte) bool { asked++; return true }
+	for _, tc := range []struct {
+		q    ListQuery
+		want string
+	}{
+		{ListQuery{Contains: []byte("A-1")}, "[3 2 0]"}, // case-sensitive, any bytes
+		{ListQuery{Contains: []byte("\xff\xfe")}, "[2]"},
+		{ListQuery{Contains: []byte("A-1"), Limit: 2}, "[3 2]"},
+		{ListQuery{Contains: []byte("A-1"), HasAfter: true, After: ids[0]}, "[2 3]"},
+		{ListQuery{Match: hasN}, "[3]"},
+		{ListQuery{Match: func([]byte) bool { return true }, Limit: 2}, "[4 3]"},                 // the too-large one never matches
+		{ListQuery{Match: func([]byte) bool { return true }, HasAfter: true, Limit: 2}, "[0 1]"}, // the limit counts matches
+		{ListQuery{Contains: []byte("A-1"), Match: hasN, WithBody: true}, "[3]"},
+		{ListQuery{WithBody: true, Limit: 1, HasAfter: true}, "[0]"},
+	} {
+		if g := got(tc.q); g != tc.want {
+			t.Errorf("%+v: %s, want %s", tc.q, g, tc.want)
+		}
+	}
+	if _, err := s.List(ctx, ep.ID, ListQuery{Match: counting, Limit: 1}); err != nil || asked != 1 {
+		t.Fatalf("Match asked %d times for a limit of 1 (%v)", asked, err)
+	}
+}
