@@ -1,5 +1,8 @@
 # Configuration and deployment
 
+How to run Hookwitness for longer than an afternoon: in Docker with its data
+in a volume, with its settings, its secret key, and behind a reverse proxy.
+
 ## Docker
 
 <!-- docs-check: skip: starts a container; scripts/docker-smoke.sh runs this command in CI -->
@@ -8,7 +11,7 @@ docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
   ghcr.io/petroladkin/hookwitness:edge
 ```
 
-The UI is at <http://localhost:8080/admin/>; webhooks go to any other path of
+The UI is at <http://127.0.0.1:8080/admin/>; webhooks go to any other path of
 port 8080. Images are built for linux/amd64 and linux/arm64. `:edge` follows
 the development branch; released versions are tagged `:X.Y.Z`, `:X.Y` and
 `:latest`.
@@ -59,27 +62,30 @@ volumes:
 Settings come from flags or environment variables; a flag wins over the
 variable. In Docker, pass the variables: `-e HOOKWITNESS_RETENTION=5000`.
 
-| Flag | Variable | Default |
-|---|---|---|
-| `-addr` | `HOOKWITNESS_ADDR` | `127.0.0.1:8080` (the image: `:8080`) |
-| `-db` | `HOOKWITNESS_DB` | `hookwitness.db` (the image: `/data/hookwitness.db`) |
-| `-log-format` | `HOOKWITNESS_LOG_FORMAT` | `text` (or `json`) |
-| `-max-body` | `HOOKWITNESS_MAX_BODY` | `10MiB` (bytes, or with `KiB`, `MiB`, `GiB`); larger bodies are answered `413` and not kept |
-| `-retention` | `HOOKWITNESS_RETENTION` | `1000` requests per endpoint, and as many unmatched |
-| `-admin-prefix` | `HOOKWITNESS_ADMIN_PREFIX` | `/admin` |
-| `-admin-hosts` | `HOOKWITNESS_ADMIN_HOSTS` | none: host names the UI and the API answer to, comma-separated |
-| `-max-wait` | `HOOKWITNESS_MAX_WAIT` | `5m`: the longest reply delay or timeout hold (1s to 1h) |
-| — | `HOOKWITNESS_SECRET_KEY` | none: then the key file `<db>.key` |
+| Flag | Variable | Default | Meaning |
+|---|---|---|---|
+| `-addr` | `HOOKWITNESS_ADDR` | `127.0.0.1:8080` (the image: `:8080`) | the address to listen on |
+| `-db` | `HOOKWITNESS_DB` | `hookwitness.db` (the image: `/data/hookwitness.db`) | the database file |
+| `-log-format` | `HOOKWITNESS_LOG_FORMAT` | `text` | `text` or `json` |
+| `-max-body` | `HOOKWITNESS_MAX_BODY` | `10MiB` | the largest body kept, in bytes or with `KiB`, `MiB`, `GiB`; a larger one is answered `413` and not kept |
+| `-retention` | `HOOKWITNESS_RETENTION` | `1000` | requests kept per endpoint, and as many unmatched |
+| `-admin-prefix` | `HOOKWITNESS_ADMIN_PREFIX` | `/admin` | where the UI and the API live |
+| `-admin-hosts` | `HOOKWITNESS_ADMIN_HOSTS` | none | host names the UI and the API answer to, comma-separated |
+| `-max-wait` | `HOOKWITNESS_MAX_WAIT` | `5m` | the longest reply delay or timeout hold, from 1s to 1h |
+| — | `HOOKWITNESS_SECRET_KEY` | none | the secret key (below); without it, the key file `<db>.key` |
 
 Ctrl-C or SIGTERM stops the server gracefully: requests in flight finish,
 held timeouts end.
 
 ### The secret key
 
-Signing keys of the endpoints' checks are encrypted with a 32-byte key:
+The secrets of the endpoints' checks depend on a 32-byte key: signing keys
+are encrypted with it, and tokens and passwords are hashed with it. The key
+is:
 
-- `HOOKWITNESS_SECRET_KEY`, 32 bytes in base64 (`openssl rand -base64 32`);
-  only from the environment, so it does not show in the process list;
+- `HOOKWITNESS_SECRET_KEY`, 32 bytes in base64 (`openssl rand -base64 32`).
+  It is read only from the environment, so it does not show in the process
+  list;
 - or, when it is not set, a key file next to the database (`<db>.key`,
   created with mode 0600 on the first run).
 

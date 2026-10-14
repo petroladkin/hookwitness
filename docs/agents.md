@@ -11,15 +11,14 @@ Hookwitness ships a [Claude Code](https://claude.com/claude-code) skill,
 this workflow:
 
 1. run Hookwitness in Docker, or reuse a running one;
-2. create an endpoint and give the sender its URL (from the host, or from
+2. create an endpoint and give the sender its URL (from the host or from
    another container);
-3. require what the sender must send: a Basic password, a bearer token, a
-   signature;
+3. require what the sender must send (a Basic password, a bearer token, a
+   signature), and script failures such as `503` for the first two
+   deliveries or a timeout, to test the sender's retries;
 4. trigger the sender and wait for the request (`wait=30s` holds the call
    until it arrives);
-5. assert on the status, the verdict, the headers and the body;
-6. script failures (`503` for the first two deliveries, a timeout) to test
-   the sender's retries.
+5. assert on the status, the verdict, the headers and the body.
 
 Install it in a project, or in `~/.claude/skills/hookwitness/` for every
 project:

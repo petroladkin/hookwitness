@@ -5,8 +5,9 @@ by task: what to click and what happens. [Українською](uk/README.md).
 
 1. [Getting started](getting-started.md): run it, create an endpoint, send a
    webhook, read it.
-2. [Endpoints and the live view](endpoints.md): exact paths, the Unmatched
-   register, the register and its strip, a request in full, retries.
+2. [Endpoints and the register](endpoints.md): exact paths, the Unmatched
+   register, the live register and its strip, a request in full, retries,
+   re-checking.
 3. [Scripted replies](replies.md): rules (every Nth, the first N, at random),
    delays, timeouts, dropped connections, templates, required headers.
 4. [Authorization checks and secrets](authorization.md): GitHub, Stripe,

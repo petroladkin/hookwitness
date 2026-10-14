@@ -205,18 +205,18 @@ for (const [i, e] of events.entries()) {
 }
 await shot("register", `${UI}/e/${gh}`);
 
-// docs/replies.md: /billing/notify fails every 3rd delivery and fails the
-// first two with Retry-After: 2; /slack/events echoes the challenge.
+// docs/replies.md: /billing/notify fails every 3rd delivery, /billing/retry
+// fails the first two with Retry-After: 2, /slack/events echoes the
+// challenge.
 const billing = (await api("POST", "/endpoints", { path: "/billing/notify" })).json.id;
-await behave(billing, {
-  rules: [
-    { when: { kind: "first", n: 2 }, do: "reply", reply: { status: 503, headers: [{ name: "Retry-After", value: "2" }] } },
-    { when: { kind: "every", n: 3 }, do: "reply", reply: { status: 500 } },
-  ],
-});
-for (let i = 1; i <= 4; i++) await send("/billing/notify", JSON.stringify({ invoice: `in_${i}` }), { "User-Agent": "curl/8.7.1" });
+await behave(billing, { rules: [{ when: { kind: "every", n: 3 }, do: "reply", reply: { status: 500 } }] });
+for (let i = 1; i <= 3; i++) await send("/billing/notify", JSON.stringify({ invoice: `in_${i}` }), { "User-Agent": "curl/8.7.1" });
 await shot("behaviour-rules", `${UI}/e/${billing}/behaviour?tab=rules`);
-await shot("behaviour-rule-edit", `${UI}/e/${billing}/behaviour?tab=rules&edit=rule-0`, { selector: dialog });
+const retry = (await api("POST", "/endpoints", { path: "/billing/retry" })).json.id;
+await behave(retry, {
+  rules: [{ when: { kind: "first", n: 2 }, do: "reply", reply: { status: 503, headers: [{ name: "Retry-After", value: "2" }] } }],
+});
+await shot("behaviour-rule-edit", `${UI}/e/${retry}/behaviour?tab=rules&edit=rule-0`, { selector: dialog });
 const slack = (await api("POST", "/endpoints", { path: "/slack/events" })).json.id;
 await behave(slack, {
   default: { status: 200, headers: [{ name: "Content-Type", value: "application/json" }], body: '{"challenge":"{{.JSON "challenge"}}"}' },

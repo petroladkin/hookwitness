@@ -8,10 +8,11 @@ Hookwitness answered and every verdict, with a summary on top.
 1. Click **Report** on an endpoint's register (or on one request, for that
    request alone).
 2. Choose:
-   - **Format**: **HTML, one file**, **Markdown**, or **PDF, A4**;
-   - **Requests**: all kept, those received in a time range (UTC), or picked
-     by number (`3, 5-9`);
-   - **Images in the requests**: shown, or listed only for a smaller file;
+   - **Format**: **HTML, one file**, **Markdown** or **PDF, A4**;
+   - **Requests**: all kept, those received in a time range (UTC) or those
+     picked by number (`3, 5-9`);
+   - **Images in the requests**: shown in HTML and PDF, or listed only, for a
+     smaller file. Markdown always lists them;
    - **Mask header values**: which headers to hide (below).
 3. Click **Download report**.
 
@@ -66,14 +67,15 @@ An excerpt of a Markdown report:
 
 Masking is off by default: the values are test values. When a report leaves
 your team, tick `Authorization`, `Cookie`, `Set-Cookie`, the signature headers
-of the endpoint's checks, or name other headers. Their values become their
+of the endpoint's checks or name other headers. Their values become their
 length (`•••• 71 chars`), the signatures taken from them in verdicts too, and
 the report says which headers were masked.
 
 ## With the API
 
-`GET /endpoints/{id}/report?format=html|md|pdf` with the same choices as the
-dialog; see the [API reference](api.md#reports).
+`GET /endpoints/{id}/report?format=html|md|pdf` takes the same choices as
+the dialog; see the [API reference](api.md#reports). In the example, `1` is
+the endpoint's id, which is 1 for the first endpoint of a fresh server.
 
 <!-- docs-check: setup: stripe_endpoint -->
 ```sh

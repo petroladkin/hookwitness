@@ -1,11 +1,14 @@
 # Troubleshooting
 
-## I added a secret, but requests still get 200 and no verdict
+The surprises people run into, each with what causes it and what to do.
 
-A secret alone does nothing: it is only the value a check uses. Add the
-check that uses it: **Behaviour → Checks → New check**, choose the kind
-(Bearer token, Basic credentials, GitHub signature…) and the secret. The
-Secrets tab lists which checks use each secret; "not used" means none does.
+## A secret is added, but requests still get 200 and no verdict
+
+A secret alone does nothing; it is only the value that a check uses. Add the
+check: **Behaviour → Checks → New check**, then choose the kind (Bearer
+token, Basic credentials, GitHub signature…) and the secret. The Secrets tab
+lists the checks that use each secret, and "not used: add a check" means
+none does.
 
 <!-- docs-check: setup: secret_only -->
 ```sh
@@ -30,8 +33,9 @@ was in the removed container cannot be recovered.
 The web UI does not answer to the host name "hooks.example.com:8080". Open it by IP address or localhost, or allow the name with -admin-hosts.
 ```
 
-The UI and the API answer only to IP addresses and `localhost`, so a web page
-on another domain cannot reach them through DNS. Open it by IP address, or
+The UI and the API answer only to IP addresses and `localhost`, so that a web
+page on another domain cannot reach them by pointing its own name at your
+server (see [Reaching it from other machines](deployment.md#reaching-it-from-other-machines)). Open it by IP address, or
 allow the name: `-admin-hosts hooks.example.com` (in Docker:
 `-e HOOKWITNESS_ADMIN_HOSTS=hooks.example.com`). The API answers the same
 refusal as `421 wrong_host`. Catch paths answer to any name.
@@ -53,19 +57,22 @@ this secret key is not the one this database was used with: sealed signing keys 
 
 Start it with the original key (the variable, or the `.key` file next to the
 database), or set the secrets again with **Replace** on the Secrets tab, then
-**Re-check** the kept requests. Stored tokens and passwords cannot be
+re-check the kept requests (see
+[Verdicts and re-checking](endpoints.md#verdicts-and-re-checking)). Stored tokens and passwords cannot be
 recovered either: with the wrong key they simply never match.
 
 ## A request got 413 and its checks say n/v
 
 Its body was larger than `-max-body` (10 MiB by default). It was answered
-`413` and kept without its body, so nothing that needs the body (a signature,
-a schema) can be verified: **n/v**. Raise the limit
+`413` and kept without its body, so nothing that needs the body (a signature
+or a schema) can be verified, and the verdict is **n/v**. Raise the limit
 (`HOOKWITNESS_MAX_BODY=50MiB`) if such bodies are expected.
+
+With the GitHub check from [Authorization checks](authorization.md#an-example-for-each)
+on `/hooks`, an 11 MB body gets `413` and this verdict:
 
 <!-- docs-check: setup: github -->
 ```sh
-head -c 11000000 /dev/zero | curl -s -o /dev/null --data-binary @- http://127.0.0.1:8080/hooks   # 413
 head -c 11000000 /dev/zero | curl -s -o /dev/null --data-binary @- http://127.0.0.1:8080/hooks   # n/v: body not kept (over the size limit)
 ```
 
@@ -89,7 +96,7 @@ the check, or raise its tolerance.
 
 ## The register does not update by itself
 
-The live view is a Server-Sent Events stream at `/admin/e/<id>/events`. A
+The live register is a Server-Sent Events stream at `/admin/e/<id>/events`. A
 reverse proxy that buffers responses holds it back; turn buffering off for
 the admin prefix (nginx: `proxy_buffering off;`; Hookwitness also sends
 `X-Accel-Buffering: no`). A reload always shows the current state.

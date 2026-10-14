@@ -1,9 +1,9 @@
 # Hookwitness
 
-Catch webhooks, get a verdict, attach the evidence. Self-hosted, single binary,
-MCP-ready.
+Catch webhooks, get a verdict, attach the evidence. Self-hosted, a single
+binary.
 
-**Status: early development.** Catch endpoints with a live view, scripted
+**Status: early development.** Catch endpoints with a live register, scripted
 responses, authorization and JSON Schema verdicts, reports (Markdown, HTML,
 PDF) and the REST API work; the MCP server comes next.
 
@@ -11,10 +11,10 @@ PDF) and the REST API work; the MCP server comes next.
 
 You send webhooks to someone else's endpoint and need to prove they actually
 left your side, correctly signed and shaped. Hookwitness gives you catch
-endpoints with a live view, scriptable responses (status, delay, timeout,
+endpoints with a live register, scriptable responses (status, delay, timeout,
 dropped connection, every Nth request failing), pass/fail verdicts for
 signatures and JSON Schema, and a report you can attach to a ticket. A REST
-API and an MCP server let tests and AI agents drive it.
+API lets tests and AI agents drive it; an MCP server will follow.
 
 ## Quick start
 
@@ -35,17 +35,17 @@ docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
      -d '{"type":"invoice.paid","id":"evt_1"}'   # 200
    ```
 
-3. Watch it arrive on the endpoint's page without a reload: method, path,
-   query, headers in the order they were sent, the body, and what Hookwitness
-   answered.
+3. Click the endpoint to open its register and watch the request arrive
+   without a reload: method, path, query, headers in the order they were sent,
+   the body and what Hookwitness answered.
 
 Keep `-v hookwitness:/data`: it holds your endpoints, secrets and requests
-across container upgrades. Built from source instead: `make build && bin/hookwitness
+across container upgrades. Or build from source: `make build && bin/hookwitness
 serve` (Go 1.27+). [Getting started](docs/getting-started.md) walks through it.
 
 ## What it does
 
-- **[Endpoints and the live view](docs/endpoints.md)**: exact paths, a live
+- **[Endpoints and the register](docs/endpoints.md)**: exact paths, a live
   register with a recorder strip, an Unmatched register for typos, retries
   marked.
 - **[Scripted replies](docs/replies.md)**: fail every Nth delivery, the first
@@ -76,6 +76,6 @@ Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes.
 
 ## License
 
-[Apache License 2.0](LICENSE). Third-party licenses of the modules compiled
+[Apache License 2.0](LICENSE). Third-party licences of the modules compiled
 into the binary and of the bundled assets (htmx, fonts) are in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

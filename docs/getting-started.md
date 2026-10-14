@@ -75,7 +75,7 @@ answered.
 
 ## Next
 
-- [Endpoints and the live view](endpoints.md): the register, the strip, the
+- [Endpoints and the register](endpoints.md): the register, the strip, the
   Unmatched register, retries.
 - [Scripted replies](replies.md): fail every 3rd delivery, answer slowly, hang,
   drop the connection.
