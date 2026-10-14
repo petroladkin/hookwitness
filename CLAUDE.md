@@ -183,3 +183,8 @@ Go, sqlite, templ, HTMX, Server-Sent Events, Docker.
 - No test, script or make target may depend on files outside the
   repository: a clean clone must pass `make check`.
 - Documentation changes in the same change as the code it describes.
+- Tests that measure wall-clock time assert only what runner load cannot
+  fake: never early, and ended well before the alternative (a delay applied
+  twice, a hold past its cap); exact durations go through the catcher's timer
+  seam (`Handler.after`). Wait for a recorded outcome by polling, not by a
+  fixed sleep.

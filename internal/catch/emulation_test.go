@@ -101,6 +101,33 @@ func TestDefaultReply(t *testing.T) {
 	}
 }
 
+// Real-time tests assert only what runner load cannot fake: a wait never
+// ends early, and it ends well before the alternative (a delay applied twice,
+// a hold past its cap or past the sender leaving). The exact durations asked
+// for are checked through the timer seam in TestWaitsAskedFor.
+
+// settled polls the newest request of ep until its outcome satisfies done:
+// the handler records a hold only after the connection is closed, so the
+// sender may see the end first.
+func settled(t *testing.T, st *store.Store, ep int64, done func(emulate.Outcome) bool) (store.Request, emulate.Outcome) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		rs, err := st.Requests(context.Background(), ep, 0, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rs) > 0 {
+			if o := emulate.ParseOutcome(rs[0].Outcome, rs[0].Status); done(o) || time.Now().After(deadline) {
+				return rs[0], o
+			}
+		} else if time.Now().After(deadline) {
+			t.Fatal("no request stored")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestDelay(t *testing.T) {
 	h, st, _ := setup(t, 1<<20)
 	url := serve(t, h)
@@ -111,62 +138,125 @@ func TestDelay(t *testing.T) {
 	}
 	took := time.Since(start)
 	_, o := lastOutcome(t, st, ep)
-	if took < 300*time.Millisecond || took > 350*time.Millisecond {
-		t.Fatalf("sender waited %v, want 300 ms (+50)", took)
+	// Under 550 ms: the delay was applied once (twice would be 600).
+	if took < 300*time.Millisecond || took >= 550*time.Millisecond {
+		t.Fatalf("sender waited %v, want 300 ms (not early, not twice)", took)
 	}
-	if o.DelayMs < 300 || o.DelayMs > 350 {
-		t.Fatalf("recorded delay %d ms", o.DelayMs)
-	}
-
-	jitter := configure(t, st, "/jitter", emulate.Config{Default: emulate.Reply{Status: 200, DelayMs: 50, JitterMs: 100}})
-	for range 5 {
-		do(t, http.DefaultClient, "POST", url+"/jitter", "")
-		if _, o := lastOutcome(t, st, jitter); o.DelayMs < 50 || o.DelayMs > 200 {
-			t.Fatalf("jittered delay %d ms, want 50..150 (+50)", o.DelayMs)
-		}
+	if o.DelayMs < 300 || o.DelayMs >= 550 {
+		t.Fatalf("recorded delay %d ms, want 300 (not early, not twice)", o.DelayMs)
 	}
 }
 
 func TestTimeout(t *testing.T) {
 	h, st, _ := setup(t, 1<<20)
-	h.MaxWait = 400 * time.Millisecond
+	h.MaxWait = 2 * time.Second
 	url := serve(t, h)
 	ep := configure(t, st, "/hang", emulate.Config{Default: emulate.Reply{Status: 200},
 		Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenEvery, N: 1}, Do: emulate.ActTimeout}}})
 
-	// The sender gives up first.
+	// The sender gives up first: the hold ends then, long before the cap.
 	impatient := &http.Client{Timeout: 150 * time.Millisecond}
 	if _, _, err := do(t, impatient, "POST", url+"/hang", ""); err == nil {
 		t.Fatal("a timeout must not answer")
 	}
-	time.Sleep(100 * time.Millisecond) // the handler notices the sender left
-	r, o := lastOutcome(t, st, ep)
+	r, o := settled(t, st, ep, func(o emulate.Outcome) bool { return o.WaitedMs > 0 })
 	// The client's 150 ms include connecting, so the handler sees a bit less.
-	if o.Action != emulate.ActTimeout || r.Status != 0 || o.WaitedMs < 100 || o.WaitedMs > 300 {
-		t.Fatalf("sender gave up: status %d, outcome %+v", r.Status, o)
+	if o.Action != emulate.ActTimeout || r.Status != 0 || o.WaitedMs < 100 || o.WaitedMs >= 1000 {
+		t.Fatalf("sender gave up: status %d, outcome %+v, want a hold of about 150 ms, not the 2 s cap", r.Status, o)
 	}
 
-	// The cap passes first: closed without a response.
+	// The cap passes first: closed without a response. The client's own
+	// limit only keeps a broken cap from hanging the test.
+	patient := &http.Client{Timeout: 10 * time.Second}
+	h.MaxWait = 400 * time.Millisecond
 	start := time.Now()
-	_, _, err := do(t, http.DefaultClient, "POST", url+"/hang", "")
+	_, _, err := do(t, patient, "POST", url+"/hang", "")
 	if err == nil {
 		t.Fatal("got a response after the hold")
 	}
-	if took := time.Since(start); took < 400*time.Millisecond || took > 600*time.Millisecond {
-		t.Fatalf("held %v, want the 400 ms cap", took)
+	if took := time.Since(start); took < 400*time.Millisecond || took >= 800*time.Millisecond {
+		t.Fatalf("held %v, want the 400 ms cap (not early, not twice)", took)
 	}
-	time.Sleep(50 * time.Millisecond)
-	if _, o := lastOutcome(t, st, ep); o.WaitedMs < 400 || o.WaitedMs > 500 {
-		t.Fatalf("waited %d ms", o.WaitedMs)
+	if _, o := settled(t, st, ep, func(o emulate.Outcome) bool { return o.WaitedMs > 0 }); o.WaitedMs < 400 || o.WaitedMs >= 800 {
+		t.Fatalf("waited %d ms, want the 400 ms cap", o.WaitedMs)
 	}
 
-	// Stop ends a hold at once.
+	// Stop ends a hold at once, not at the cap of an hour.
 	h.MaxWait = time.Hour
 	go func() { time.Sleep(100 * time.Millisecond); h.Stop() }()
 	start = time.Now()
-	do(t, http.DefaultClient, "POST", url+"/hang", "")
-	if took := time.Since(start); took > time.Second {
+	do(t, patient, "POST", url+"/hang", "")
+	if took := time.Since(start); took >= 5*time.Second {
 		t.Fatalf("Stop did not end the hold: %v", took)
+	}
+}
+
+// asked replaces h's timer with one that fires at once and returns the
+// durations asked for so far.
+func asked(h *Handler) func() []time.Duration {
+	var mu sync.Mutex
+	var got []time.Duration
+	h.after = func(d time.Duration) <-chan time.Time {
+		mu.Lock()
+		got = append(got, d)
+		mu.Unlock()
+		c := make(chan time.Time, 1)
+		c <- time.Now()
+		return c
+	}
+	return func() []time.Duration {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]time.Duration(nil), got...)
+	}
+}
+
+// TestWaitsAskedFor: the exact durations the catcher waits for, without
+// the clock: a delay, a jittered delay within its range, a delay and a
+// timeout capped by the maximum wait.
+func TestWaitsAskedFor(t *testing.T) {
+	h, st, _ := setup(t, 1<<20)
+	h.MaxWait = 400 * time.Millisecond
+	waits := asked(h)
+	url := serve(t, h)
+	configure(t, st, "/slow", emulate.Config{Default: emulate.Reply{Status: 200, DelayMs: 300}})
+	configure(t, st, "/jitter", emulate.Config{Default: emulate.Reply{Status: 200, DelayMs: 50, JitterMs: 100}})
+	configure(t, st, "/long", emulate.Config{Default: emulate.Reply{Status: 200, DelayMs: 10_000}})
+	configure(t, st, "/hang", emulate.Config{Default: emulate.Reply{Status: 200},
+		Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenEvery, N: 1}, Do: emulate.ActTimeout}}})
+	send := func(path string) {
+		t.Helper()
+		before := len(waits())
+		do(t, http.DefaultClient, "POST", url+path, "")
+		if n := len(waits()) - before; n != 1 {
+			t.Fatalf("%s: %d waits, want one", path, n)
+		}
+	}
+	last := func() time.Duration { w := waits(); return w[len(w)-1] }
+
+	send("/slow")
+	if d := last(); d != 300*time.Millisecond {
+		t.Fatalf("delay asked %v, want 300 ms", d)
+	}
+	low, high := false, false
+	for range 200 {
+		send("/jitter")
+		d := last()
+		if d < 50*time.Millisecond || d > 150*time.Millisecond {
+			t.Fatalf("jittered delay asked %v, want 50..150 ms", d)
+		}
+		low, high = low || d < 75*time.Millisecond, high || d > 125*time.Millisecond
+	}
+	if !low || !high {
+		t.Fatalf("200 jittered delays do not spread over 50..150 ms (low %v, high %v)", low, high)
+	}
+	send("/long")
+	if d := last(); d != 400*time.Millisecond {
+		t.Fatalf("a 10 s delay asked %v, want the 400 ms cap", d)
+	}
+	send("/hang")
+	if d := last(); d != 400*time.Millisecond {
+		t.Fatalf("a timeout held for %v, want the 400 ms cap", d)
 	}
 }
 
