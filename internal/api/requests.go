@@ -21,36 +21,70 @@ import (
 const (
 	defaultLimit = 50
 	maxLimit     = 500
+	maxBodyLimit = 100 // with include=body
 	maxWaitCall  = 60 * time.Second
 )
 
 // summaryJSON is a caught request in a list.
 type summaryJSON struct {
-	ID          int64     `json:"id"`
-	EndpointID  *int64    `json:"endpoint_id"` // null for the Unmatched register
-	No          int64     `json:"no"`          // number within its register
-	ReceivedAt  time.Time `json:"received_at"`
-	Method      string    `json:"method"`
-	Path        string    `json:"path"`
-	Query       string    `json:"query"`
-	Status      int       `json:"status"`  // what hookwitness answered; 0 while nothing was sent
-	Verdict     string    `json:"verdict"` // pass, fail, n/v; "" without authorization checks
-	BodySize    int64     `json:"body_size"`
-	BodyKept    bool      `json:"body_kept"` // false when the body was over the limit (413)
-	ContentType string    `json:"content_type"`
+	ID          int64  `json:"id"`
+	EndpointID  *int64 `json:"endpoint_id"` // null for the Unmatched register
+	No          int64  `json:"no"`          // number within its register
+	ReceivedAt  stamp  `json:"received_at"`
+	Method      string `json:"method"`
+	Path        string `json:"path"`
+	Query       string `json:"query"`
+	Status      int    `json:"status"`  // what hookwitness answered; 0 while nothing was sent
+	Verdict     string `json:"verdict"` // pass, fail, n/v; "" without authorization checks
+	BodySize    int64  `json:"body_size"`
+	BodyKept    bool   `json:"body_kept"` // false when the body was over the limit (413)
+	ContentType string `json:"content_type"`
 }
 
 // requestJSON is one caught request in full.
 type requestJSON struct {
 	summaryJSON
-	Proto      string          `json:"proto"`
-	RemoteAddr string          `json:"remote_addr"`
-	Headers    [][2]string     `json:"headers"` // as received: order, case and repeats kept
-	BodyText   *string         `json:"body_text,omitempty"`
-	BodyBase64 *string         `json:"body_base64,omitempty"`
-	Outcome    json.RawMessage `json:"outcome"`  // what was done with it
-	Verdicts   json.RawMessage `json:"verdicts"` // one per authorization check
-	Images     []imageJSON     `json:"images"`   // pictures in the body; bytes at /requests/{id}/image?path=
+	Proto      string      `json:"proto"`
+	RemoteAddr string      `json:"remote_addr"`
+	Headers    [][2]string `json:"headers"` // as received: order, case and repeats kept
+	bodyJSON
+	Outcome  json.RawMessage `json:"outcome"`  // what was done with it
+	Verdicts []verdictJSON   `json:"verdicts"` // one per authorization check
+	Images   []imageJSON     `json:"images"`   // pictures in the body; bytes at /requests/{id}/image?path=
+}
+
+// bodyJSON is a kept body: as text when it is UTF-8, else as base64; neither
+// when it was over the limit.
+type bodyJSON struct {
+	BodyText   *string `json:"body_text,omitempty"`
+	BodyBase64 *string `json:"body_base64,omitempty"`
+}
+
+func bodyView(req store.Request) bodyJSON {
+	var v bodyJSON
+	if req.TooLarge {
+		return v
+	}
+	if utf8.Valid(req.Body) {
+		s := string(req.Body)
+		v.BodyText = &s
+	} else {
+		s := base64.StdEncoding.EncodeToString(req.Body)
+		v.BodyBase64 = &s
+	}
+	return v
+}
+
+// listItemJSON is a request in a list; the body only with include=body.
+type listItemJSON struct {
+	summaryJSON
+	bodyJSON
+}
+
+// verdictJSON is one check's verdict with its time in the answers' format.
+type verdictJSON struct {
+	auth.Verdict
+	At stamp `json:"at"`
 }
 
 // imageJSON is an image a request carries: declared by a schema check, a
@@ -62,7 +96,7 @@ type imageJSON struct {
 }
 
 func summaryView(req store.Request) summaryJSON {
-	v := summaryJSON{ID: req.ID, No: req.No, ReceivedAt: req.ReceivedAt, Method: req.Method, Path: req.Path,
+	v := summaryJSON{ID: req.ID, No: req.No, ReceivedAt: stamp(req.ReceivedAt), Method: req.Method, Path: req.Path,
 		Query: req.RawQuery, Status: req.Status, Verdict: req.Verdict, BodySize: req.Size, BodyKept: !req.TooLarge}
 	if req.EndpointID != store.Unmatched {
 		id := req.EndpointID
@@ -78,30 +112,21 @@ func summaryView(req store.Request) summaryJSON {
 }
 
 func requestView(req store.Request, base string) requestJSON {
-	v := requestJSON{summaryJSON: summaryView(req), Proto: req.Proto, RemoteAddr: req.RemoteAddr,
-		Headers: make([][2]string, len(req.Headers)), Outcome: json.RawMessage("null"), Verdicts: json.RawMessage("[]")}
+	v := requestJSON{summaryJSON: summaryView(req), bodyJSON: bodyView(req), Proto: req.Proto, RemoteAddr: req.RemoteAddr,
+		Headers: make([][2]string, len(req.Headers)), Outcome: json.RawMessage("null"), Verdicts: []verdictJSON{}}
 	for i, hd := range req.Headers {
 		v.Headers[i] = [2]string{hd.Name, hd.Value}
-	}
-	if !req.TooLarge {
-		if utf8.Valid(req.Body) {
-			s := string(req.Body)
-			v.BodyText = &s
-		} else {
-			s := base64.StdEncoding.EncodeToString(req.Body)
-			v.BodyBase64 = &s
-		}
 	}
 	if json.Valid([]byte(req.Outcome)) {
 		v.Outcome = json.RawMessage(req.Outcome)
 	}
-	if json.Valid([]byte(req.Verdicts)) {
-		v.Verdicts = json.RawMessage(req.Verdicts)
+	var vs []auth.Verdict
+	json.Unmarshal([]byte(req.Verdicts), &vs)
+	for _, vd := range vs {
+		v.Verdicts = append(v.Verdicts, verdictJSON{Verdict: vd, At: stamp(vd.At)})
 	}
 	v.Images = []imageJSON{}
 	if !req.TooLarge {
-		var vs []auth.Verdict
-		json.Unmarshal([]byte(req.Verdicts), &vs)
 		for _, f := range picture.Find(req.Body, v.ContentType, vs) {
 			img := imageJSON{Image: f.Image, Source: f.Source}
 			if f.Type != "" {
@@ -176,10 +201,18 @@ type listQuery struct {
 	wait          time.Duration
 	verdict       string
 	status        int
+	contains      []byte      // q
+	match         []jsonMatch // json, all of them
+	bodies        bool        // include=body
 }
 
-func (l listQuery) store(limit int) store.ListQuery {
-	return store.ListQuery{Before: l.before, After: l.after, HasAfter: l.hasAfter, Limit: limit, Verdict: l.verdict, Status: l.status}
+func (l listQuery) store() store.ListQuery {
+	q := store.ListQuery{Before: l.before, After: l.after, HasAfter: l.hasAfter, Limit: l.limit,
+		Verdict: l.verdict, Status: l.status, Contains: l.contains, WithBody: l.bodies}
+	if len(l.match) > 0 {
+		q.Match = matchAll(l.match)
+	}
+	return q
 }
 
 func parseList(w http.ResponseWriter, r *http.Request) (listQuery, bool) {
@@ -232,6 +265,26 @@ func parseList(w http.ResponseWriter, r *http.Request) (listQuery, bool) {
 			l.status = -1 // filter on "nothing sent"
 		}
 	}
+	if q.Has("q") {
+		if q.Get("q") == "" {
+			return bad("q", "q is the text to find in the body")
+		}
+		l.contains = []byte(q.Get("q"))
+	}
+	for _, s := range q["json"] {
+		m, ok := parseJSONMatch(s)
+		if !ok {
+			return bad("json", "json is <JSON pointer>=<value>, such as /taskId=42")
+		}
+		l.match = append(l.match, m)
+	}
+	for _, s := range q["include"] {
+		if s != "body" {
+			return bad("include", "include is body")
+		}
+		l.bodies = true
+		l.limit = min(l.limit, maxBodyLimit)
+	}
 	if q.Has("wait") {
 		s := q.Get("wait")
 		d, err := time.ParseDuration(s)
@@ -251,7 +304,8 @@ func parseList(w http.ResponseWriter, r *http.Request) (listQuery, bool) {
 
 // listRequests lists an endpoint's requests: newest first (paged back with
 // before), or with after the newer ones oldest first, waiting up to wait
-// for the first of them; verdict and status filter either way.
+// for the first of them; verdict, status, q (text in the body) and json
+// (a value in a JSON body) filter either way, and include=body adds bodies.
 func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 	ep, ok := h.endpoint(w, r)
 	if !ok {
@@ -275,7 +329,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, reg int64) {
 	if l.hasAfter {
 		reqs, err = h.waitAfter(r, reg, l)
 	} else {
-		reqs, err = h.store.List(r.Context(), reg, l.store(l.limit))
+		reqs, err = h.store.List(r.Context(), reg, l.store())
 	}
 	if r.Context().Err() != nil {
 		return // the client went away
@@ -284,9 +338,13 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, reg int64) {
 		h.fail(w, "list requests", err)
 		return
 	}
-	out := make([]summaryJSON, 0, len(reqs))
+	out := make([]listItemJSON, 0, len(reqs))
 	for _, req := range reqs {
-		out = append(out, summaryView(req))
+		item := listItemJSON{summaryJSON: summaryView(req)}
+		if l.bodies {
+			item.bodyJSON = bodyView(req)
+		}
+		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requests": out})
 }
@@ -301,7 +359,7 @@ func (h *Handler) waitAfter(r *http.Request, id int64, l listQuery) ([]store.Req
 	deadline := time.NewTimer(l.wait)
 	defer deadline.Stop()
 	for {
-		reqs, err := h.store.List(r.Context(), id, l.store(l.limit))
+		reqs, err := h.store.List(r.Context(), id, l.store())
 		if err != nil || len(reqs) > 0 || l.wait == 0 {
 			return reqs, err
 		}

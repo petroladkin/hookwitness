@@ -116,6 +116,7 @@ func TestAnswersMatchTheirSchemas(t *testing.T) {
 		{"GET", fmt.Sprintf("/endpoints/%d/behaviour", ep.ID), "", "Behaviour"},
 		{"GET", fmt.Sprintf("/endpoints/%d/requests", ep.ID), "", "RequestList"},
 		{"GET", "/unmatched/requests", "", "RequestList"},
+		{"GET", fmt.Sprintf("/endpoints/%d/requests?include=body&q=a&json=/a=1", ep.ID), "", "RequestList"},
 		{"GET", fmt.Sprintf("/requests/%d", r.ID), "", "Request"},
 		{"POST", fmt.Sprintf("/endpoints/%d/recheck", ep.ID), "{}", "Rechecked"},
 		{"PUT", fmt.Sprintf("/endpoints/%d/secrets/K", ep.ID), `{"kind":"key","value":"whsec_dGVzdA=="}`, "Secret"},

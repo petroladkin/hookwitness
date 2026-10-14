@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petroladkin/hookwitness/internal/catch"
 )
@@ -15,7 +16,7 @@ func TestCreateEndpoint(t *testing.T) {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}
 	ep := decodeAs[endpointJSON](t, rec)
-	if ep.ID < 1 || ep.Path != "/github/hooks" || ep.URL != "http://example.com/github/hooks" || ep.Requests != 0 || ep.Created.IsZero() {
+	if ep.ID < 1 || ep.Path != "/github/hooks" || ep.URL != "http://example.com/github/hooks" || ep.Requests != 0 || time.Time(ep.Created).IsZero() {
 		t.Fatalf("endpoint %+v", ep)
 	}
 	if loc := rec.Header().Get("Location"); loc != "/admin/api/v1/endpoints/1" {

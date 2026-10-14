@@ -10,6 +10,7 @@ webhooks and read them with their verdicts. Everything is JSON.
   [secrets](#secrets), [requests](#requests), [actions](#actions),
   [reports](#reports), [OpenAPI](#openapi)
 - [Recipes](#recipes): [wait for a webhook](#wait-for-a-webhook-and-read-its-verdict),
+  [wait for one task's callback](#wait-for-the-callback-of-one-task),
   [Basic credentials](#require-basic-credentials),
   [GitHub signature](#require-a-github-signature)
 - [Testing a sender in Docker](#testing-a-sender-in-docker)
@@ -37,7 +38,8 @@ host name: only the admin prefix is restricted.
 
 - Bodies are JSON objects; unknown fields are refused (`400 unknown_field`).
   Bodies are limited to 1 MiB.
-- Times are RFC 3339 in UTC. Ids are numbers; request ids are never reused.
+- Times are RFC 3339 in UTC with exactly three fraction digits
+  (`2026-10-13T18:48:01.380Z`), so they sort and slice as text. Ids are numbers; request ids are never reused.
 - Every error has one shape:
 
 ```json
@@ -205,10 +207,13 @@ $ curl -X PUT $API/endpoints/1/secrets/ORDERS_PASSWORD -H 'Content-Type: applica
 
 | Route | Does |
 |---|---|
-| `GET /endpoints/{id}/requests` | newest first; `limit` (default 50, at most 500), `before=<id>` pages back |
+| `GET /endpoints/{id}/requests` | newest first; `limit` (default 50, at most 500; a larger one is capped), `before=<id>` pages back |
 | `GET /endpoints/{id}/requests?after=<id>` | the requests newer than `<id>`, **oldest first** |
 | `GET /endpoints/{id}/requests?after=<id>&wait=30s` | the same, but when there are none yet, wait until one arrives (at most `60s`; `wait=30` means seconds); an empty list when the time is up |
 | `…/requests?verdict=fail&status=401` | filters, with any of the above: `verdict` is `pass`, `fail`, `n/v` or `n/c`; `status` an answer status (`0`: nothing sent) |
+| `…/requests?q=<text>` | only requests whose kept body contains the text: a byte substring, case-sensitive (URL-encode it; `%FF` is the byte 0xFF) |
+| `…/requests?json=<pointer>=<value>` | only requests whose JSON body has, at the [JSON pointer](https://www.rfc-editor.org/rfc/rfc6901), a string equal to the value, or a number, `true`, `false` or `null` written exactly as the value: `json=/taskId=42` matches `"taskId":42` and `"taskId":"42"`, not `42.0`; objects and arrays never match. The pointer ends at the first `=`. Repeat it to require several: all must match |
+| `…/requests?include=body` | each item carries `body_text` or `body_base64`, as one request does; `limit` is then at most 100 |
 | `DELETE /endpoints/{id}/requests` | clear the endpoint's requests (numbering goes on). `204` |
 | `GET /unmatched/requests` | the Unmatched register (requests to paths no endpoint has), with the same parameters; read-only |
 | `GET /requests/{id}` | one request in full, Unmatched ones too |
@@ -272,6 +277,10 @@ One request adds:
 **Waiting without missing anything:** keep the id of the last request you have
 handled (0 at the start) and ask for `after=<that id>&wait=…`. Requests that
 arrive between two calls are returned by the next one; none is returned twice.
+With `q` or `json` the wait ends at the first request that matches; the others
+do not end it. A cursor taken from a filtered answer skips the requests in
+between that did not match: to wait for several things, give each its own
+cursor (see [the recipe](#wait-for-the-callback-of-one-task)).
 
 ### Actions
 
@@ -327,6 +336,29 @@ printf '%s\n' "$R" | jq '{status, verdict}'
 LAST=$(printf '%s\n' "$R" | jq .id)
 curl -s $API/requests/$LAST | jq -r .body_text | jq .   # the payload as sent
 ```
+
+### Wait for the callback of one task
+
+The sender calls back once per task and the endpoint is busy with others: take
+the cursor before starting the task, then wait for the request whose body
+names it, with its body in the same answer.
+
+```sh
+LAST=$(curl -s "$API/endpoints/$ID/requests?limit=1" | jq '.requests[0].id // 0')
+
+# ... start task 42 in the app under test ...
+
+R=$(curl -s "$API/endpoints/$ID/requests?after=$LAST&wait=30s&json=/taskId=42&include=body" | jq '.requests[0]')
+[ "$R" != null ] || { echo "no callback for task 42 within 30 s"; exit 1; }
+printf '%s\n' "$R" | jq '{id, status, verdict}'
+printf '%s\n' "$R" | jq -r .body_text | jq .state   # the payload, no second call
+
+# every callback of the task so far, bodies included (at most 100 a page)
+curl -s "$API/endpoints/$ID/requests?after=$LAST&json=/taskId=42&include=body" | jq -r '.requests[].body_text'
+```
+
+`q=` finds text in any body, JSON or not: `q=batch-42` instead of
+`json=/taskId=42`.
 
 ### Require Basic credentials
 
