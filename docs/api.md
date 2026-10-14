@@ -63,6 +63,7 @@ host name: only the admin prefix is restricted.
 
 All paths below are relative to `/admin/api/v1`. The examples use
 
+<!-- docs-check: skip: defines $API; docs-check's setups define it for each example -->
 ```sh
 API=http://localhost:8080/admin/api/v1
 ```
@@ -80,7 +81,7 @@ into the Unmatched register with a `404`.
 | `PATCH /endpoints/{id}` | change its path: `{"path": "/y"}`, validated as on create; its requests and behaviour stay. `200` with the endpoint |
 | `DELETE /endpoints/{id}` | delete it and its requests. `204` |
 
-```sh
+```console
 $ curl -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/orders/events"}'
 201
 {"id":1,"path":"/orders/events","url":"http://localhost:8080/orders/events","requests":0,"counter":0,"created_at":"2026-10-12T17:28:06.808Z"}
@@ -107,7 +108,7 @@ makes your `PUT` fail with `412` instead of being overwritten.
 | `GET /endpoints/{id}/behaviour` | the behaviour, `ETag` header |
 | `PUT /endpoints/{id}/behaviour` | replace it; `If-Match: <ETag>` required. `200` with the new behaviour and `ETag` |
 
-```sh
+```console
 $ curl -i $API/endpoints/1/behaviour
 ETag: "e87050872d7e"
 {"default":{"status":200},"rules":[],"checks":[],"vars":[],"secrets":[]}
@@ -196,7 +197,7 @@ goes in and never comes back; answers show a fingerprint.
 | `PUT /endpoints/{id}/secrets/{name}` | create or replace: `{"kind": "token" \| "key", "value": "…"}`; replacing keeps the kind (it may be left out) |
 | `DELETE /endpoints/{id}/secrets/{name}` | delete; `409 secret_in_use` while a check uses it. `204` |
 
-```sh
+```console
 $ curl -X PUT $API/endpoints/1/secrets/ORDERS_PASSWORD -H 'Content-Type: application/json' \
     -d '{"kind":"token","value":"test-password"}'
 200
@@ -298,8 +299,10 @@ Writes, so send them as JSON (an empty object is enough):
 | `POST /endpoints/{id}/recheck` | verify the kept requests again with the current checks, secrets and schemas — after fixing a secret or a schema. Only verdicts change. `200 {"rechecked": N}` |
 | `POST /endpoints/{id}/schema-draft` `{"requests":[ids]}` | draft a JSON Schema (2020-12) from the bodies of up to 100 of the endpoint's requests; **nothing is stored**. `200` with `name` (suggested), `text`, `exists` and `changes` (how it differs from a stored schema of that name), `discriminator` (the check that picks by a value, the value the requests share, and what it maps to now). `422` (field `requests`) for a body not kept or not JSON, or a request of another endpoint |
 
+<!-- docs-check: setup: api -->
 ```sh
-curl -s -X POST $API/endpoints/1/recheck -H 'Content-Type: application/json' -d '{}'
+curl -s -X POST $API/endpoints/1/recheck -H 'Content-Type: application/json' -d '{}' | jq -c .
+# {"rechecked":0}
 ```
 
 A draft holds the types seen, objects with their properties (required when
@@ -309,10 +312,12 @@ a `format` (date-time, date, uuid, email, uri) only when every string there
 has it. It never guesses enums, patterns, ranges or lengths: review it, then
 save it with the behaviour (and map it, if a check picks by a value):
 
+<!-- docs-check: fresh; setup: api_draft -->
 ```sh
 D=$(curl -s -X POST $API/endpoints/$ID/schema-draft -H 'Content-Type: application/json' -d '{"requests":[7,8]}')
 printf '%s\n' "$D" | jq -r .text > OrderShipped.json     # review and edit
-printf '%s\n' "$D" | jq '{name, exists, changes, discriminator}'
+printf '%s\n' "$D" | jq -c '{name, exists}'   # the name is suggested from the path
+# {"name":"Events","exists":false}
 ```
 
 ### Reports
@@ -329,8 +334,10 @@ Parameters as in the UI's dialog: `format` (`md`, `html`, `pdf`; required),
 a date-time without a zone, read as UTC. A wrong parameter is `422 invalid`
 naming it.
 
+<!-- docs-check: setup: api -->
 ```sh
-curl -s -o report.pdf "$API/endpoints/1/report?format=pdf&scope=picked&pick=3-5&mask=Authorization"
+curl -s -o report.pdf -w '%{http_code}\n' "$API/endpoints/1/report?format=pdf&scope=picked&pick=3-5&mask=Authorization"
+# 200
 ```
 
 ### OpenAPI
@@ -343,6 +350,7 @@ is valid, lists every route, and that real answers match its schemas.
 
 ### Wait for a webhook and read its verdict
 
+<!-- docs-check: setup: api_sender -->
 ```sh
 EP=$(curl -s -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/hooks"}')
 ID=$(printf '%s\n' "$EP" | jq .id); URL=$(printf '%s\n' "$EP" | jq -r .url)
@@ -352,9 +360,11 @@ LAST=0
 
 R=$(curl -s "$API/endpoints/$ID/requests?after=$LAST&wait=30s" | jq '.requests[0]')
 [ "$R" != null ] || { echo "no webhook within 30 s"; exit 1; }
-printf '%s\n' "$R" | jq '{status, verdict}'
+printf '%s\n' "$R" | jq -c '{status, verdict}'
+# {"status":200,"verdict":""}
 LAST=$(printf '%s\n' "$R" | jq .id)
-curl -s $API/requests/$LAST | jq -r .body_text | jq .   # the payload as sent
+curl -s $API/requests/$LAST | jq -r .body_text | jq -c .   # the payload as sent
+# {"order":42}
 ```
 
 ### Wait for the callback of one task
@@ -363,6 +373,7 @@ The sender calls back once per task and the endpoint is busy with others: take
 the cursor before starting the task, then wait for the request whose body
 names it, with its body in the same answer.
 
+<!-- docs-check: setup: api_tasks -->
 ```sh
 LAST=$(curl -s "$API/endpoints/$ID/requests?limit=1" | jq '.requests[0].id // 0')
 
@@ -370,11 +381,14 @@ LAST=$(curl -s "$API/endpoints/$ID/requests?limit=1" | jq '.requests[0].id // 0'
 
 R=$(curl -s "$API/endpoints/$ID/requests?after=$LAST&wait=30s&json=/taskId=42&include=body" | jq '.requests[0]')
 [ "$R" != null ] || { echo "no callback for task 42 within 30 s"; exit 1; }
-printf '%s\n' "$R" | jq '{id, status, verdict}'
+printf '%s\n' "$R" | jq -c '{status, verdict}'
+# {"status":200,"verdict":""}
 printf '%s\n' "$R" | jq -r .body_text | jq .state   # the payload, no second call
+# "done"
 
 # every callback of the task so far, bodies included (at most 100 a page)
 curl -s "$API/endpoints/$ID/requests?after=$LAST&json=/taskId=42&include=body" | jq -r '.requests[].body_text'
+# {"taskId":42,"state":"done"}
 ```
 
 `q=` finds text in any body, JSON or not: `q=batch-42` instead of
@@ -382,6 +396,7 @@ curl -s "$API/endpoints/$ID/requests?after=$LAST&json=/taskId=42&include=body" |
 
 ### Require Basic credentials
 
+<!-- docs-check: fresh; setup: api -->
 ```sh
 curl -s -X PUT $API/endpoints/$ID/secrets/ORDERS_PASSWORD -H 'Content-Type: application/json' \
   -d '{"kind":"token","value":"test-password"}'
@@ -403,6 +418,7 @@ user, no `Authorization` header, another scheme).
 
 ### Require a GitHub signature
 
+<!-- docs-check: setup: api -->
 ```sh
 curl -s -X PUT $API/endpoints/$ID/secrets/GH_KEY -H 'Content-Type: application/json' \
   -d '{"kind":"key","value":"gh_test_secret"}'
@@ -420,6 +436,7 @@ The same pattern works for `stripe`, `standard` (a `whsec_` key), `hmac` and
 
 ## Testing a sender in Docker
 
+<!-- docs-check: skip: starts a container; scripts/docker-smoke.sh runs it in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 ghcr.io/petroladkin/hookwitness:edge
 ```
