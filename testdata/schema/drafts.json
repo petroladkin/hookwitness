@@ -1,0 +1,351 @@
+[
+ {
+  "name": "flat object: types, all keys required",
+  "bodies": [
+   "{\"id\": 42, \"name\": \"Ann\", \"paid\": true, \"rate\": 1.5}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "integer"
+    },
+    "name": {
+     "type": "string"
+    },
+    "paid": {
+     "type": "boolean"
+    },
+    "rate": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "id",
+    "name",
+    "paid",
+    "rate"
+   ]
+  }
+ },
+ {
+  "name": "nested objects keep their key order",
+  "bodies": [
+   "{\"order\": {\"id\": 1, \"address\": {\"zip\": \"01001\", \"city\": \"Kyiv\"}}}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "properties": {
+    "order": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "integer"
+      },
+      "address": {
+       "type": "object",
+       "properties": {
+        "zip": {
+         "type": "string"
+        },
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "zip",
+        "city"
+       ]
+      }
+     },
+     "required": [
+      "id",
+      "address"
+     ]
+    }
+   },
+   "required": [
+    "order"
+   ]
+  }
+ },
+ {
+  "name": "an array of mixed objects: items merged, a key in only some is optional",
+  "bodies": [
+   "{\"items\": [{\"sku\": \"A\", \"qty\": 1}, {\"sku\": \"B\", \"note\": \"gift\"}]}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "properties": {
+    "items": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "sku": {
+        "type": "string"
+       },
+       "qty": {
+        "type": "integer"
+       },
+       "note": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "sku"
+      ]
+     }
+    }
+   },
+   "required": [
+    "items"
+   ]
+  }
+ },
+ {
+  "name": "null joins the type list",
+  "bodies": [
+   "{\"a\": null}",
+   "{\"a\": \"x\"}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "properties": {
+    "a": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "a"
+   ]
+  }
+ },
+ {
+  "name": "integer when every number is whole, 2.0 included",
+  "bodies": [
+   "{\"n\": 1}",
+   "{\"n\": 2.0}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "properties": {
+    "n": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "n"
+   ]
+  }
+ },
+ {
+  "name": "number when one is not whole",
+  "bodies": [
+   "{\"n\": 1}",
+   "{\"n\": 2.5}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "properties": {
+    "n": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "n"
+   ]
+  }
+ },
+ {
+  "name": "several bodies: required only when in all, types unioned",
+  "bodies": [
+   "{\"id\": 1, \"v\": \"a\"}",
+   "{\"id\": 2, \"v\": 3, \"extra\": true}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "integer"
+    },
+    "v": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "extra": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "id",
+    "v"
+   ]
+  }
+ },
+ {
+  "name": "formats when every sample has one",
+  "bodies": [
+   "{\"at\": \"2026-10-12T17:28:07Z\", \"day\": \"2026-10-12\", \"id\": \"0b9f8a2e-3c1d-4e5f-8a7b-9c0d1e2f3a4b\", \"mail\": \"ann@example.com\", \"link\": \"https://example.com/a?b=1\"}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "properties": {
+    "at": {
+     "type": "string",
+     "format": "date-time"
+    },
+    "day": {
+     "type": "string",
+     "format": "date"
+    },
+    "id": {
+     "type": "string",
+     "format": "uuid"
+    },
+    "mail": {
+     "type": "string",
+     "format": "email"
+    },
+    "link": {
+     "type": "string",
+     "format": "uri"
+    }
+   },
+   "required": [
+    "at",
+    "day",
+    "id",
+    "mail",
+    "link"
+   ]
+  }
+ },
+ {
+  "name": "no format when one sample lacks it",
+  "bodies": [
+   "{\"at\": \"2026-10-12T17:28:07Z\"}",
+   "{\"at\": \"yesterday\"}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "properties": {
+    "at": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "at"
+   ]
+  }
+ },
+ {
+  "name": "an empty array gives no items",
+  "bodies": [
+   "{\"tags\": []}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "properties": {
+    "tags": {
+     "type": "array"
+    }
+   },
+   "required": [
+    "tags"
+   ]
+  }
+ },
+ {
+  "name": "an array root of scalars",
+  "bodies": [
+   "[1, \"a\", null]"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "array",
+   "items": {
+    "type": [
+     "string",
+     "integer",
+     "null"
+    ]
+   }
+  }
+ },
+ {
+  "name": "an empty object",
+  "bodies": [
+   "{}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object"
+  }
+ },
+ {
+  "name": "a scalar body",
+  "bodies": [
+   "\"hello\""
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "string"
+  }
+ },
+ {
+  "name": "additional keys stay allowed (no additionalProperties)",
+  "bodies": [
+   "{\"a\": 1}"
+  ],
+  "want": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "properties": {
+    "a": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "a"
+   ]
+  }
+ },
+ {
+  "name": "a body that is not JSON",
+  "bodies": [
+   "{\"a\":"
+  ],
+  "error": "not JSON"
+ },
+ {
+  "name": "an empty body",
+  "bodies": [
+   ""
+  ],
+  "error": "empty body"
+ },
+ {
+  "name": "the second of two bodies is not JSON",
+  "bodies": [
+   "{}",
+   "<xml/>"
+  ],
+  "error": "body 2: not JSON"
+ }
+]
