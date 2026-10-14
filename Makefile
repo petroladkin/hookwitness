@@ -8,7 +8,7 @@ LDFLAGS := -s -w -X $(MODULE)/internal/version.Version=$(VERSION) -X $(MODULE)/i
 
 IMAGE   ?= hookwitness:dev
 
-.PHONY: build image image-smoke api-smoke check generate templ-check vet fmt-check staticcheck test notices hooks clean
+.PHONY: build image image-smoke api-smoke docs-check media check generate templ-check vet fmt-check staticcheck test notices hooks clean
 
 ## build: one static binary in bin/ (no cgo)
 build:
@@ -25,6 +25,14 @@ image-smoke:
 ## api-smoke: run the API scenario against a freshly built binary (curl, jq)
 api-smoke: build
 	scripts/api-smoke.sh --binary bin/hookwitness
+
+## docs-check: run every shell example of the documentation against a fresh build (curl, jq, openssl)
+docs-check: build
+	go run ./scripts/docscheck -bin bin/hookwitness README.md $(wildcard docs/*.md)
+
+## media: regenerate the documentation's screenshots (Node 22+, Chrome)
+media: build
+	node scripts/media/media.mjs bin/hookwitness docs/images
 
 ## check: everything a change must pass
 check: templ-check build vet fmt-check staticcheck test
