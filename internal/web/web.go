@@ -28,6 +28,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
+	"github.com/petroladkin/hookwitness/internal/mcp"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/version"
@@ -56,6 +57,7 @@ type Handler struct {
 	mux     http.Handler
 	csrf    *http.CrossOriginProtection
 	api     *api.Handler      // the JSON API under prefix/api/v1
+	mcp     http.Handler      // MCP over Streamable HTTP at prefix/mcp, its tools on the API
 	assets  map[string]string // asset path -> content hash for cache busting
 
 	stopOnce sync.Once
@@ -117,6 +119,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	}
 	ao.Fonts, _ = fs.Sub(staticFS, "static")
 	h.api = api.New(st, broker, log, ao)
+	h.mcp = mcp.Handler(h.api, api.Base(prefix), version.String(), log)
 	return h
 }
 
@@ -129,7 +132,8 @@ const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 's
 	"connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	isAPI := api.Is(h.prefix, r.URL.Path)
+	isMCP := r.URL.Path == h.prefix+"/mcp"
+	isAPI := isMCP || api.Is(h.prefix, r.URL.Path)
 	if !h.allowedHost(r.Host) {
 		// A page on another site can point its own host name at this server
 		// (DNS rebinding) and then read the UI as same-origin.
@@ -150,6 +154,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isAPI {
 		if err := h.csrf.Check(r); err != nil {
 			api.WriteError(w, http.StatusForbidden, "cross_origin", "a request from a page on another site is refused", "")
+			return
+		}
+		if isMCP {
+			h.mcp.ServeHTTP(w, r)
 			return
 		}
 		h.api.ServeHTTP(w, r)
