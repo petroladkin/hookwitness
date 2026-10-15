@@ -2,6 +2,7 @@ package payload
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -94,6 +95,40 @@ func TestPrettyJSONPaths(t *testing.T) {
 	for _, tk := range toks {
 		if tk.Bad != (tk.Text == "1") {
 			t.Errorf("Token %q bad=%v", tk.Text, tk.Bad)
+		}
+	}
+}
+
+// A deeply nested body stays small in the pretty view: indentation and
+// paths stop growing (a 20 KB body used to become 190 MB of tokens).
+func TestPrettyDeep(t *testing.T) {
+	const depth = 9999
+	body := []byte(strings.Repeat("[", depth) + "1" + strings.Repeat("]", depth))
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	toks, err := Pretty(body)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := 0
+	for _, tk := range toks {
+		size += len(tk.Text) + len(tk.Path)
+	}
+	if size > 2<<20 {
+		t.Fatalf("%d bytes of tokens", size)
+	}
+	if n := after.TotalAlloc - before.TotalAlloc; n > 32<<20 {
+		t.Fatalf("allocated %d MB", n>>20)
+	}
+	// Shallow levels keep their paths; deep ones have none.
+	if !toks[2].HasPath || toks[2].Path != "/0" {
+		t.Fatalf("level 1: %+v", toks[2])
+	}
+	for _, tk := range toks {
+		if tk.Text == "1" && tk.HasPath {
+			t.Fatalf("a token at depth %d has a path", depth)
 		}
 	}
 }

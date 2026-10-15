@@ -45,6 +45,15 @@ func IsText(b []byte) bool {
 	return true
 }
 
+// Deep documents would make the pretty view grow with the square of their
+// depth (each line indented, each token carrying its whole path): a 20 KB
+// body of nested arrays would become 190 MB. Indentation stops at MaxIndent
+// levels, and tokens deeper than MaxPathDepth carry no JSON pointer.
+const (
+	MaxIndent    = 32
+	MaxPathDepth = 128
+)
+
 // Pretty indents a valid JSON document two spaces per level, keeping key
 // order and number literals as received, and tags each Token for colour.
 func Pretty(b []byte) ([]Token, error) {
@@ -52,12 +61,17 @@ func Pretty(b []byte) ([]Token, error) {
 	dec.UseNumber()
 	var out []Token
 	emit := func(class, text string) { out = append(out, Token{Class: class, Text: text}) }
+	var stack []jsonFrame
+	deep := func() bool { return len(stack) > MaxPathDepth }
 	emitAt := func(class, text, path string) {
+		if deep() {
+			emit(class, text)
+			return
+		}
 		out = append(out, Token{Class: class, Text: text, Path: path, HasPath: true})
 	}
-	indent := func(depth int) { emit("", "\n"+strings.Repeat("  ", depth)) }
+	indent := func(depth int) { emit("", "\n"+strings.Repeat("  ", min(depth, MaxIndent))) }
 
-	var stack []jsonFrame
 	for {
 		t, err := dec.Token()
 		if err == io.EOF {
@@ -89,14 +103,16 @@ func Pretty(b []byte) ([]Token, error) {
 		}
 		if n := len(stack); n > 0 && stack[n-1].object && stack[n-1].key {
 			k, _ := t.(string)
-			stack[n-1].member = stack[n-1].path + "/" + PointerToken(k)
+			if !deep() {
+				stack[n-1].member = stack[n-1].path + "/" + PointerToken(k)
+			}
 			emitAt("k", quote(k), stack[n-1].member)
 			emit("", ": ")
 			stack[n-1].key = false
 			continue
 		}
 		path := ""
-		if n := len(stack); n > 0 {
+		if n := len(stack); n > 0 && !deep() {
 			if f := stack[n-1]; f.object {
 				path = f.member
 			} else {

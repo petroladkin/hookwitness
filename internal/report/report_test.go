@@ -267,3 +267,18 @@ func TestReportImages(t *testing.T) {
 		t.Fatalf("images off: %d images in the PDF", n)
 	}
 }
+
+// A deeply nested body keeps every report format small.
+func TestReportOfADeepBody(t *testing.T) {
+	const depth = 9999
+	body := strings.Repeat("[", depth) + "1" + strings.Repeat("]", depth)
+	req := store.Request{ID: 1, No: 1, Method: "POST", Path: "/deep", Status: 200, ReceivedAt: time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC),
+		Headers: []store.Header{{Name: "Content-Type", Value: "application/json"}}, Body: []byte(body), Size: int64(len(body))}
+	o := goldenOptions()
+	o.BodyLimit = 64 << 10
+	for _, f := range []Format{Markdown, HTML, PDF} {
+		if out := render(t, f, o, []store.Request{req}); len(out) > 4<<20 {
+			t.Errorf("%s: %d MB", f, len(out)>>20)
+		}
+	}
+}
