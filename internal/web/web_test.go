@@ -548,3 +548,17 @@ func TestBusyAndHeadOnly(t *testing.T) {
 		t.Error("the page does not say only the head was kept")
 	}
 }
+
+// The request page says what of the configured reply HTTP did not send.
+func TestWithheldShown(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/w")
+	r := e.add(t, ep.ID, "", func(r *store.Request) {
+		r.Status = 204
+		r.Outcome = emulate.Outcome{Source: emulate.FromDefault, Action: emulate.ActReply, Status: 204,
+			Withheld: "body of 11 B not sent: a 204 reply has none"}.String()
+	})
+	if ex := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(r.ID), nil).Body.String(); !strings.Contains(ex, "The configured reply's body of 11 B not sent: a 204 reply has none.") {
+		t.Error("the page does not say what was withheld")
+	}
+}

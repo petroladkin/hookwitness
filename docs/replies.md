@@ -175,6 +175,9 @@ in plain text, so never put real secrets there; secrets have their own tab
 Response headers go out as Go's HTTP server writes them: sorted by name,
 with a repeated header keeping its order. `Content-Length`,
 `Transfer-Encoding` and `Connection` belong to the server and cannot be set.
+A `204` or `304` reply, or any reply to a `HEAD` request, goes without a body
+(and a `304` without `Content-Type`), as HTTP requires; the request page
+records what was sent and says what of the configured reply was not.
 
 Every reply also carries `Content-Security-Policy: sandbox` and
 `X-Content-Type-Options: nosniff`. A catch path shares its origin with the

@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -43,11 +45,14 @@ type Outcome struct {
 	// body is not UTF-8: kept exactly rather than as a lossy string.
 	BodyBase64 string `json:"body_base64,omitempty"`
 	Cut        bool   `json:"cut,omitempty"` // the body is truncated
-	DelayMs    int64  `json:"delay_ms,omitempty"`
-	WaitedMs   int64  `json:"waited_ms,omitempty"` // a timeout: how long the sender waited
-	Error      string `json:"error,omitempty"`
-	Would      int    `json:"would_status,omitempty"` // abandoned: the status the reply would have had
-	Counter    int64  `json:"counter,omitempty"`      // the request's number since the reset
+	// Withheld says what of the configured reply HTTP did not send: a
+	// body (and some headers) with 204 or 304, a body to a HEAD request.
+	Withheld string `json:"withheld,omitempty"`
+	DelayMs  int64  `json:"delay_ms,omitempty"`
+	WaitedMs int64  `json:"waited_ms,omitempty"` // a timeout: how long the sender waited
+	Error    string `json:"error,omitempty"`
+	Would    int    `json:"would_status,omitempty"` // abandoned: the status the reply would have had
+	Counter  int64  `json:"counter,omitempty"`      // the request's number since the reset
 }
 
 // SetReply records the reply actually sent.
@@ -146,4 +151,40 @@ func (o Outcome) HeldUp() bool { return o.Action == ActTimeout || o.Action == Ac
 // Good reports a 2xx answer; the strip marks the rest.
 func (o Outcome) Good() bool {
 	return (o.Action == ActReply) && o.Status >= 200 && o.Status < 300
+}
+
+// AsSent is the reply as HTTP sends it for a request of method, as Go's
+// server does: a 204 (or 1xx) reply has no body, Content-Length or
+// Transfer-Encoding; a 304 neither those nor Content-Type; a reply to HEAD
+// has its headers but no body. withheld says what was dropped, "" when
+// nothing was.
+func (r Rendered) AsSent(method string) (sent Rendered, withheld string) {
+	var drop []string
+	var why string
+	switch {
+	case r.Status == http.StatusNotModified:
+		drop, why = []string{"Content-Type", "Content-Length", "Transfer-Encoding"}, "a 304 reply has none"
+	case r.Status == http.StatusNoContent || r.Status/100 == 1:
+		drop, why = []string{"Content-Length", "Transfer-Encoding"}, fmt.Sprintf("a %d reply has none", r.Status)
+	case method == http.MethodHead:
+		why = "the request was HEAD"
+	default:
+		return r, ""
+	}
+	sent = Rendered{Status: r.Status}
+	var notes []string
+	if len(r.Body) > 0 {
+		notes = append(notes, fmt.Sprintf("body of %d B", len(r.Body)))
+	}
+	for _, h := range r.Headers {
+		if slices.ContainsFunc(drop, func(d string) bool { return strings.EqualFold(d, h.Name) }) {
+			notes = append(notes, "header "+h.Name)
+			continue
+		}
+		sent.Headers = append(sent.Headers, h)
+	}
+	if len(notes) == 0 {
+		return sent, ""
+	}
+	return sent, strings.Join(notes, ", ") + " not sent: " + why
 }
