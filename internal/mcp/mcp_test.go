@@ -8,11 +8,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,7 +43,10 @@ type env struct {
 	session *sdk.ClientSession
 	catcher *catch.Handler
 	logs    *syncBuffer
-	results *syncBuffer // every tool result's text, for the leak test
+	results *syncBuffer   // every tool result's text, for the leak test
+	stop    func()        // the server shuts down
+	polls   *atomic.Int64 // API long-polls asked for
+	inPoll  *atomic.Int64 // API long-polls running now
 }
 
 // newEnv is the REST API and the catcher on one store, and an MCP client
@@ -61,11 +66,21 @@ func newEnv(t *testing.T) env {
 	logs := &syncBuffer{}
 	log := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	stop := make(chan struct{})
-	t.Cleanup(func() { close(stop) })
+	stopOnce := sync.OnceFunc(func() { close(stop) })
+	t.Cleanup(stopOnce)
 	a := api.New(st, lv, log, api.Options{Prefix: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: stop, Version: "v0.0.0-test"})
 	catcher := &catch.Handler{Store: st, Live: lv, Log: log, MaxBody: 1 << 20, Retention: 1000, Keys: keys}
 
-	srv := NewServer(a, api.Base("/admin"), "127.0.0.1:8080", "v0.0.0-test")
+	polls, inPoll := &atomic.Int64{}, &atomic.Int64{}
+	counted := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("wait") != "" {
+			polls.Add(1)
+			inPoll.Add(1)
+			defer inPoll.Add(-1)
+		}
+		a.ServeHTTP(w, r)
+	})
+	srv := NewServer(counted, api.Base("/admin"), "127.0.0.1:8080", "v0.0.0-test", stop)
 	ct, stt := sdk.NewInMemoryTransports()
 	ss, err := srv.Connect(context.Background(), stt, nil)
 	if err != nil {
@@ -78,7 +93,7 @@ func newEnv(t *testing.T) env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { cs.Close() })
-	return env{cs, catcher, logs, &syncBuffer{}}
+	return env{cs, catcher, logs, &syncBuffer{}, stopOnce, polls, inPoll}
 }
 
 // call calls a tool; it fails the test on a protocol error, not on a tool
@@ -328,5 +343,50 @@ func TestWaitChainsLongPolls(t *testing.T) {
 	got, _ = e.ok(t, "wait_for_request", map[string]any{"endpoint": "/chain", "timeout_s": 5})
 	if got["arrived"] != true {
 		t.Fatal("a request arriving after the first long-poll of the chain is missed")
+	}
+}
+
+// A wait ends when the server shuts down: one long-poll, then a tool error
+// that says so and how far it got, instead of asking the API again and
+// again until the deadline (the API answers every wait at once then).
+func TestWaitEndsAtShutdown(t *testing.T) {
+	e := newEnv(t)
+	e.ok(t, "create_endpoint", map[string]any{"path": "/s"})
+	type answer struct {
+		res  *sdk.CallToolResult
+		text string
+	}
+	start := func(name string, args map[string]any) chan answer {
+		ch := make(chan answer, 1)
+		go func() {
+			res, text := e.call(t, context.Background(), name, args)
+			ch <- answer{res, text}
+		}()
+		return ch
+	}
+	waitFor := func(what string, cond func() bool) {
+		deadline := time.Now().Add(10 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("waited too long for %s", what)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	waiting := start("expect", map[string]any{"endpoint": "/s", "count": 2, "within_s": 30})
+	waitFor("the first long-poll", func() bool { return e.inPoll.Load() == 1 })
+	e.deliver("/s", `{"n":1}`)
+	waitFor("the second long-poll", func() bool { return e.polls.Load() == 2 && e.inPoll.Load() == 1 })
+	e.stop()
+	a := <-waiting
+	if !a.res.IsError || !strings.Contains(a.text, "shutting down; 1 of 2 matched so far") {
+		t.Fatalf("%v %s", a.res.IsError, a.text)
+	}
+	if n := e.polls.Load(); n != 2 {
+		t.Fatalf("%d long-polls; the wait asked again after the shutdown", n)
+	}
+	a = <-start("wait_for_request", map[string]any{"endpoint": "/s", "timeout_s": 30})
+	if !a.res.IsError || !strings.Contains(a.text, "shutting down; 0 of 1 matched") || e.polls.Load() != 2 {
+		t.Fatalf("after the shutdown: %s, %d long-polls", a.text, e.polls.Load())
 	}
 }
