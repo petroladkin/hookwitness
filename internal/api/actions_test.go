@@ -199,3 +199,17 @@ func TestMaskedReportKeepsBareCredentialsOut(t *testing.T) {
 		}
 	}
 }
+
+// A report that fails before its first byte (the store is gone) is an error
+// answer, not 200 with an empty file.
+func TestReportFailsBeforeWriting(t *testing.T) {
+	e := newEnv(t)
+	e.st.Close()
+	for _, f := range []string{"md", "html", "pdf"} {
+		rec := e.do("GET", "/unmatched/report?format="+f, "")
+		if rec.Header().Get("Content-Disposition") != "" {
+			t.Errorf("%s: a download was started: %v", f, rec.Header())
+		}
+		wantError(t, rec, http.StatusInternalServerError, "internal", "")
+	}
+}

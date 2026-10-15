@@ -176,11 +176,17 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request, reg int64, path
 		s.Through = through
 		return h.store.EachSelected(ctx, reg, s, withBody, fn)
 	}
-	w.Header().Set("Content-Type", rq.Format.ContentType())
-	w.Header().Set("Content-Disposition", `attachment; filename="`+report.FileName(path, now, rq.Format)+`"`)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if err := report.Write(r.Context(), w, rq.Format, o, src); err != nil {
-		h.log.Error("report", "endpoint", path, "err", err) // the status is sent; the download ends short
+	out := report.NewLazy(w, func() {
+		w.Header().Set("Content-Type", rq.Format.ContentType())
+		w.Header().Set("Content-Disposition", `attachment; filename="`+report.FileName(path, now, rq.Format)+`"`)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+	})
+	if err := report.Write(r.Context(), out, rq.Format, o, src); err != nil {
+		h.log.Error("report", "endpoint", path, "err", err)
+		if !out.Written() { // nothing sent yet: an error, not an empty file
+			WriteError(w, http.StatusInternalServerError, "internal", "the report could not be made", "")
+		}
+		// otherwise the status is sent; the download ends short
 	}
 }
 

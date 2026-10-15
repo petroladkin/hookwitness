@@ -114,6 +114,29 @@ func FileName(endpoint string, at time.Time, f Format) string {
 	return "hookwitness-" + name + "-" + at.UTC().Format("20060102T150405Z") + "." + string(f)
 }
 
+// Lazy is a writer that calls start just before its first byte: a handler
+// sets the download's headers there, so a report that fails before writing
+// anything can still be answered with an error instead of an empty file.
+type Lazy struct {
+	w       io.Writer
+	start   func()
+	written bool
+}
+
+// NewLazy writes to w, calling start before the first byte.
+func NewLazy(w io.Writer, start func()) *Lazy { return &Lazy{w: w, start: start} }
+
+func (l *Lazy) Write(p []byte) (int, error) {
+	if !l.written {
+		l.written = true
+		l.start()
+	}
+	return l.w.Write(p)
+}
+
+// Written reports whether any byte was written.
+func (l *Lazy) Written() bool { return l.written }
+
 // Write writes the report of the requests src yields.
 func Write(ctx context.Context, w io.Writer, f Format, o Options, src Source) error {
 	h, err := summarize(ctx, o, src)

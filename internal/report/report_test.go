@@ -338,3 +338,18 @@ func TestReportItemsMatchTheSummary(t *testing.T) {
 		t.Fatalf("items bounded by %d:\n%s", bodyPass, md)
 	}
 }
+
+// Lazy starts the download (its headers) only with the first byte.
+func TestLazy(t *testing.T) {
+	var buf bytes.Buffer
+	started := 0
+	l := NewLazy(&buf, func() { started++ })
+	if l.Written() || started != 0 {
+		t.Fatal("started before writing")
+	}
+	l.Write([]byte("a"))
+	l.Write([]byte("b"))
+	if !l.Written() || started != 1 || buf.String() != "ab" {
+		t.Fatalf("written %v, started %d, %q", l.Written(), started, buf.String())
+	}
+}

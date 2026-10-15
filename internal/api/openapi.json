@@ -768,6 +768,16 @@
                 }
               }
             }
+          },
+          "500": {
+            "description": "The report could not be made before any of it was sent (`internal`); the log says why. Once sending has begun, a failure ends the download short instead.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -1091,6 +1101,16 @@
           },
           "422": {
             "description": "A parameter or field is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The report could not be made before any of it was sent (`internal`); the log says why. Once sending has begun, a failure ends the download short instead.",
             "content": {
               "application/json": {
                 "schema": {

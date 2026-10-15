@@ -136,11 +136,17 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
 		s.Through = through
 		return h.store.EachSelected(ctx, reg, s, withBody, fn)
 	}
-	w.Header().Set("Content-Type", format.ContentType())
-	w.Header().Set("Content-Disposition", `attachment; filename="`+report.FileName(ep.Path, now, format)+`"`)
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if err := report.Write(ctx, w, format, o, src); err != nil {
+	out := report.NewLazy(w, func() {
+		w.Header().Set("Content-Type", format.ContentType())
+		w.Header().Set("Content-Disposition", `attachment; filename="`+report.FileName(ep.Path, now, format)+`"`)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+	})
+	if err := report.Write(ctx, out, format, o, src); err != nil {
+		if !out.Written() {
+			h.fail(w, "report", err) // nothing sent yet: an error page, not an empty file
+			return
+		}
 		// The status is sent; the download ends short and the log says why.
 		h.log.Error("report", "endpoint", ep.Path, "err", err)
 	}
