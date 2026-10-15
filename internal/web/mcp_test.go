@@ -147,3 +147,27 @@ func TestMCPSessionsForgotten(t *testing.T) {
 		}
 	}
 }
+
+// A session that begins while the server is stopping is closed too, so it
+// cannot hold the stop up.
+func TestMCPSessionAfterClose(t *testing.T) {
+	e := newEnv(t)
+	srv := httptest.NewServer(e.h)
+	defer srv.Close()
+	e.h.mcp.CloseSessions()
+	cl := sdk.NewClient(&sdk.Implementation{Name: "test", Version: "1"}, nil)
+	cs, err := cl.Connect(context.Background(), &sdk.StreamableClientTransport{Endpoint: srv.URL + "/admin/mcp", MaxRetries: -1}, nil)
+	if err != nil {
+		return // refused outright: also closed
+	}
+	defer cs.Close()
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		res, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "list_endpoints", Arguments: map[string]any{}})
+		if err != nil {
+			return // the session is gone
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a session begun after the close still answers: %v", res)
+		}
+	}
+}
