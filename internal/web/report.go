@@ -131,8 +131,10 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
 	if format == report.HTML {
 		o.Fonts, _ = fs.Sub(staticFS, "static")
 	}
-	src := func(ctx context.Context, withBody bool, fn func(store.Request) error) error {
-		return h.store.EachSelected(ctx, reg, sel, withBody, fn)
+	src := func(ctx context.Context, withBody bool, through int64, fn func(store.Request) error) error {
+		s := sel
+		s.Through = through
+		return h.store.EachSelected(ctx, reg, s, withBody, fn)
 	}
 	w.Header().Set("Content-Type", format.ContentType())
 	w.Header().Set("Content-Disposition", `attachment; filename="`+report.FileName(ep.Path, now, format)+`"`)

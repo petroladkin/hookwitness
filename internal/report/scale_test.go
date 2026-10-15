@@ -50,8 +50,8 @@ func bigRegister(tb testing.TB, n int) (*store.Store, int64) {
 }
 
 func storeSource(st *store.Store, ep int64) Source {
-	return func(ctx context.Context, withBody bool, fn func(store.Request) error) error {
-		return st.EachSelected(ctx, ep, store.Selection{}, withBody, fn)
+	return func(ctx context.Context, withBody bool, through int64, fn func(store.Request) error) error {
+		return st.EachSelected(ctx, ep, store.Selection{Through: through}, withBody, fn)
 	}
 }
 
@@ -70,8 +70,8 @@ func TestStreamed(t *testing.T) {
 		var atLast int64
 		src := storeSource(st, ep)
 		seen := 0
-		wrapped := func(ctx context.Context, withBody bool, fn func(store.Request) error) error {
-			return src(ctx, withBody, func(r store.Request) error {
+		wrapped := func(ctx context.Context, withBody bool, through int64, fn func(store.Request) error) error {
+			return src(ctx, withBody, through, func(r store.Request) error {
 				if withBody {
 					seen++
 					if seen == 300 {

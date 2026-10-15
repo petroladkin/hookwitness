@@ -292,6 +292,7 @@ func (s *Store) EachRequest(ctx context.Context, endpointID int64, fn func(Reque
 type Selection struct {
 	From, To time.Time
 	Nos      []int64
+	Through  int64 // no request with a larger id; 0: no bound
 }
 
 // EachSelected calls fn for the selected requests of a register, oldest
@@ -312,6 +313,10 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 	if !sel.To.IsZero() {
 		where += " AND received_at <= ?"
 		args = append(args, millis(sel.To))
+	}
+	if sel.Through > 0 {
+		where += " AND id <= ?"
+		args = append(args, sel.Through)
 	}
 	if len(sel.Nos) > 0 {
 		where += " AND no IN (?" + strings.Repeat(",?", len(sel.Nos)-1) + ")"

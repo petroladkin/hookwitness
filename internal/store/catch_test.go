@@ -453,6 +453,9 @@ func TestEachSelected(t *testing.T) {
 	if got := collect(Selection{Nos: []int64{nos[3]}, From: base.Add(time.Minute)}, false); len(got) != 0 {
 		t.Fatal("numbers and a range combine")
 	}
+	if got := collect(Selection{Through: ids[299]}, false); len(got) != 300 || got[299].ID != ids[299] {
+		t.Fatalf("through: %d", len(got))
+	}
 }
 
 func TestListFiltersAndSetPath(t *testing.T) {

@@ -171,8 +171,10 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request, reg int64, path
 		Endpoint: path, Selection: rq.Words, From: rq.Selection.From, To: rq.Selection.To,
 		Mask: rq.Mask, Version: h.o.Version, Generated: now, NoImages: rq.NoImages, Fonts: h.o.Fonts,
 	}
-	src := func(ctx context.Context, withBody bool, fn func(store.Request) error) error {
-		return h.store.EachSelected(ctx, reg, rq.Selection, withBody, fn)
+	src := func(ctx context.Context, withBody bool, through int64, fn func(store.Request) error) error {
+		s := rq.Selection
+		s.Through = through
+		return h.store.EachSelected(ctx, reg, s, withBody, fn)
 	}
 	w.Header().Set("Content-Type", rq.Format.ContentType())
 	w.Header().Set("Content-Disposition", `attachment; filename="`+report.FileName(path, now, rq.Format)+`"`)
