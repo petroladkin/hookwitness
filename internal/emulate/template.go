@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"text/template/parse"
 	"time"
@@ -26,8 +27,16 @@ const renderTimeout = time.Second
 // build an unbounded reply.
 const maxRendered = 1 << 20
 
-func parseTemplate(s string) (*template.Template, error) {
-	t, err := template.New("").Option("missingkey=zero").Parse(s)
+func parseTemplate(s string) (*template.Template, error) { return parseGuarded(s, nil) }
+
+// parseGuarded parses with the string-making builtins replaced by g's
+// bounded ones; nil keeps the builtins (enough to validate the syntax).
+func parseGuarded(s string, g *guard) (*template.Template, error) {
+	t := template.New("").Option("missingkey=zero")
+	if g != nil {
+		t = t.Funcs(g.funcs())
+	}
+	t, err := t.Parse(s)
 	if err != nil {
 		// "template: :1: unexpected ..." -> "line 1: unexpected ..."
 		msg := strings.TrimPrefix(err.Error(), "template: :")
@@ -90,7 +99,7 @@ type Data struct {
 	req    Request
 	query  url.Values
 	json   any
-	parsed bool
+	parsed sync.Once // a render cut off by its deadline may still be running
 }
 
 // NewData prepares the template data of a request.
@@ -117,14 +126,13 @@ func (d *Data) Query(name string) string { return d.query.Get(name) }
 // JSON is the value at a dotted path in the JSON body ("a.b.0.c"): a string
 // as it is, anything else as compact JSON, "" when absent or not JSON.
 func (d *Data) JSON(path string) string {
-	if !d.parsed {
-		d.parsed = true
+	d.parsed.Do(func() {
 		dec := json.NewDecoder(bytes.NewReader(d.req.Body))
 		dec.UseNumber()
 		if dec.Decode(&d.json) != nil {
 			d.json = nil
 		}
-	}
+	})
 	v := d.json
 	if path != "" {
 		for _, key := range strings.Split(path, ".") {
@@ -166,9 +174,13 @@ var errTooLarge = fmt.Errorf("the rendered body is over %d bytes", maxRendered)
 type capped struct {
 	bytes.Buffer
 	limit int
+	g     *guard
 }
 
 func (c *capped) Write(p []byte) (int, error) {
+	if c.g.stopped.Load() {
+		return 0, errStopped
+	}
 	if c.Len()+len(p) > c.limit {
 		return 0, errTooLarge
 	}
@@ -212,21 +224,27 @@ func renderUpTo(src string, d *Data, limit int) (string, error) {
 	if !strings.Contains(src, "{{") {
 		return src, nil
 	}
-	t, err := parseTemplate(src)
+	g := newGuard(limit)
+	t, err := parseGuarded(src, g)
 	if err != nil {
 		return "", err
 	}
-	// The template language cannot loop here, but a deadline keeps a request
-	// from hanging on anything unforeseen; the result is then dropped.
-	buf := capped{limit: limit}
+	// The template language cannot loop here, and the guard bounds what its
+	// functions build; a deadline keeps a request from hanging on anything
+	// unforeseen. A render past it is stopped at its next write or function
+	// call, and its result is dropped.
+	buf := capped{limit: limit, g: g}
 	done := make(chan error, 1)
 	go func() { done <- t.Execute(&buf, d) }()
+	timer := time.NewTimer(renderTimeout)
+	defer timer.Stop()
 	select {
 	case err := <-done:
 		if err != nil {
 			return "", errors.New(execError.ReplaceAllString(strings.TrimPrefix(err.Error(), "template: "), "line $1, column $2: "))
 		}
-	case <-time.After(renderTimeout):
+	case <-timer.C:
+		g.stopped.Store(true)
 		return "", fmt.Errorf("rendering took over %s", renderTimeout)
 	}
 	return buf.String(), nil
