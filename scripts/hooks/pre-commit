@@ -52,7 +52,10 @@ fi
 # expression per line, matched case-insensitively), staged added lines that
 # match any of them are refused. The list lives outside the repository so that
 # the repository does not itself publish what it is meant to keep out.
-patterns="$(git rev-parse --git-dir)/info/private-patterns"
+#
+# The list is read from the repository's common git directory, so a linked
+# worktree (git worktree add) is guarded by the same list as the main one.
+patterns="$(git rev-parse --git-common-dir)/info/private-patterns"
 if [ -s "$patterns" ]; then
   hits=$(git diff --cached -U0 --no-color --diff-filter=d \
     | grep -E '^(\+\+\+ |\+)' \

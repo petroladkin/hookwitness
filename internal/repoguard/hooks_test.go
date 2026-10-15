@@ -162,3 +162,31 @@ func TestPreCommitHook(t *testing.T) {
 		})
 	}
 }
+
+// A linked worktree is guarded by the main repository's deny-list: the list
+// lives in .git/info of the main checkout only.
+func TestPreCommitHookInAWorktree(t *testing.T) {
+	r := newHookRepo(t)
+	r.commit(map[string]string{"README": "base\n"})
+	wt := filepath.Join(t.TempDir(), "wt")
+	r.git("worktree", "add", "-q", "-b", "feature/wt", wt)
+	w := &hookRepo{t: t, dir: wt, env: r.env}
+	w.write("a.txt", "see zz-hookguard-5\n")
+	w.git("add", "a.txt")
+	if allowed, out := w.hook(t); allowed {
+		t.Fatalf("a private line committed from a worktree:\n%s", out)
+	}
+	// The commit message is guarded the same way.
+	if _, err := os.ReadFile(filepath.Join(moduleRoot(t), "scripts", "hooks", "commit-msg")); err != nil {
+		t.Fatal(err)
+	}
+	msg := filepath.Join(t.TempDir(), "MSG")
+	if err := os.WriteFile(msg, []byte("fix: see zz-hookguard-6\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", filepath.Join(moduleRoot(t), "scripts", "hooks", "commit-msg"), msg)
+	cmd.Dir, cmd.Env = wt, r.env
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("a private commit message from a worktree:\n%s", out)
+	}
+}
