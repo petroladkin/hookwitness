@@ -45,6 +45,10 @@ const heartbeat = 25 * time.Second
 
 // Handler serves the UI. Create it with New.
 type Handler struct {
+	// beforeSave runs between reading and saving a behaviour edit (tests
+	// make a concurrent change there).
+	beforeSave func()
+
 	store   *store.Store
 	live    *live.Broker
 	log     *slog.Logger
