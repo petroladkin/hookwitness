@@ -203,3 +203,22 @@ func TestMCPCommand(t *testing.T) {
 		t.Fatalf("mcp with a bad URL: %d %q", code, errOut.String())
 	}
 }
+
+// A key check that cannot run (a broken database) is logged, not skipped.
+func TestCheckKeyLogsItsError(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(context.Background(), filepath.Join(dir, "hw.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := secret.Load("", filepath.Join(dir, "hw.db.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	var logs bytes.Buffer
+	checkKey(context.Background(), st, keys, "hw.db.key", slog.New(slog.NewTextHandler(&logs, nil)))
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "cannot check the secret key against the database") {
+		t.Fatalf("log: %s", logs.String())
+	}
+}
