@@ -252,7 +252,7 @@ func TestRefusalDoesNotRunRequestText(t *testing.T) {
 	r := Request{Headers: []Header{{"Authorization", "{{.Var.A}} x"}}}
 	_, f := c.Verify(r, time.Now(), true, keyring{})
 	out, err := f.Refusal().Render(NewData(r, c.Vars, 0))
-	if err != nil || strings.Contains(string(out.Body), "leak") || !strings.Contains(string(out.Body), "scheme is {{.Var.A}}, not Bearer") {
+	if err != nil || strings.Contains(string(out.Body), "leak") || !strings.Contains(string(out.Body), "scheme is not Bearer") {
 		t.Fatalf("%q %v", out.Body, err)
 	}
 }

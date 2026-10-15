@@ -320,3 +320,31 @@ func TestParserLeniency(t *testing.T) {
 	ph := HMACParams{Header: "X-Sig", Algo: "sha256", Encoding: "hex", Prefix: "sha256="}
 	check(t, "upper-case hex", HMAC(in(gh.Body, "X-Sig", strings.ToUpper(gh.Header[:7])[:0]+"sha256="+strings.ToUpper(gh.Header[7:])), ph, gh.Secret, []byte(gh.Body)), outcome{Pass, "signature matches"})
 }
+
+// A reason never quotes the Authorization value: a sender that leaves out
+// the scheme sends the credential bare, and reasons are shown and reported
+// unmasked. Only a registered scheme's name is quoted.
+func TestReasonsKeepCredentialsOut(t *testing.T) {
+	pw, tok := equals("pw_test"), equals("tok_test")
+	for _, c := range []struct{ header, secret, bearer, basic string }{
+		{"sk_test_51Hsecret", "sk_test_51Hsecret", `Authorization is not "Bearer <credentials>"`, `Authorization is not "Basic <credentials>"`},
+		{"dXNlcjpwYXNz", "dXNlcjpwYXNz", `Authorization is not "Bearer <credentials>"`, `Authorization is not "Basic <credentials>"`},
+		{"tok123 extra", "tok123", "scheme is not Bearer", "scheme is not Basic"},
+		{"Token tok_live_9", "tok_live_9", "scheme is not Bearer", "scheme is not Basic"},
+		{"Digest u=1", "u=1", "scheme is Digest, not Bearer", "scheme is Digest, not Basic"},
+	} {
+		x := in("", "Authorization", c.header)
+		x.HasBody = false
+		for _, v := range []struct {
+			got  Verdict
+			want string
+		}{{Bearer(x, tok), c.bearer}, {Basic(x, "qa", pw), c.basic}} {
+			if v.got.Result != Fail || v.got.Reason != v.want {
+				t.Errorf("%q: %v %q, want %q", c.header, v.got.Result, v.got.Reason, v.want)
+			}
+			if strings.Contains(v.got.Reason, c.secret) {
+				t.Errorf("%q: the reason quotes the credential: %q", c.header, v.got.Reason)
+			}
+		}
+	}
+}
