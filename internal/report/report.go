@@ -490,7 +490,7 @@ func (h *Head) item(r store.Request) Item {
 		paths := map[string]bool{}
 		for _, f := range picture.Find(r.Body, ct, it.Verdicts) {
 			img := ItemImage{Found: f}
-			if !h.noImages && f.Error == "" && picture.Decodable(f.Type) {
+			if !h.noImages && f.Error == "" && f.NotChecked == "" && picture.Decodable(f.Type) {
 				img.Data, _ = picture.At(r.Body, f.Path)
 			}
 			it.Images = append(it.Images, img)
@@ -713,6 +713,9 @@ func imageNote(f picture.Found) string {
 	}
 	if f.Error != "" {
 		parts = append(parts, "not valid: "+f.Error)
+	}
+	if f.NotChecked != "" {
+		parts = append(parts, "not checked: "+f.NotChecked)
 	}
 	return strings.Join(parts, " · ")
 }

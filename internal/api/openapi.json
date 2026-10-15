@@ -1720,6 +1720,10 @@
           },
           "error": {
             "type": "string"
+          },
+          "not_checked": {
+            "type": "string",
+            "description": "Why the image's pixels were not decoded (it would take too much memory); its header was checked."
           }
         },
         "required": [

@@ -57,6 +57,9 @@ func Find(body []byte, contentType string, verdicts []auth.Verdict) []Found {
 
 // Describe inspects decoded image bytes: type, size, dimensions, digest,
 // and the reason it is not a valid image (of the declared type when given).
+// The full check is remembered by digest, so showing a request again does
+// not decode its images again; images a schema declared are not decoded
+// here at all (Find takes them from the verdicts).
 func Describe(path string, b []byte, declared string) auth.Image {
 	img := auth.Image{Path: path, Declared: declared, Size: len(b)}
 	sum := sha256.Sum256(b)
@@ -64,8 +67,12 @@ func Describe(path string, b []byte, declared string) auth.Image {
 	if declared == "" {
 		declared = Any
 	}
-	info, err := Verify(b, declared)
-	img.Type, img.Width, img.Height = info.Type, info.Width, info.Height
+	v := verifyViewed(b, sum)
+	info, err := v.info, v.err
+	if err == nil && declared != Any && declared != info.Type {
+		err = fmt.Errorf("a %s, declared %s", short(info.Type), short(declared))
+	}
+	img.Type, img.Width, img.Height, img.NotChecked = info.Type, info.Width, info.Height, v.notChecked
 	if err != nil {
 		img.Error = err.Error()
 	}
