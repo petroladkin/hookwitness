@@ -82,6 +82,7 @@ func TestHoldReleasesTheBody(t *testing.T) {
 	fire := make(chan time.Time)
 	h.after = func(time.Duration) <-chan time.Time { return fire }
 	url := serve(t, h)
+	t.Cleanup(func() { close(fire) }) // before the server's own cleanup: the hold ends first
 	ep := configure(t, st, "/slow", emulate.Config{Default: emulate.Reply{Status: 200},
 		Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenEvery, N: 1}, Do: emulate.ActTimeout}}})
 	go do(t, http.DefaultClient, "POST", url+"/slow", strings.Repeat("a", 60<<10))
@@ -90,7 +91,6 @@ func TestHoldReleasesTheBody(t *testing.T) {
 		return len(rs) == 1 && emulate.ParseOutcome(rs[0].Outcome, rs[0].Status).Action == emulate.ActTimeout
 	})
 	waitFor(t, "the body to be released during the hold", func() bool { return h.heldNow() == 0 })
-	close(fire)
 }
 
 // The template data, which copies the body, is made before the store's
