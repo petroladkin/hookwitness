@@ -151,9 +151,11 @@ func TestBudget(t *testing.T) {
 	}
 }
 
-// At most two full decodes run at once, however many are asked for.
+// At most two full decodes run at once, however many are asked for: six
+// callers start, the first two are held inside the decode, and the other
+// four get every chance to join them before anything is released.
 func TestGate(t *testing.T) {
-	var now, most atomic.Int64
+	var now, most, started atomic.Int64
 	release := make(chan struct{})
 	old := decodeFull
 	decodeFull = func([]byte) error {
@@ -168,16 +170,18 @@ func TestGate(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 6 {
 		wg.Add(1)
-		go func() { defer wg.Done(); full(nil) }()
+		go func() { defer wg.Done(); started.Add(1); full(nil) }()
 	}
-	for now.Load() < 2 { // wait until the gate is full
+	// Without the gate all six would be inside; with it two are, and the
+	// rest stay outside however long they are given.
+	for i := 0; i < 200_000 && (started.Load() < 6 || now.Load() < 6); i++ {
 		runtime.Gosched()
+	}
+	if most.Load() != 2 {
+		t.Fatalf("%d decodes at once", most.Load())
 	}
 	for range 6 {
 		release <- struct{}{}
 	}
 	wg.Wait()
-	if most.Load() != 2 {
-		t.Fatalf("%d decodes at once", most.Load())
-	}
 }

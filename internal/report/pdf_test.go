@@ -97,13 +97,26 @@ func TestPDFImageKinds(t *testing.T) {
 	}
 	p := w.(*pdfWriter)
 	p.pdf.AddPage()
-	bad := ItemImage{Found: picture.Found{Image: auth.Image{Type: picture.WebP, Width: 10, Height: 10}}, Data: []byte("RIFF....WEBPVP8 nope")}
-	b, ok := p.picture(bad)
-	if !ok {
-		t.Fatal("no frame")
+	half := image.NewNRGBA(image.Rect(0, 0, 10, 10)) // with alpha: the writer inflates it when it draws
+	for i := range half.Pix {
+		half.Pix[i] = 0x80
 	}
-	b.draw(100)
-	if p.err != nil {
-		t.Fatalf("the report fails: %v", p.err)
+	var good bytes.Buffer
+	png.Encode(&good, half)
+	broken := bytes.Clone(good.Bytes())
+	broken[len(broken)-20] ^= 0xff // inside the compressed pixels: "zlib: invalid checksum" when drawn
+	for name, data := range map[string][]byte{"undecodable": []byte("RIFF....WEBPVP8 nope"), "fails to draw": broken} {
+		typ := picture.WebP
+		if name == "fails to draw" {
+			typ = picture.PNG
+		}
+		b, ok := p.picture(ItemImage{Found: picture.Found{Image: auth.Image{Type: typ, Width: 10, Height: 10}}, Data: data})
+		if !ok {
+			t.Fatalf("%s: no frame", name)
+		}
+		b.draw(100)
+		if p.err != nil {
+			t.Fatalf("%s: the report fails: %v", name, p.err)
+		}
 	}
 }
