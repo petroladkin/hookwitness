@@ -21,6 +21,7 @@ type Config struct {
 	DBPath      string        // sqlite file
 	LogFormat   string        // "text" or "json"
 	MaxBody     int64         // largest request body kept, in bytes
+	MaxInFlight int64         // bytes of request bodies held at once; over it requests get 503
 	Retention   int           // requests kept per endpoint
 	AdminPrefix string        // path prefix of the web UI, e.g. /admin
 	AdminHosts  []string      // host names the UI answers to besides IPs and localhost
@@ -36,6 +37,13 @@ const (
 	DefaultRetention   = "1000"
 	DefaultAdminPrefix = "/admin"
 	DefaultMaxWait     = "5m"
+
+	// MaxBodyLimit is the largest -max-body: sqlite stores a value of at
+	// most about 1e9 bytes, and a body is read whole before it is stored.
+	MaxBodyLimit = 512 << 20
+	// minInFlight is the default -max-inflight unless twice -max-body is
+	// more.
+	minInFlight = 256 << 20
 )
 
 type setting struct {
@@ -47,12 +55,13 @@ type setting struct {
 // getenv. Usage and errors from the flag package go to out.
 func Parse(args []string, getenv func(string) string, out io.Writer) (Config, error) {
 	var c Config
-	var maxBody, retention, adminHosts, maxWait string
+	var maxBody, maxInFlight, retention, adminHosts, maxWait string
 	settings := []setting{
 		{"addr", "HOOKWITNESS_ADDR", DefaultAddr, "listen address (host:port)", &c.Addr},
 		{"db", "HOOKWITNESS_DB", DefaultDBPath, "path to the sqlite database file", &c.DBPath},
 		{"log-format", "HOOKWITNESS_LOG_FORMAT", DefaultLogFormat, "log format: text or json", &c.LogFormat},
 		{"max-body", "HOOKWITNESS_MAX_BODY", DefaultMaxBody, "largest request body to keep, in bytes or with KiB/MiB/GiB; a larger one is answered 413", &maxBody},
+		{"max-inflight", "HOOKWITNESS_MAX_INFLIGHT", "", "bytes of request bodies held at once, with KiB/MiB/GiB; over it a request is answered 503 (default: the larger of 256MiB and twice max-body)", &maxInFlight},
 		{"retention", "HOOKWITNESS_RETENTION", DefaultRetention, "requests kept per endpoint; the oldest are pruned", &retention},
 		{"admin-prefix", "HOOKWITNESS_ADMIN_PREFIX", DefaultAdminPrefix, "path prefix of the web UI; requests under it are never caught", &c.AdminPrefix},
 		{"admin-hosts", "HOOKWITNESS_ADMIN_HOSTS", "", "comma-separated host names the web UI answers to, besides IP addresses and localhost", &adminHosts},
@@ -84,6 +93,18 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 	var err error
 	if c.MaxBody, err = parseSize(maxBody); err != nil {
 		return Config{}, fmt.Errorf("invalid max body %q: %w", maxBody, err)
+	}
+	if c.MaxBody > MaxBodyLimit {
+		return Config{}, fmt.Errorf("invalid max body %q: want at most 512 MiB: larger bodies cannot be stored in sqlite", maxBody)
+	}
+	c.MaxInFlight = max(minInFlight, 2*c.MaxBody)
+	if maxInFlight != "" {
+		if c.MaxInFlight, err = parseSize(maxInFlight); err != nil {
+			return Config{}, fmt.Errorf("invalid max in-flight %q: %w", maxInFlight, err)
+		}
+		if c.MaxInFlight < c.MaxBody {
+			return Config{}, fmt.Errorf("invalid max in-flight %q: want at least max body (%d bytes), or no body that size could be read", maxInFlight, c.MaxBody)
+		}
 	}
 	n, err := strconv.Atoi(retention)
 	if err != nil || n < 1 {

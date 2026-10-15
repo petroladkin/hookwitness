@@ -391,7 +391,9 @@ templ row(r rowView) {
 			</span>
 			<span class="t">{ clock(r.At) }</span>
 			<span class="ev">
-				if r.TooLarge {
+				if r.TooLarge && r.Outcome.Source == emulate.FromBusy {
+					Busy: 503, body not kept
+				} else if r.TooLarge {
 					Refused: body over the limit
 				} else if r.Detail != "" {
 					{ r.Detail }
@@ -449,7 +451,13 @@ templ exhibit(x exhibitView) {
 		@images(x)
 	}
 	<h2>Body</h2>
-	if x.TooLarge {
+	if x.TooLarge && x.Outcome.Source == emulate.FromBusy {
+		<div class="too">
+			Hookwitness was reading other bodies up to its <code>-max-inflight</code> limit when this one
+			arrived ({ size(x.Size) } declared), so it answered 503 with <code>Retry-After</code> and did not keep the body.
+			Start hookwitness with a larger <code>-max-inflight</code> if this happens under normal load.
+		</div>
+	} else if x.TooLarge {
 		<div class="too">
 			The sender tried to deliver { size(x.Size) }. The limit is { size(x.Limit) }, so the body was not kept
 			if x.Unmatch {
@@ -460,6 +468,12 @@ templ exhibit(x exhibitView) {
 			Start hookwitness with a larger <code>-max-body</code> to catch it.
 		</div>
 	} else {
+		if x.Kept < x.Size {
+			<p class="note">
+				Only the first { size(x.Kept) } of { size(x.Size) } were kept: the path has no endpoint, and the Unmatched
+				register keeps the start of a body.
+			</p>
+		}
 		switch x.Body.Kind {
 			case bodyEmpty:
 				<p class="note">No body.</p>

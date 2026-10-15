@@ -76,6 +76,15 @@ on `/hooks`, an 11 MB body gets `413` and this verdict:
 head -c 11000000 /dev/zero | curl -s -o /dev/null --data-binary @- http://127.0.0.1:8080/hooks   # n/v: body not kept (over the size limit)
 ```
 
+## A request got 503 "busy"
+
+Hookwitness was already reading as many bytes of request bodies as
+`-max-inflight` allows (by default the larger of 256 MiB and twice
+`-max-body`). The request was answered `503` with `Retry-After: 5`, kept
+without its body, and the register says **Busy**; a sender that retries gets
+through. If this happens under normal load, raise the limit
+(`HOOKWITNESS_MAX_INFLIGHT=1GiB`).
+
 ## My requests land in Unmatched with 404
 
 The path does not match an endpoint exactly. Compare them in the Unmatched

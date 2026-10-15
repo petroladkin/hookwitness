@@ -100,7 +100,8 @@ that makes it false.
   finding them in a request (schema verdicts, data:image strings, an image
   body) and reading one by JSON pointer.
 - `internal/payload` — a body and a query prepared for people: JSON
-  pretty-printed with tokens tagged (class, JSON pointer), the text test, the
+  pretty-printed with tokens tagged (class, JSON pointer; indentation capped
+  at 32 levels, no pointer past 128, so deep bodies stay small), the text test, the
   hex dump, query pairs; shared by the UI and the reports.
 - `internal/report` — reports of caught requests: Markdown, one HTML file
   (inline CSS, the UI's fonts as data URIs, a CSP that forbids requests, an
@@ -115,7 +116,8 @@ that makes it false.
   keyed fingerprints. Plain secret values never reach the store, the logs or
   a rendered page.
 - `internal/catch` — records and answers caught requests (body limit, 413,
-  404 + Unmatched); runs checks, lets the store decide the rule inside the
+  404 + Unmatched keeping a body's first 64 KiB; bodies held at once bounded
+  by `-max-inflight`, over it 503 "busy" without the body); runs checks, lets the store decide the rule inside the
   counter's transaction (exact under concurrency), then replies (with
   `Content-Security-Policy: sandbox` and `nosniff` unless the endpoint sets
   them: catch paths share the UI's origin), delays, holds (timeout) or

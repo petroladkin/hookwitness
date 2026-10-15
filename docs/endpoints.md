@@ -25,7 +25,9 @@ and **Delete** deletes the endpoint with its requests.
 A request to a path that is not an endpoint is answered `404` and kept in
 the **Unmatched** register, linked at the top of the Endpoints page. A typo
 in the sender's URL, a missing or extra trailing slash or a forgotten
-`/webhooks` suffix shows up there at once instead of disappearing.
+`/webhooks` suffix shows up there at once instead of disappearing. Any
+client that reaches the server can send there, so it keeps the first 64 KiB
+of a body (and its whole size), enough to recognise the request.
 
 <!-- docs-check: setup: stripe_endpoint -->
 ```sh

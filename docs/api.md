@@ -247,7 +247,10 @@ A list item:
 - `verdict` is the overall verdict of the authorization and schema checks:
   `fail` if any failed, else `n/v` if any could not verify, else `pass` if any
   passed, else `n/c` when none applied; `""` when the endpoint has none.
-- `body_kept` is false when the body was over `-max-body` (answered `413`).
+- `body_kept` is false when the body was over `-max-body` (answered `413`) or
+  the server was busy reading other bodies (answered `503`).
+- `body_cut` is true when only the start of the body was kept: the Unmatched
+  register keeps 64 KiB; `body_size` is the whole.
 
 One request adds:
 

@@ -23,11 +23,15 @@ import (
 // Handler catches requests to every path that is not reserved and answers
 // them the way each endpoint is configured (internal/emulate).
 type Handler struct {
-	Store     *store.Store
-	Live      *live.Broker
-	Log       *slog.Logger
-	MaxBody   int64 // larger bodies are answered 413 and not kept
-	Retention int   // requests kept per register
+	Store   *store.Store
+	Live    *live.Broker
+	Log     *slog.Logger
+	MaxBody int64 // larger bodies are answered 413 and not kept
+	// MaxInFlight bounds the bytes of request bodies held at once; a request
+	// whose body does not fit is answered 503 and kept without it. Zero
+	// means no bound.
+	MaxInFlight int64
+	Retention   int // requests kept per register
 	// BodyTimeout bounds reading a request's body; a sender that trickles it
 	// slower is cut off and nothing is kept. Zero means DefaultBodyTimeout.
 	BodyTimeout time.Duration
@@ -40,6 +44,9 @@ type Handler struct {
 	// after starts a wait's timer; tests replace it to see the durations
 	// asked for without waiting. Nil means a real timer.
 	after func(time.Duration) <-chan time.Time
+
+	heldMu sync.Mutex
+	held   int64 // bytes of bodies held now, against MaxInFlight
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -106,19 +113,28 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 		RemoteAddr: r.RemoteAddr,
 		Headers:    storeHeaders(r, headers, ok),
 	}
-	if !h.readBody(w, r, req) {
+	read, reserved := h.readBody(w, r, req)
+	// The body's bytes count against MaxInFlight until it is no longer
+	// needed: once stored and, for a reply, rendered (carryOut).
+	free := sync.OnceFunc(func() { h.release(reserved) })
+	defer free()
+	switch read {
+	case bodyFailed:
 		h.Log.Warn("catch: body could not be read; request not kept", "method", r.Method, "path", p, "remote", r.RemoteAddr)
 		http.Error(w, "could not read the request body", http.StatusBadRequest)
 		return
+	case bodyBusy:
+		h.Log.Warn("catch: too many bodies held at once; answered 503", "method", r.Method, "path", p, "held", h.heldNow())
 	}
 
-	plan := h.plan(req, cfgText)
+	busy := read == bodyBusy
+	plan := h.plan(req, cfgText, busy)
 	err = h.Store.AddRequest(ctx, req, h.Retention, plan.decide)
 	if errors.Is(err, store.ErrNotFound) {
 		// The endpoint was deleted after the lookup: the path is unknown now.
 		req.EndpointID = store.Unmatched
 		req.Verdict, req.Verdicts = "", "" // the endpoint's checks no longer apply
-		plan = h.plan(req, "")
+		plan = h.plan(req, "", busy)
 		err = h.Store.AddRequest(ctx, req, h.Retention, nil)
 	}
 	if err != nil {
@@ -131,6 +147,7 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 		h.Log.Info("unmatched request", "method", r.Method, "path", p, "remote", r.RemoteAddr, "no", req.No)
 	}
 
+	plan.free = free
 	if changed := h.carryOut(w, r, req, plan); changed {
 		if err := h.Store.UpdateOutcome(ctx, req.ID, plan.out.Status, plan.out.String()); err != nil {
 			h.Log.Error("catch: outcome not stored", "request", req.ID, "err", err)
@@ -149,12 +166,19 @@ type plan struct {
 	render  bool          // reply holds templates to render (else an empty reply)
 	closing bool          // close the connection after answering
 	decide  store.Decide  // set when the rules decide (the request passed the checks)
+	free    func()        // the body is no longer needed (MaxInFlight)
 }
 
 // plan works out the outcome for everything but the rules, which decide
 // inside the store's transaction (plan.decide), where the counter is exact.
-func (h *Handler) plan(req *store.Request, cfgText string) *plan {
+func (h *Handler) plan(req *store.Request, cfgText string, busy bool) *plan {
 	pl := &plan{}
+	if busy && req.EndpointID == store.Unmatched {
+		pl.out = busyOutcome()
+		req.Status, req.Outcome = pl.out.Status, pl.out.String()
+		pl.closing = true
+		return pl
+	}
 	if req.EndpointID == store.Unmatched {
 		pl.out = emulate.Outcome{Source: emulate.FromUnmatched, Action: emulate.ActReply, Status: http.StatusNotFound}
 		req.Status, req.Outcome = pl.out.Status, pl.out.String()
@@ -172,6 +196,12 @@ func (h *Handler) plan(req *store.Request, cfgText string) *plan {
 	// body was not kept (those that need it say "not verifiable").
 	verdicts, f := cfg.Verify(er, req.ReceivedAt, !req.TooLarge, h.Keys)
 	req.Verdict, req.Verdicts = emulate.Overall(verdicts), emulate.VerdictsJSON(verdicts)
+	if busy {
+		pl.out = busyOutcome()
+		req.Status, req.Outcome = pl.out.Status, pl.out.String()
+		pl.closing = true
+		return pl
+	}
 	if req.TooLarge {
 		pl.out = emulate.Outcome{Source: emulate.FromLimit, Action: emulate.ActReply, Status: http.StatusRequestEntityTooLarge}
 		req.Status, req.Outcome = pl.out.Status, pl.out.String()
@@ -185,9 +215,12 @@ func (h *Handler) plan(req *store.Request, cfgText string) *plan {
 		req.Status, req.Outcome = pl.out.Status, pl.out.String()
 		return pl
 	}
+	// The template data copies the body: made here, before the store's
+	// transaction, so the copy is not made while the store is locked.
+	pl.data = emulate.NewData(er, cfg.Vars, 0)
 	pl.decide = func(n int64) (int, string) {
 		ch := cfg.Choose(n)
-		pl.data = emulate.NewData(er, cfg.Vars, n)
+		pl.data.N = n
 		pl.out = emulate.Outcome{Source: emulate.FromDefault, Action: ch.Do, Counter: n}
 		if ch.Rule > 0 {
 			pl.out.Source, pl.out.Rule, pl.out.Label = emulate.FromRule, ch.Rule, ch.Label
@@ -213,6 +246,15 @@ func EmulateRequest(r store.Request) emulate.Request {
 // carryOut answers the request as planned and reports whether the outcome
 // changed from what was stored (measurements, errors).
 func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Request, pl *plan) bool {
+	if pl.free == nil {
+		pl.free = func() {}
+	}
+	if !pl.render {
+		// Nothing to render: the body is stored and needed no more, also
+		// during a hold.
+		req.Body, pl.data = nil, nil
+		pl.free()
+	}
 	switch pl.out.Action {
 	case emulate.ActTimeout:
 		pl.out.WaitedMs = h.hold(r, h.maxWait()).Milliseconds()
@@ -227,11 +269,16 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 			// The rest of the body is not wanted; do not drain it.
 			w.Header().Set("Connection", "close")
 		}
+		for _, x := range pl.out.Headers {
+			w.Header().Add(x.Name, x.Value)
+		}
 		w.Header().Set("Content-Length", "0")
 		w.WriteHeader(pl.out.Status)
 		return false
 	}
 	rendered, err := pl.reply.Render(pl.data)
+	req.Body, pl.data = nil, nil // rendered: the body is needed no more, also during a delay
+	pl.free()
 	if err != nil {
 		h.Log.Warn("catch: reply template failed; answered 500", "path", req.Path, "request", req.ID, "err", err)
 		pl.out.Action, pl.out.Error = emulate.ActError, err.Error()
@@ -306,12 +353,69 @@ func (h *Handler) closeSilently(w http.ResponseWriter, reset bool) {
 	conn.Close()
 }
 
-// readBody fills req's body fields; false means the body could not be read
-// (the sender went away or stalled).
-func (h *Handler) readBody(w http.ResponseWriter, r *http.Request, req *store.Request) bool {
+// unmatchedHead is the part of a body kept for a path with no endpoint: the
+// Unmatched register is open to anything that reaches the server, so it
+// keeps what shows a mistake, not whole uploads.
+const unmatchedHead = 64 << 10
+
+// retryAfter is what a busy answer asks the sender to wait, in seconds.
+const retryAfter = "5"
+
+func busyOutcome() emulate.Outcome {
+	return emulate.Outcome{Source: emulate.FromBusy, Action: emulate.ActReply, Status: http.StatusServiceUnavailable,
+		Headers: []emulate.Header{{Name: "Retry-After", Value: retryAfter}}}
+}
+
+// reserve takes n bytes of MaxInFlight, or reports that they are not free.
+func (h *Handler) reserve(n int64) bool {
+	if h.MaxInFlight <= 0 || n <= 0 {
+		return true
+	}
+	h.heldMu.Lock()
+	defer h.heldMu.Unlock()
+	if h.held+n > h.MaxInFlight {
+		return false
+	}
+	h.held += n
+	return true
+}
+
+func (h *Handler) release(n int64) {
+	if h.MaxInFlight <= 0 || n <= 0 {
+		return
+	}
+	h.heldMu.Lock()
+	h.held -= n
+	h.heldMu.Unlock()
+}
+
+func (h *Handler) heldNow() int64 {
+	h.heldMu.Lock()
+	defer h.heldMu.Unlock()
+	return h.held
+}
+
+// bodyRead is how reading a body went.
+type bodyRead int
+
+const (
+	bodyOK     bodyRead = iota // req's body fields are set (TooLarge included)
+	bodyFailed                 // the sender went away or stalled
+	bodyBusy                   // MaxInFlight is spent: not read, not kept
+)
+
+// readBody fills req's body fields within MaxInFlight and returns the bytes
+// it holds of it, to release when the body is no longer needed. A body is
+// read whole up to MaxBody; for a path with no endpoint only its first
+// unmatchedHead bytes are kept, and the rest is read to learn its size.
+func (h *Handler) readBody(w http.ResponseWriter, r *http.Request, req *store.Request) (bodyRead, int64) {
 	if r.ContentLength > h.MaxBody {
 		req.TooLarge, req.Size = true, r.ContentLength
-		return true
+		return bodyOK, 0
+	}
+	keep := h.MaxBody + 1 // one more to tell an over-limit body
+	if req.EndpointID == store.Unmatched {
+		keep = min(keep, unmatchedHead)
 	}
 	timeout := h.BodyTimeout
 	if timeout == 0 {
@@ -320,19 +424,65 @@ func (h *Handler) readBody(w http.ResponseWriter, r *http.Request, req *store.Re
 	rc := http.NewResponseController(w)
 	// Not every ResponseWriter supports deadlines (test recorders do not).
 	_ = rc.SetReadDeadline(time.Now().Add(timeout))
-	body, err := io.ReadAll(io.LimitReader(r.Body, h.MaxBody+1))
-	if err != nil {
-		// Keep the deadline: the server must not wait for the rest either.
+	lr := io.LimitReader(r.Body, h.MaxBody+1)
+
+	// The buffer grows as the body arrives, each step reserved first: a
+	// declared length is reserved at once, an undeclared one in doublings.
+	var reserved int64
+	size := int64(64 << 10)
+	if r.ContentLength >= 0 {
+		size = r.ContentLength
+	}
+	size = min(max(size, 512), keep)
+	if !h.reserve(size) {
+		req.TooLarge, req.Size = true, r.ContentLength
 		w.Header().Set("Connection", "close")
-		return false
+		return bodyBusy, 0
+	}
+	reserved = size
+	buf := make([]byte, 0, size)
+	for int64(len(buf)) < keep {
+		if len(buf) == cap(buf) {
+			more := min(int64(cap(buf)), keep-int64(cap(buf)))
+			if !h.reserve(more) {
+				h.release(reserved)
+				req.TooLarge, req.Size, req.Body = true, r.ContentLength, nil
+				w.Header().Set("Connection", "close")
+				return bodyBusy, 0
+			}
+			reserved += more
+			buf = append(buf[:cap(buf)], make([]byte, more)...)[:len(buf)]
+		}
+		n, err := lr.Read(buf[len(buf):min(int64(cap(buf)), keep)])
+		buf = buf[:len(buf)+n]
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			// Keep the deadline: the server must not wait for the rest either.
+			h.release(reserved)
+			w.Header().Set("Connection", "close")
+			return bodyFailed, 0
+		}
+	}
+	total := int64(len(buf))
+	if req.EndpointID == store.Unmatched && total == keep {
+		rest, err := io.Copy(io.Discard, lr) // read, not kept: only its size
+		if err != nil {
+			h.release(reserved)
+			w.Header().Set("Connection", "close")
+			return bodyFailed, 0
+		}
+		total += rest
 	}
 	_ = rc.SetReadDeadline(time.Time{})
-	if int64(len(body)) > h.MaxBody {
+	if total > h.MaxBody {
+		h.release(reserved)
 		req.TooLarge, req.Size = true, r.ContentLength // -1 when not declared
-		return true
+		return bodyOK, 0
 	}
-	req.Body, req.Size = body, int64(len(body))
-	return true
+	req.Body, req.Size = buf, total
+	return bodyOK, reserved
 }
 
 // RawPath is the request path exactly as the sender wrote it, without the

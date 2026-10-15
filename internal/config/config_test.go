@@ -20,7 +20,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Config{Addr: DefaultAddr, DBPath: DefaultDBPath, LogFormat: DefaultLogFormat,
-		MaxBody: 10 << 20, Retention: 1000, AdminPrefix: "/admin", MaxWait: 5 * time.Minute}
+		MaxBody: 10 << 20, MaxInFlight: 256 << 20, Retention: 1000, AdminPrefix: "/admin", MaxWait: 5 * time.Minute}
 	if !reflect.DeepEqual(c, want) {
 		t.Fatalf("got %+v, want %+v", c, want)
 	}
@@ -71,6 +71,10 @@ func TestInvalid(t *testing.T) {
 		{[]string{"-max-body", "0"}, "at least 1 byte"},
 		{[]string{"-max-body", "-5"}, "KiB, MiB or GiB"},
 		{[]string{"-max-body", "2000GiB"}, "at most 1024 GiB"},
+		{[]string{"-max-body", "513MiB"}, "at most 512 MiB: larger bodies cannot be stored in sqlite"},
+		{[]string{"-max-body", "1GiB"}, "at most 512 MiB"},
+		{[]string{"-max-inflight", "1MiB"}, "at least max body"},
+		{[]string{"-max-inflight", "lots"}, "KiB, MiB or GiB"},
 		{[]string{"-retention", "0"}, "at least 1"},
 		{[]string{"-max-wait", "soon"}, "1s to 1h"},
 		{[]string{"-max-wait", "500ms"}, "1s to 1h"},
@@ -114,5 +118,24 @@ func TestUnknownFlagPrintsNothing(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Fatalf("printed %q; the caller prints the one-line error", out.String())
+	}
+}
+
+// -max-body tops out at 512 MiB; -max-inflight defaults to the larger of
+// 256 MiB and twice -max-body.
+func TestBodyLimits(t *testing.T) {
+	for _, c := range []struct {
+		args     []string
+		body, in int64
+	}{
+		{[]string{"-max-body", "512MiB"}, 512 << 20, 1 << 30},
+		{[]string{"-max-body", "200MiB"}, 200 << 20, 400 << 20},
+		{[]string{"-max-body", "1MiB"}, 1 << 20, 256 << 20},
+		{[]string{"-max-body", "1MiB", "-max-inflight", "2MiB"}, 1 << 20, 2 << 20},
+	} {
+		got, err := Parse(c.args, env(nil), io.Discard)
+		if err != nil || got.MaxBody != c.body || got.MaxInFlight != c.in {
+			t.Errorf("%v: %d %d %v", c.args, got.MaxBody, got.MaxInFlight, err)
+		}
 	}
 }

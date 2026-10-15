@@ -16,6 +16,7 @@ const (
 	FromCheck     = "check"     // a request check refused it
 	FromLimit     = "limit"     // the body was over the limit
 	FromUnmatched = "unmatched" // no endpoint at that path
+	FromBusy      = "busy"      // too many bodies were being read at once; 503, the body not kept
 )
 
 // Outcome actions besides ActReply, ActTimeout and ActDrop.

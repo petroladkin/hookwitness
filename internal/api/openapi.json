@@ -1630,7 +1630,11 @@
           },
           "body_kept": {
             "type": "boolean",
-            "description": "False when the body was over the limit (413)."
+            "description": "False when the body was over the limit (413) or the server was busy reading other bodies (503)."
+          },
+          "body_cut": {
+            "type": "boolean",
+            "description": "True when only the start of the body was kept (the Unmatched register keeps 64 KiB); body_size is the whole."
           },
           "content_type": {
             "type": "string"
@@ -1863,7 +1867,11 @@
           },
           "body_kept": {
             "type": "boolean",
-            "description": "False when the body was over the limit (413)."
+            "description": "False when the body was over the limit (413) or the server was busy reading other bodies (503)."
+          },
+          "body_cut": {
+            "type": "boolean",
+            "description": "True when only the start of the body was kept (the Unmatched register keeps 64 KiB); body_size is the whole."
           },
           "content_type": {
             "type": "string"
