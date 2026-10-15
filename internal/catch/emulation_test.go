@@ -411,16 +411,22 @@ func TestEveryThirdIsExact(t *testing.T) {
 func TestWaitRecordsTheHoldBeforeShutdown(t *testing.T) {
 	h, st, _ := setup(t, 1<<20)
 	h.MaxWait = time.Hour
+	holding := make(chan struct{})
+	h.after = func(time.Duration) <-chan time.Time { close(holding); return nil } // the hold has begun; only Stop ends it
 	url := serve(t, h)
 	ep := configure(t, st, "/hold", emulate.Config{Default: emulate.Reply{Status: 200},
 		Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenEvery, N: 1}, Do: emulate.ActTimeout}}})
 	go do(t, http.DefaultClient, "POST", url+"/hold", "")
-	time.Sleep(200 * time.Millisecond)
+	<-holding
+	held := time.Now()
+	for time.Since(held) < 20*time.Millisecond { // poll, not sleep: at least this long held
+		time.Sleep(time.Millisecond)
+	}
 	h.Stop()
 	h.Wait()
 	_, o := lastOutcome(t, st, ep)
-	if o.Action != emulate.ActTimeout || o.WaitedMs < 150 {
-		t.Fatalf("after Wait: %+v, want the hold's wait recorded", o)
+	if o.Action != emulate.ActTimeout || o.WaitedMs < 20 {
+		t.Fatalf("after Wait: %+v, want the hold's wait (at least 20 ms) recorded", o)
 	}
 }
 
