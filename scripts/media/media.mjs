@@ -294,8 +294,6 @@ if (!only.length || only.includes("strip")) {
   const event = (id, extra = {}) => JSON.stringify({ id: `evt_${id}`, type: "payment.succeeded", amount: 1999, currency: "EUR", ...extra });
   const big = event("refund_batch", { items: Array.from({ length: 400 }, (_, i) => ({ id: `re_${i}`, amount: 100 + i })) });
   const a = event("1001", { customer: { id: "cus_42", email: "buyer@example.com" }, lines: Array.from({ length: 30 }, (_, i) => ({ sku: `SKU-${i}`, qty: 1 })) });
-  // The retries come last: their brackets are drawn along the top, where
-  // the legend leaves the paper clear only near the pen.
   for (const [i, t] of [0, 0.3, 0.5, 0.9, 1.2].entries()) { await at(t); await send("/payments/webhooks", event(`20${i}`), auth); }
   await at(8); await send("/payments/webhooks", event("3001"), { ...auth, Authorization: "Bearer revoked" });
   await behave(pay, { rules: [{ when: { kind: "every", n: 1 }, do: "timeout" }] });
