@@ -174,9 +174,14 @@
       cv.height = Math.round(h * dpr);
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const pen = w - 28, base = h - 22, top = 26;
+    const pen = w - 28, base = h - 22;
     const x = (t) => pen - ((now - t) / WINDOW) * (pen - 8);
     const mono = css("--f-data");
+    const ms = marks().filter((m) => m.at > now - WINDOW - 5000);
+    ms.forEach((m) => (m.x = x(m.at)));
+    ctx.font = "600 10px " + mono;
+    const lay = window.HookwitnessStrip.layout(ms, w, h, pen, (s) => ctx.measureText(s).width);
+    const top = lay.top;
 
     ctx.fillStyle = css("--paper");
     ctx.fillRect(0, 0, w, h);
@@ -202,7 +207,9 @@
     ctx.font = "10px " + mono;
     ctx.textAlign = "center";
     for (let s = 30; s < WINDOW / 1000; s += 30) ctx.fillText("−" + s + " s", x(now - s * 1000), h - 7);
-    ctx.fillText("now", pen, h - 7);
+    ctx.textAlign = "right"; // clear of the pen's arrow
+    ctx.fillText("now", lay.now.x, h - 7);
+    ctx.textAlign = "center";
     ctx.strokeStyle = css("--ink");
     ctx.globalAlpha = 0.35;
     ctx.beginPath();
@@ -211,29 +218,27 @@
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    const ms = marks().filter((m) => m.at > now - WINDOW - 5000);
-    // Brackets between deliveries of the same body.
-    const last = {};
-    ms.forEach((m) => {
-      if (!m.group) return;
-      const prev = last[m.group];
-      last[m.group] = m;
-      if (!prev) return;
-      const a = x(prev.at), b = x(m.at), y = top - 4;
-      if (b < 0) return;
+    // Brackets between deliveries of the same body, on rows (strip.js).
+    lay.brackets.forEach((br) => {
       ctx.strokeStyle = css("--ink-soft");
       ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
+      ctx.setLineDash(br.crowded ? [1, 2] : [3, 3]);
       ctx.beginPath();
-      ctx.moveTo(a, y + 6);
-      ctx.lineTo(a, y);
-      ctx.lineTo(b, y);
-      ctx.lineTo(b, y + 6);
+      if (br.openLeft) {
+        ctx.moveTo(0, br.y);
+      } else {
+        ctx.moveTo(br.a, br.y + 6);
+        ctx.lineTo(br.a, br.y);
+      }
+      ctx.lineTo(br.b, br.y);
+      ctx.lineTo(br.b, br.y + 6);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = css("--ink");
-      ctx.font = "600 10px " + mono;
-      ctx.fillText("+" + ((m.at - prev.at) / 1000).toFixed(1) + " s", (a + b) / 2, y - 4);
+      if (br.label) {
+        ctx.fillStyle = css("--ink");
+        ctx.font = "600 10px " + mono;
+        ctx.fillText(br.label, br.lx, br.y - 4);
+      }
     });
     ms.forEach((m) => {
       const mx = x(m.at);
