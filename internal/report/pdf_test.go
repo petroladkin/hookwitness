@@ -2,8 +2,20 @@ package report
 
 import (
 	"bytes"
+	"encoding/base64"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
 	"os"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/petroladkin/hookwitness/internal/auth"
+	"github.com/petroladkin/hookwitness/internal/picture"
+	"github.com/petroladkin/hookwitness/internal/store"
 )
 
 func TestPDF(t *testing.T) {
@@ -46,5 +58,52 @@ func TestPDFStructure(t *testing.T) {
 	}
 	if pages != 4 {
 		t.Errorf("%d pages, want 4", pages)
+	}
+}
+
+// Images a PDF writer cannot take as they are (16-bit, a palette with
+// transparency) are drawn after decoding; one that cannot be drawn leaves a
+// line instead of failing the report.
+func TestPDFImageKinds(t *testing.T) {
+	r := image.Rect(0, 0, 40, 30)
+	opaque := image.NewRGBA64(r)
+	for i := range opaque.Pix {
+		opaque.Pix[i] = 0xff
+	}
+	pal := image.NewPaletted(r, color.Palette{color.Transparent, color.Black})
+	var fields []string
+	for i, img := range []image.Image{image.NewGray16(r), image.NewNRGBA64(r), opaque, pal, image.NewGray(r)} {
+		var b bytes.Buffer
+		if err := png.Encode(&b, img); err != nil {
+			t.Fatal(err)
+		}
+		fields = append(fields, fmt.Sprintf(`"i%d":"data:image/png;base64,%s"`, i, base64.StdEncoding.EncodeToString(b.Bytes())))
+	}
+	req := store.Request{ID: 1, No: 1, Method: "POST", Path: "/p", Status: 200, ReceivedAt: time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC),
+		Headers: []store.Header{{Name: "Content-Type", Value: "application/json"}}, Body: []byte("{" + strings.Join(fields, ",") + "}")}
+	req.Size = int64(len(req.Body))
+	var buf bytes.Buffer
+	if err := Write(t.Context(), &buf, PDF, goldenOptions(), sliceSource([]store.Request{req})); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(buf.String(), "/Subtype /Image"); n != 5 {
+		t.Fatalf("%d images drawn, want 5", n)
+	}
+
+	// Drawing fails: the frame says so, and the report does not fail.
+	w, err := newPDF(io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := w.(*pdfWriter)
+	p.pdf.AddPage()
+	bad := ItemImage{Found: picture.Found{Image: auth.Image{Type: picture.WebP, Width: 10, Height: 10}}, Data: []byte("RIFF....WEBPVP8 nope")}
+	b, ok := p.picture(bad)
+	if !ok {
+		t.Fatal("no frame")
+	}
+	b.draw(100)
+	if p.err != nil {
+		t.Fatalf("the report fails: %v", p.err)
 	}
 }
