@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -523,5 +524,27 @@ func TestSenderLeftShown(t *testing.T) {
 	md := e.do("GET", base+"/report?format=md&scope=all", nil).Body.String()
 	if !strings.Contains(md, "| 0 | 0 | 0 | 1 | 0 | 0 |") || !strings.Contains(md, "sender left · default reply · left after 10.0 s of a 15.0 s delay; nothing sent, would have been 200") {
 		t.Fatalf("report:\n%s", md)
+	}
+}
+
+// A request answered 503 because the server was busy, and an Unmatched one
+// of which only the head was kept, say so in the register and on their page.
+func TestBusyAndHeadOnly(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/up")
+	busy := e.add(t, ep.ID, "", func(r *store.Request) {
+		r.TooLarge, r.Size, r.Status = true, 70000, 503
+		r.Outcome = emulate.Outcome{Source: emulate.FromBusy, Action: emulate.ActReply, Status: 503}.String()
+	})
+	if reg := e.do("GET", "/admin/e/"+id(ep.ID), nil).Body.String(); !strings.Contains(reg, "Busy: 503, body not kept") {
+		t.Error("the register does not say busy")
+	}
+	if ex := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(busy.ID), nil).Body.String(); !strings.Contains(ex, "-max-inflight") ||
+		strings.Contains(ex, "The sender tried to deliver") {
+		t.Error("the page does not explain busy")
+	}
+	head := e.add(t, store.Unmatched, strings.Repeat("x", 64<<10), func(r *store.Request) { r.Path, r.Status, r.Size = "/nowhere", 404, 200<<10 })
+	if ex := e.do("GET", "/admin/e/unmatched/r/"+id(head.ID), nil).Body.String(); !strings.Contains(ex, "Only the first 64.0 KiB of 200.0 KiB were kept") {
+		t.Error("the page does not say only the head was kept")
 	}
 }

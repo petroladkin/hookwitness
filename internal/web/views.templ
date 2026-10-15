@@ -455,7 +455,7 @@ templ exhibit(x exhibitView) {
 		<div class="too">
 			Hookwitness was reading other bodies up to its <code>-max-inflight</code> limit when this one
 			arrived ({ size(x.Size) } declared), so it answered 503 with <code>Retry-After</code> and did not keep the body.
-			Start hookwitness with a larger <code>-max-inflight</code> if this happens under normal load.
+			Should that happen under normal load, start hookwitness with a larger <code>-max-inflight</code>.
 		</div>
 	} else if x.TooLarge {
 		<div class="too">
