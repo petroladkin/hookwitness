@@ -107,7 +107,7 @@ code{font:400 .9em/1 var(--f-data)}
 /* the strip */
 .strip{position:relative;border-block:1px solid var(--grid-major);background:var(--paper)}
 .strip canvas{display:block;width:100%;height:150px}
-.strip .legend{position:absolute;left:8px;top:6px;font:400 10px/1.3 var(--f-data);color:var(--muted);background:color-mix(in srgb,var(--paper) 85%,transparent);padding:2px 4px}
+.strip .legend{font:400 10px/1.3 var(--f-data);color:var(--muted);padding:0 8px 6px}
 .strip .legend b{color:var(--ink);font-weight:600}
 
 /* register and exhibit */
