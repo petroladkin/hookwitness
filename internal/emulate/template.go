@@ -161,6 +161,28 @@ func (d *Data) JSON(path string) string {
 	}
 }
 
+// Protective headers every rendered reply carries unless the endpoint sets
+// them itself. A catch path shares its origin with the admin UI, so a reply
+// that reflects request data could otherwise run as a page of that origin
+// (an echo reply opened through a cross-site form); senders of webhooks do
+// not render pages, so emulation loses nothing.
+var protective = []Header{
+	{"Content-Security-Policy", "sandbox"},
+	{"X-Content-Type-Options", "nosniff"},
+}
+
+// Protect adds the protective headers the reply does not set.
+func (r Rendered) Protect() Rendered {
+	hs := r.Headers
+	for _, p := range protective {
+		if len(headerValues(r.Headers, p.Name)) == 0 {
+			hs = append(hs[:len(hs):len(hs)], p)
+		}
+	}
+	r.Headers = hs
+	return r
+}
+
 // Rendered is a reply ready to send.
 type Rendered struct {
 	Status  int

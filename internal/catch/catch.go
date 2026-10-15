@@ -239,6 +239,7 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 			Headers: []emulate.Header{{Name: "Content-Type", Value: "text/plain; charset=utf-8"}},
 			Body:    []byte("Hookwitness could not render this endpoint's reply: " + err.Error() + "\n")}
 	}
+	rendered = rendered.Protect()
 	pl.out.SetReply(rendered)
 	if d := pl.reply.Delay(h.maxWait()); d > 0 && err == nil {
 		waited := h.wait(r, d)

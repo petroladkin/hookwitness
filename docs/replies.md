@@ -163,8 +163,9 @@ Header values and bodies of replies are Go templates over the request:
 | `{{.Method}}`, `{{.Path}}`, `{{.Body}}` | the request itself |
 
 `if`, `with` and the standard functions work; `range` and sub-templates do
-not. Rendering is capped at 1 MiB and one second. A template that fails
-answers `500`, and the request page shows the error.
+not. Rendering is capped at 1 MiB and one second, and the string functions
+(`printf`, `print`, `html`…) together may build at most 4 MiB. A template
+that fails answers `500`, and the request page shows the error.
 
 **Variables** are test values for templates. On the **Variables** tab, each
 has a name and a value, and `{{.Var.NAME}}` puts the value in. They are shown
@@ -174,6 +175,14 @@ in plain text, so never put real secrets there; secrets have their own tab
 Response headers go out as Go's HTTP server writes them: sorted by name,
 with a repeated header keeping its order. `Content-Length`,
 `Transfer-Encoding` and `Connection` belong to the server and cannot be set.
+
+Every reply also carries `Content-Security-Policy: sandbox` and
+`X-Content-Type-Options: nosniff`. A catch path shares its origin with the
+web UI, so a reply that echoes the request (`{{.Body}}`) could otherwise run
+as a page of the UI when someone opens it in a browser. Webhook senders do not
+render pages, so they see no difference. To send other values, set these
+headers yourself: the reply then carries yours. The request page lists them
+with the headers sent.
 
 ## Required headers
 
