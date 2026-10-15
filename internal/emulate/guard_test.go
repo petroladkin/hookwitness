@@ -100,12 +100,47 @@ func TestPrintfBound(t *testing.T) {
 		{"%X", []any{[]byte(long)}}, {"%v", []any{[]byte(long)}}, {"%#v", []any{map[string]string{"a": long}}},
 		{"%[2]s%[1]s%[2]s", []any{long, "b"}}, {"%*.*f", []any{30, 10, 3.5}}, {"%-30s|%5.2d", []any{"a", 7}},
 		{"%d %s", []any{1}}, {"%!", nil}, {"%", nil}, {"%[9]s", []any{"a"}}, {"%.*s", []any{"x", long}},
-		{"%v", []any{nil}}, {"%t %c %U", []any{true, 'é', 'é'}},
+		{"%v", []any{nil}}, {"%t %c %U", []any{true, 'é', 'é'}}, {"%s%s%s", []any{long, long, long}},
 	} {
 		got := len(fmt.Sprintf(c.f, c.args...))
 		if b := printfBound(c.f, c.args); got > b {
 			t.Errorf("%q: wrote %d, bound %d", c.f, got, b)
 		}
+	}
+}
+
+// Three of the same argument in turn build three times its size: refused.
+func TestPrintfSequentialArguments(t *testing.T) {
+	d := NewData(Request{}, nil, 0)
+	_, err := (Reply{Body: `{{$a := printf "%400000d" 0}}{{$b := printf "%s%s%s" $a $a $a}}ok`}).Render(d)
+	if err == nil || !strings.Contains(err.Error(), "could build more than") {
+		t.Fatalf("%v", err)
+	}
+}
+
+// A render past its deadline ends at its next function call: the first call
+// is held until the deadline has passed, and the template's later calls never
+// run.
+func TestRenderPastDeadlineEnds(t *testing.T) {
+	old := renderTimeout
+	renderTimeout = 10 * time.Millisecond
+	release, ended := make(chan struct{}), make(chan error, 1)
+	var calls int
+	beforeCall = func() {
+		calls++
+		if calls == 1 {
+			<-release
+		}
+	}
+	afterRender = func(err error) { ended <- err }
+	defer func() { renderTimeout, beforeCall, afterRender = old, nil, nil }()
+	_, err := (Reply{Body: `{{print "a"}}{{print "b"}}{{print "c"}}`}).Render(NewData(Request{}, nil, 0))
+	if err == nil || !strings.Contains(err.Error(), "rendering took over") {
+		t.Fatalf("render: %v", err)
+	}
+	close(release)
+	if err := <-ended; err == nil || !strings.Contains(err.Error(), errStopped.Error()) || calls != 1 {
+		t.Fatalf("the render past its deadline ended with %v after %d calls", err, calls)
 	}
 }
 

@@ -27,10 +27,16 @@ const budgetFactor = 4
 
 var errStopped = errors.New("rendering stopped")
 
+// beforeCall, when set (by tests), runs as each bounded function starts.
+var beforeCall func()
+
 func newGuard(limit int) *guard { return &guard{limit: limit, budget: budgetFactor * limit} }
 
 // allow refuses a result that could be over the limit, before it is built.
 func (g *guard) allow(fn string, upTo int) error {
+	if beforeCall != nil {
+		beforeCall()
+	}
 	if g.stopped.Load() {
 		return errStopped
 	}

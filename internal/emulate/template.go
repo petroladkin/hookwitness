@@ -20,8 +20,12 @@ import (
 // (":1:2: executing \"\" at ").
 var execError = regexp.MustCompile(`^:(\d+):(\d+): executing "" at `)
 
-// renderTimeout bounds the time a template may take.
-const renderTimeout = time.Second
+// renderTimeout bounds the time a template may take (a variable for tests).
+var renderTimeout = time.Second
+
+// afterRender, when set (by tests), is told how each Execute ended,
+// including one that ran past its deadline.
+var afterRender func(error)
 
 // maxRendered bounds a rendered body, so a template cannot make the server
 // build an unbounded reply.
@@ -257,7 +261,13 @@ func renderUpTo(src string, d *Data, limit int) (string, error) {
 	// call, and its result is dropped.
 	buf := capped{limit: limit, g: g}
 	done := make(chan error, 1)
-	go func() { done <- t.Execute(&buf, d) }()
+	go func() {
+		err := t.Execute(&buf, d)
+		if afterRender != nil {
+			afterRender(err)
+		}
+		done <- err
+	}()
 	timer := time.NewTimer(renderTimeout)
 	defer timer.Stop()
 	select {
