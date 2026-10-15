@@ -1,0 +1,70 @@
+package mcp
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// Endpoint is the MCP URL of a server: <url>/admin/mcp for a bare server
+// URL, <url>/mcp for one that names the admin prefix, or the URL itself
+// when it already ends in /mcp.
+func Endpoint(server string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(server))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("--url %q: give the server's URL, e.g. http://127.0.0.1:8080", server)
+	}
+	switch p := strings.TrimRight(u.Path, "/"); {
+	case strings.HasSuffix(p, "/mcp"):
+		u.Path = p
+	case p == "":
+		u.Path = "/admin/mcp"
+	default:
+		u.Path = p + "/mcp"
+	}
+	return u.String(), nil
+}
+
+// Bridge connects an MCP client speaking stdio (newline-delimited JSON-RPC
+// on in and out) to the server's Streamable HTTP endpoint, passing every
+// message through unchanged: it has no tools of its own. It returns when
+// either side closes.
+func Bridge(ctx context.Context, endpoint string, client *http.Client, in io.ReadCloser, out io.WriteCloser) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	local, err := (&sdk.IOTransport{Reader: in, Writer: out}).Connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer local.Close()
+	remote, err := (&sdk.StreamableClientTransport{Endpoint: endpoint, HTTPClient: client}).Connect(ctx)
+	if err != nil {
+		return fmt.Errorf("connect to %s: %w", endpoint, err)
+	}
+	defer remote.Close()
+	pump := func(from, to sdk.Connection) error {
+		for {
+			msg, err := from.Read(ctx)
+			if err != nil {
+				return err
+			}
+			if err := to.Write(ctx, msg); err != nil {
+				return err
+			}
+		}
+	}
+	errs := make(chan error, 2)
+	go func() { errs <- pump(local, remote) }()
+	go func() { errs <- pump(remote, local) }()
+	err = <-errs
+	if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+		return nil // the client closed stdin, or the process is stopping
+	}
+	return err
+}

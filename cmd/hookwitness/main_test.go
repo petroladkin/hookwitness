@@ -188,3 +188,18 @@ func TestKeyCheck(t *testing.T) {
 		t.Fatal("another key passed the check")
 	}
 }
+
+// TestMCPCommand: the stdio bridge's flags; a wrong URL is refused before
+// anything is read.
+func TestMCPCommand(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run(context.Background(), []string{"mcp", "-h"}, func(string) string { return "" }, &out, &errOut); code != 0 ||
+		!strings.Contains(errOut.String(), "-url") {
+		t.Fatalf("mcp -h: %d %q", code, errOut.String())
+	}
+	errOut.Reset()
+	if code := run(context.Background(), []string{"mcp", "-url", "127.0.0.1:8080"}, func(string) string { return "" }, &out, &errOut); code != 2 ||
+		!strings.Contains(errOut.String(), "give the server's URL") {
+		t.Fatalf("mcp with a bad URL: %d %q", code, errOut.String())
+	}
+}

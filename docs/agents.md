@@ -59,5 +59,78 @@ Every route, the behaviour document and more recipes are in the
 
 ## MCP
 
-An MCP server, so agents can drive Hookwitness as tools without the shell, is
-planned and not there yet.
+Hookwitness is also an MCP server, so an agent can drive it with tools
+instead of the shell. It answers MCP over Streamable HTTP at
+`http://127.0.0.1:8080/admin/mcp`, with the same access rules as the REST API.
+`hookwitness mcp` bridges it to clients that speak only stdio.
+
+Add it to Claude Code:
+
+<!-- docs-check: skip: adds the server to your Claude Code configuration -->
+```sh
+claude mcp add --transport http hookwitness http://127.0.0.1:8080/admin/mcp
+```
+
+For a client that speaks only stdio, run the bridge. It can be the binary
+or the one inside the container:
+
+<!-- docs-check: skip: adds the server to your Claude Code configuration -->
+```sh
+claude mcp add hookwitness -- hookwitness mcp -url http://127.0.0.1:8080
+claude mcp add hookwitness -- docker exec -i hookwitness /hookwitness mcp -url http://127.0.0.1:8080
+```
+
+Other clients take the same in their configuration file:
+
+```json
+{
+  "mcpServers": {
+    "hookwitness": { "type": "http", "url": "http://127.0.0.1:8080/admin/mcp" }
+  }
+}
+```
+
+```json
+{
+  "mcpServers": {
+    "hookwitness": { "command": "hookwitness", "args": ["mcp", "-url", "http://127.0.0.1:8080"] }
+  }
+}
+```
+
+Check that the server answers MCP:
+
+```sh
+curl -s -X POST http://127.0.0.1:8080/admin/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}' \
+  | grep -o '"name":"hookwitness"'
+# "name":"hookwitness"
+```
+
+The tools are task-shaped. Each result is a summary line, then compact JSON.
+
+| Tool | Does |
+|---|---|
+| `create_endpoint` | an endpoint and its catch URL, the address for the sender |
+| `list_endpoints`, `get_endpoint` | endpoints; one with its behaviour and secrets (names and fingerprints only) |
+| `configure_endpoint` | sets parts of the behaviour (`default`, `rules`, `checks`, `vars`, `schemas`); the parts not given stay |
+| `set_secret` | a signing key or a token for the checks; write-only, the answer is a fingerprint |
+| `wait_for_request` | waits for the next request that matches (verdict, status, text, a JSON value), up to 300 s, and returns it in full |
+| `list_requests`, `get_request` | requests with the same filters; one in full, its body cut at 16 KiB with its size |
+| `expect` | asserts that N matching requests arrive within a time: pass, or fail with what arrived and the reasons |
+| `reset_endpoint`, `recheck`, `delete_endpoint` | reset the counter or clear requests, verify again, delete |
+
+`delete_endpoint` and `reset_endpoint` are marked destructive, and the
+reading tools read-only, so a client can ask you before the destructive ones.
+A session looks like this:
+
+1. `create_endpoint` with `/github/events`, then give its URL to the sender;
+2. `set_secret` `GH` as a key, and `configure_endpoint` with the check
+   `{"kind": "github", "secret": "GH"}`;
+3. trigger the sender, then `expect` with `verdict: pass`: you get `pass`,
+   or `fail: … #2 fail GitHub signature: signature does not match`.
+
+The headers of a caught request are evidence, so a token or password that
+the sender sent is visible in `get_request`, as in the API. The values of
+the secrets you set are never shown.

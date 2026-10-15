@@ -22,6 +22,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/config"
 	"github.com/petroladkin/hookwitness/internal/live"
+	"github.com/petroladkin/hookwitness/internal/mcp"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/server"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -34,6 +35,7 @@ const usage = `Usage: hookwitness <command> [flags]
 Commands:
   serve     start the server (hookwitness serve -h for its flags)
   health    exit 0 when the server at -addr / HOOKWITNESS_ADDR answers /healthz
+  mcp       bridge an MCP client on stdio to a server's /mcp (hookwitness mcp -url http://127.0.0.1:8080)
   version   print the version and exit
 `
 
@@ -58,6 +60,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return serve(ctx, args[1:], getenv, stderr)
 	case "health":
 		return health(ctx, args[1:], getenv, stderr)
+	case "mcp":
+		return mcpBridge(ctx, args[1:], stderr)
 	case "version", "--version", "-version":
 		fmt.Fprintln(stdout, "hookwitness", version.String())
 		return 0
@@ -228,4 +232,34 @@ func newLogger(format string, w io.Writer) *slog.Logger {
 		return slog.New(slog.NewJSONHandler(w, nil))
 	}
 	return slog.New(slog.NewTextHandler(w, nil))
+}
+
+// stdin and stdout of the MCP bridge; tests replace them.
+var (
+	bridgeIn  io.ReadCloser  = os.Stdin
+	bridgeOut io.WriteCloser = os.Stdout
+)
+
+// mcpBridge serves an MCP client that speaks only stdio: every message goes
+// to the server's Streamable HTTP endpoint and back, unchanged.
+func mcpBridge(ctx context.Context, args []string, stderr io.Writer) int {
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	server := fs.String("url", "http://127.0.0.1:8080", "the hookwitness server (its /admin/mcp is used), or the full MCP URL")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	endpoint, err := mcp.Endpoint(*server)
+	if err != nil {
+		fmt.Fprintln(stderr, "hookwitness:", err)
+		return 2
+	}
+	if err := mcp.Bridge(ctx, endpoint, http.DefaultClient, bridgeIn, bridgeOut); err != nil {
+		fmt.Fprintln(stderr, "hookwitness mcp:", err)
+		return 1
+	}
+	return 0
 }

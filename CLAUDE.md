@@ -45,7 +45,10 @@ requests with filters (verdict, status, text in the body, a value at a
 JSON pointer), bodies in lists and long-poll, the Unmatched register, the raw body,
 images, clear, reset counter, re-check, reports, and its OpenAPI 3.1
 description (`internal/api/openapi.json`, checked by tests); every time
-in an answer has exactly three fraction digits. No MCP yet. `hookwitness
+in an answer has exactly three fraction digits. An MCP server
+(`<prefix>/mcp`, Streamable HTTP, the API's access rules) gives agents
+task-shaped tools over the REST API (`internal/mcp`), and `hookwitness mcp`
+bridges stdio clients to it. `hookwitness
 version`, reports, the UI and `/healthz` name the build as `<version>
 (<commit>)` (the image from `dev` is `edge`); `hookwitness health` probes
 `/healthz` (the container's health check). A container image (distroless, non-root, data
@@ -55,7 +58,8 @@ that makes it false.
 
 ## Layout
 
-- `cmd/hookwitness` — the command: subcommands `serve`, `health`, `version`; signal
+- `cmd/hookwitness` — the command: subcommands `serve`, `health`, `mcp` (the
+  stdio bridge), `version`; signal
   handling; logger setup; wiring of the parts below.
 - `internal/config` — `serve` settings from flags and `HOOKWITNESS_*` env.
 - `internal/store` — sqlite (modernc.org/sqlite, no cgo): pragmas, embedded
@@ -118,6 +122,12 @@ that makes it false.
   Routes are one table (`routes()`); `openapi.json` must document each — a
   test validates it against the official schema (`testdata/openapi`,
   third-party) and real answers against its schemas.
+- `internal/mcp` — the MCP server (github.com/modelcontextprotocol/go-sdk):
+  task-shaped tools that call the REST API's handler in-process (same
+  validation, errors and access), mounted by `internal/web` at
+  `<prefix>/mcp`; `wait_for_request` and `expect` chain the API's long-polls
+  and end on cancellation; results are a summary line and compact JSON,
+  bodies cut at 16 KiB; `Bridge` pipes stdio to Streamable HTTP.
 - `internal/web` — the UI (and its report dialog and download, `report.go`): templ components (`views.templ`, generated
   `views_templ.go` is committed), handlers, SSE feed, embedded `static/`
   (our `app.css`, `app.js`; vendored htmx, htmx-ext-sse and fonts under

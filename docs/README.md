@@ -20,7 +20,8 @@ by task: what to click and what happens. [Українською](uk/README.md).
    settings, the secret key, reverse proxies.
 8. [Troubleshooting](troubleshooting.md): a secret but no verdict, a refused
    host name, unreadable secrets, 413, lost data.
-9. [Testing a sender with an AI agent](agents.md): the Claude Code skill.
+9. [Testing a sender with an AI agent](agents.md): the Claude Code skill and
+   the MCP server.
 
 Reference: the [REST API](api.md) (English only), and its OpenAPI 3.1
 description served at `/admin/api/v1/openapi.json`.
