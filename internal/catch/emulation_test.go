@@ -90,7 +90,7 @@ func TestDefaultReply(t *testing.T) {
 		t.Fatalf("Content-Type %q sniffed in; only configured headers are sent", ct)
 	}
 	_, o := lastOutcome(t, st, ep)
-	if o.Source != emulate.FromDefault || o.Status != 201 || o.Counter != 1 || o.Body != body || len(o.Headers) != 4 {
+	if o.Source != emulate.FromDefault || o.Status != 201 || o.Counter != 1 || o.Body != body || len(o.Headers) != 6 {
 		t.Fatalf("outcome %+v", o)
 	}
 
@@ -489,5 +489,54 @@ func TestRawReplyBody(t *testing.T) {
 	}
 	if _, o := lastOutcome(t, st, ep); o.BodyBase64 != "//57e319" || o.Body != "" {
 		t.Fatalf("outcome %+v", o)
+	}
+}
+
+// Every rendered reply carries the protective headers unless the endpoint
+// sets them: a reply is served from the admin UI's origin, and one that
+// echoes the request must not run as a page of it. They are recorded as
+// sent.
+func TestProtectiveHeaders(t *testing.T) {
+	h, st, _ := setup(t, 1<<20)
+	url := serve(t, h)
+	echo := configure(t, st, "/echo", emulate.Config{Default: emulate.Reply{Status: 200, Body: "{{.Body}}"}})
+	own := configure(t, st, "/own", emulate.Config{Default: emulate.Reply{Status: 200, Body: "<b>x</b>", Headers: []emulate.Header{
+		{Name: "Content-Type", Value: "text/html"}, {Name: "content-security-policy", Value: "default-src 'none'"},
+	}}})
+	broken := configure(t, st, "/broken", emulate.Config{Default: emulate.Reply{Status: 200, Body: `{{printf "%*d" 900000000 1}}`}})
+	refusing := configure(t, st, "/refusing", emulate.Config{Default: emulate.Reply{Status: 200},
+		Checks: []emulate.Check{{Header: "X-Must", Match: emulate.MatchPresent}}})
+	for _, c := range []struct {
+		ep     int64
+		path   string
+		status int
+		csp    string
+	}{
+		{echo, "/echo", 200, "sandbox"},
+		{own, "/own", 200, "default-src 'none'"},
+		{broken, "/broken", 500, "sandbox"},
+		{refusing, "/refusing", 400, "sandbox"},
+	} {
+		resp, _, err := do(t, http.DefaultClient, "POST", url+c.path, "<script>alert(1)</script>")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != c.status || strings.Join(resp.Header.Values("Content-Security-Policy"), "|") != c.csp ||
+			strings.Join(resp.Header.Values("X-Content-Type-Options"), "|") != "nosniff" {
+			t.Errorf("%s: %d, headers %v", c.path, resp.StatusCode, resp.Header)
+		}
+		_, o := lastOutcome(t, st, c.ep)
+		var csp, sniff []string
+		for _, x := range o.Headers {
+			switch strings.ToLower(x.Name) {
+			case "content-security-policy":
+				csp = append(csp, x.Value)
+			case "x-content-type-options":
+				sniff = append(sniff, x.Value)
+			}
+		}
+		if strings.Join(csp, "|") != c.csp || strings.Join(sniff, "|") != "nosniff" {
+			t.Errorf("%s: outcome headers %v", c.path, o.Headers)
+		}
 	}
 }

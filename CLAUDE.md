@@ -75,10 +75,12 @@ that makes it false.
 - `internal/emulate` — pure decision logic for an endpoint's answer: config
   (JSON in `endpoints.config`), validation, required-header and
   authorization checks (`checks.go`: kinds, secrets list, `Verify`), rule
-  conditions, text/template rendering, the outcome record (JSON in
+  conditions, text/template rendering (`guard.go`: the string builtins
+  replaced with bounded ones, a byte budget per render, a render past its
+  deadline stopped), the outcome record (JSON in
   `requests.outcome`). Verdicts go to `requests.verdict` / `verdicts`.
 - `internal/auth` — pure verifiers of signatures and credentials, one-line
-  reasons, constant-time compares; golden vectors in `testdata/auth`
+  reasons (never quoting a credential), constant-time compares; golden vectors in `testdata/auth`
   (published by the providers or computed with openssl — protected).
 - `internal/schema` — pure, offline JSON Schema validation
   (santhosh-tekuri/jsonschema): an endpoint's schemas compiled together and
@@ -110,8 +112,10 @@ that makes it false.
   a rendered page.
 - `internal/catch` — records and answers caught requests (body limit, 413,
   404 + Unmatched); runs checks, lets the store decide the rule inside the
-  counter's transaction (exact under concurrency), then replies, delays,
-  holds (timeout) or resets (drop, SO_LINGER 0); holds end on shutdown.
+  counter's transaction (exact under concurrency), then replies (with
+  `Content-Security-Policy: sandbox` and `nosniff` unless the endpoint sets
+  them: catch paths share the UI's origin), delays, holds (timeout) or
+  resets (drop, SO_LINGER 0); holds end on shutdown.
 - `internal/live` — wake-ups for live feeds; feeds read what they missed from
   the store, so nothing is lost or repeated.
 - `internal/api` — the JSON API under `<prefix>/api/v1`, mounted by

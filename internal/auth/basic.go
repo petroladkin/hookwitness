@@ -16,14 +16,37 @@ func credentials(in Input, scheme string) (string, Verdict, bool) {
 		return "", fail("header Authorization missing"), false
 	}
 	got = strings.TrimSpace(got)
-	s, cred := got, ""
-	if i := strings.IndexAny(got, " \t"); i >= 0 {
-		s, cred = got[:i], got[i+1:]
+	i := strings.IndexAny(got, " \t")
+	if i < 0 && strings.EqualFold(got, scheme) {
+		return "", Verdict{}, true // the scheme alone: no credentials
 	}
+	if i < 0 {
+		// A bare value is most often the credential itself: never quote it.
+		return "", fail(`Authorization is not "` + scheme + ` <credentials>"`), false
+	}
+	s, cred := got[:i], got[i+1:]
 	if !strings.EqualFold(s, scheme) {
-		return "", fail("scheme is " + s + ", not " + scheme), false
+		if known(s) {
+			return "", fail("scheme is " + s + ", not " + scheme), false
+		}
+		return "", fail("scheme is not " + scheme), false
 	}
 	return strings.TrimSpace(cred), Verdict{}, true
+}
+
+// schemes are the registered HTTP authentication schemes (IANA) and a common
+// unregistered one: only these are named in a reason, since anything else in
+// the scheme's place may be part of a credential.
+var schemes = []string{"Basic", "Bearer", "Digest", "DPoP", "GNAP", "HOBA", "Mutual", "Negotiate", "NTLM",
+	"OAuth", "PrivateToken", "SCRAM-SHA-1", "SCRAM-SHA-256", "vapid", "AWS4-HMAC-SHA256"}
+
+func known(s string) bool {
+	for _, k := range schemes {
+		if strings.EqualFold(s, k) {
+			return true
+		}
+	}
+	return false
 }
 
 // Bearer checks "Authorization: Bearer <token>".

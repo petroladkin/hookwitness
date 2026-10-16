@@ -175,3 +175,27 @@ func TestReportRoute(t *testing.T) {
 		t.Fatalf("unmatched report: %d", un.Code)
 	}
 }
+
+// A credential a sender sent without its scheme reaches no verdict reason,
+// so a report with Authorization masked keeps it out entirely.
+func TestMaskedReportKeepsBareCredentialsOut(t *testing.T) {
+	e := newEnv(t)
+	ep := e.endpoint(t, "/pay")
+	for _, v := range []string{"sk_test_51Hsecret", "tok123 extra"} {
+		e.add(t, ep.ID, `{}`, func(r *store.Request) { r.Headers = append(r.Headers, store.Header{Name: "Authorization", Value: v}) })
+	}
+	e.do("PUT", fmt.Sprintf("/endpoints/%d/secrets/TOK", ep.ID), `{"kind":"token","value":"tok_test"}`)
+	_, tag := e.behaviour(t, ep.ID)
+	if rec := e.do("PUT", fmt.Sprintf("/endpoints/%d/behaviour", ep.ID), `{"checks":[{"kind":"bearer","secret":"TOK"}]}`, "If-Match", tag); rec.Code != 200 {
+		t.Fatalf("behaviour: %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.do("POST", fmt.Sprintf("/endpoints/%d/recheck", ep.ID), "{}"); rec.Code != 200 {
+		t.Fatalf("recheck: %d", rec.Code)
+	}
+	for _, f := range []string{"md", "html"} {
+		out := e.do("GET", fmt.Sprintf("/endpoints/%d/report?format=%s&mask=Authorization", ep.ID, f), "").Body.String()
+		if !strings.Contains(out, "scheme is not Bearer") || strings.Contains(out, "sk_test_51Hsecret") || strings.Contains(out, "tok123") {
+			t.Errorf("%s report:\n%s", f, out)
+		}
+	}
+}
