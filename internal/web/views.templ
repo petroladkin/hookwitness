@@ -26,6 +26,7 @@ templ layout(nav navView, pageTitle string) {
 			<link rel="stylesheet" href={ templ.SafeURL(nav.Asset("app.css")) }/>
 			<script src={ nav.Asset("vendor/htmx/htmx.min.js") } defer></script>
 			<script src={ nav.Asset("vendor/htmx-ext-sse/sse.min.js") } defer></script>
+			<script src={ nav.Asset("strip.js") } defer></script>
 			<script src={ nav.Asset("app.js") } defer></script>
 		</head>
 		<body>

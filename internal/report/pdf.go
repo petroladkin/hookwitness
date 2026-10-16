@@ -434,8 +434,10 @@ func (p *pdfWriter) stripBlock() block {
 			p.pdf.Line(X(b.A), Y(b.Y)-4, X(b.B), Y(b.Y)-4)
 			p.pdf.Line(X(b.B), Y(b.Y)-4, X(b.B), Y(b.Y))
 			p.pdf.SetLineType("solid")
-			p.font(fMono, true, 6, cInk)
-			p.text(X(b.A)+1, Y(b.Y)-12, b.Label)
+			if b.Label != "" {
+				p.font(fMono, true, 6, cInk)
+				p.text(X(b.LX)-p.width(b.Label)/2, Y(b.Y)-12, b.Label)
+			}
 		}
 		for _, m := range s.Marks {
 			x, base, tip := X(m.X), Y(stripBase), Y(m.Tip)

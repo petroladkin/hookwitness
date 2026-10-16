@@ -8,7 +8,7 @@ LDFLAGS := -s -w -X $(MODULE)/internal/version.Version=$(VERSION) -X $(MODULE)/i
 
 IMAGE   ?= hookwitness:dev
 
-.PHONY: build image image-smoke api-smoke docs-check media check generate templ-check vet fmt-check staticcheck test notices hooks clean
+.PHONY: build image image-smoke api-smoke docs-check media js-test check generate templ-check vet fmt-check staticcheck test notices hooks clean
 
 ## build: one static binary in bin/ (no cgo)
 build:
@@ -33,6 +33,10 @@ docs-check: build
 ## media: regenerate the documentation's screenshots, the README's demo GIF and the social preview (Node 22+, Chrome, Docker)
 media: build
 	node scripts/media/media.mjs bin/hookwitness docs/images
+
+## js-test: the tests of the UI's JavaScript layout code (Node 20+, no packages); CI runs it
+js-test:
+	node --test scripts/stripcheck/*.test.mjs
 
 ## check: everything a change must pass
 check: templ-check build vet fmt-check staticcheck test

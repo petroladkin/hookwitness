@@ -147,8 +147,9 @@ const htmlSource = `{{define "head" -}}
 {{end}}{{range .Rows}}<line class="grid" x1="0" y1="{{num .}}" x2="{{num w}}" y2="{{num .}}"/>
 {{end}}<line class="baseline" x1="0" y1="{{num (base)}}" x2="{{num w}}" y2="{{num (base)}}"/>
 {{range .Ticks}}<text class="tick" x="{{num .X}}" y="{{num (h)}}" dy="-8">{{.Label}}</text>
-{{end}}{{range .Brackets}}<path class="bracket" d="M{{num .A}} {{num .Y}}v-6H{{num .B}}v6"/><text class="gap" x="{{num .A}}" y="{{num .Y}}" dy="-10">{{.Label}}</text>
-{{end}}{{range .Marks}}{{if .Failed}}<rect class="alarm" x="{{num .X}}" y="{{num (base)}}" width="8" height="3" transform="translate(-4 3)"/>
+{{end}}{{range .Brackets}}<path class="bracket{{if .Dense}} dense{{end}}" d="M{{num .A}} {{num .Y}}v-6H{{num .B}}v6"/>
+{{end}}{{range .Brackets}}{{if .Label}}<text class="gap" x="{{num .LX}}" y="{{num .Y}}" dy="-10">{{.Label}}</text>
+{{end}}{{end}}{{range .Marks}}{{if .Failed}}<rect class="alarm" x="{{num .X}}" y="{{num (base)}}" width="8" height="3" transform="translate(-4 3)"/>
 {{end}}{{if eq .Kind "timeout"}}<line class="stem bad dashed" x1="{{num .X}}" y1="{{num (base)}}" x2="{{num .X}}" y2="{{num (top)}}"/><circle class="ring bad" cx="{{num .X}}" cy="{{num (top)}}" r="4"/>
 {{else if eq .Kind "drop"}}<line class="stem bad" x1="{{num .X}}" y1="{{num (base)}}" x2="{{num .X}}" y2="{{num .Tip}}"/><path class="stem bad" d="M{{num .X}} {{num .Tip}}m-5 -5l10 10m0 -10l-10 10"/>
 {{else}}<line class="stem {{.Kind}}" x1="{{num .X}}" y1="{{num (base)}}" x2="{{num .X}}" y2="{{num .Tip}}"/><circle class="dot {{.Kind}}" cx="{{num .X}}" cy="{{num .Tip}}" r="3"/>
@@ -266,7 +267,8 @@ h3{font:700 12px/1.2 var(--f-body);letter-spacing:.06em;text-transform:uppercase
 .grid-major{stroke:var(--grid-major);stroke-width:1;vector-effect:non-scaling-stroke}
 .baseline{stroke:var(--ink);stroke-opacity:.35;vector-effect:non-scaling-stroke}
 .tick,.gap{font:400 10px var(--f-data);fill:var(--muted);text-anchor:middle}
-.gap{fill:var(--ink);font-weight:600;text-anchor:start}
+.gap{fill:var(--ink);font-weight:600;stroke:var(--paper);stroke-width:3px;paint-order:stroke}
+.bracket.dense{stroke-dasharray:1 2}
 .bracket{fill:none;stroke:var(--ink-soft);stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
 .stem{stroke:var(--ink);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}
 .stem.bad{stroke:var(--alarm)}
