@@ -138,8 +138,11 @@ for example `edge (5a45bb4)`: the line at the bottom of the Endpoints page
 (and the logo's tooltip on every page), `hookwitness version`, and the
 "Generated … by Hookwitness" line of every report. So a report attached to a
 ticket says which build caught its requests. Released images say their tag
-(`v1.2.0 (…)`), the `:edge` image says `edge`, and a local build says what
-`git describe` finds, or `dev`.
+(`v1.2.0 (…)`), the `:edge` image says `edge`, `make build` says what
+`git describe` finds, and a build without it (`go install`, a plain `go
+build`) says the module version Go recorded: the tag for a release, a
+pseudo-version such as `v0.1.1-0.20261016120000-abcdef123456` between
+releases, or `dev` when there is none.
 
 `/healthz` gives the same in two fields:
 
