@@ -140,7 +140,10 @@ func (s *tools) register(srv *sdk.Server) {
 		s.deleteEndpoint)
 }
 
-type tools struct{ c *client }
+type tools struct {
+	c    *client
+	stop <-chan struct{} // closed when the server shuts down: waits end
+}
 
 // ---- endpoints ---------------------------------------------------------------
 
@@ -512,6 +515,13 @@ func (s *tools) waitMatching(ctx context.Context, p string, f Filters, after int
 	var found []map[string]any
 	cursor := after
 	for len(found) < n {
+		// At shutdown the API answers every wait at once: stop instead of
+		// asking again until the deadline.
+		select {
+		case <-s.stop:
+			return found, &stoppingError{matched: len(found), want: n}
+		default:
+		}
 		left := time.Until(deadline).Round(time.Millisecond)
 		q := f.query(url.Values{"after": {strconv.FormatInt(cursor, 10)}, "limit": {strconv.Itoa(n - len(found))}})
 		if left > 0 {
@@ -535,6 +545,13 @@ func (s *tools) waitMatching(ctx context.Context, p string, f Filters, after int
 		}
 	}
 	return found, nil
+}
+
+// stoppingError ends a wait when the server shuts down.
+type stoppingError struct{ matched, want int }
+
+func (e *stoppingError) Error() string {
+	return fmt.Sprintf("the server is shutting down; %d of %d matched so far; call again after it restarts", e.matched, e.want)
 }
 
 // cursor is the request id to wait after: the one given, or the newest now.

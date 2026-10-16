@@ -136,7 +136,9 @@ that makes it false.
   task-shaped tools that call the REST API's handler in-process (same
   validation, errors and access), mounted by `internal/web` at
   `<prefix>/mcp`; `wait_for_request` and `expect` chain the API's long-polls
-  and end on cancellation; results are a summary line and compact JSON,
+  and end on cancellation and at shutdown (a tool error); open sessions are
+  tracked and closed on shutdown (`Streamable.CloseSessions`, called by
+  `StopStreams`); results are a summary line and compact JSON,
   bodies cut at 16 KiB; `Bridge` pipes stdio to Streamable HTTP.
 - `internal/web` — the UI (and its report dialog and download, `report.go`): templ components (`views.templ`, generated
   `views_templ.go` is committed), handlers, SSE feed, embedded `static/`

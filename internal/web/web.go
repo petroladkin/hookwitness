@@ -57,7 +57,7 @@ type Handler struct {
 	mux     http.Handler
 	csrf    *http.CrossOriginProtection
 	api     *api.Handler      // the JSON API under prefix/api/v1
-	mcp     http.Handler      // MCP over Streamable HTTP at prefix/mcp, its tools on the API
+	mcp     *mcp.Streamable   // MCP over Streamable HTTP at prefix/mcp, its tools on the API
 	assets  map[string]string // asset path -> content hash for cache busting
 
 	stopOnce sync.Once
@@ -119,13 +119,16 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	}
 	ao.Fonts, _ = fs.Sub(staticFS, "static")
 	h.api = api.New(st, broker, log, ao)
-	h.mcp = mcp.Handler(h.api, api.Base(prefix), version.String(), log)
+	h.mcp = mcp.Handler(h.api, api.Base(prefix), version.String(), log, h.stop)
 	return h
 }
 
 // StopStreams ends the open live feeds; give it to server.Serve as an
 // onShutdown function.
-func (h *Handler) StopStreams() { h.stopOnce.Do(func() { close(h.stop) }) }
+func (h *Handler) StopStreams() {
+	h.stopOnce.Do(func() { close(h.stop) }) // first: waits (feeds, long-polls, MCP tools) end
+	h.mcp.CloseSessions()                   // then the MCP sessions, which wait for their tools
+}
 
 // csp allows nothing from other origins: the UI is self-contained.
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; " +
