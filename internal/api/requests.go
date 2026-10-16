@@ -37,7 +37,8 @@ type summaryJSON struct {
 	Status      int    `json:"status"`  // what hookwitness answered; 0 while nothing was sent
 	Verdict     string `json:"verdict"` // pass, fail, n/v; "" without authorization checks
 	BodySize    int64  `json:"body_size"`
-	BodyKept    bool   `json:"body_kept"` // false when the body was over the limit (413)
+	BodyKept    bool   `json:"body_kept"`          // false when the body was over the limit (413) or the server was busy (503)
+	BodyCut     bool   `json:"body_cut,omitempty"` // only the head was kept (Unmatched): body_size is the whole
 	ContentType string `json:"content_type"`
 }
 
@@ -97,7 +98,8 @@ type imageJSON struct {
 
 func summaryView(req store.Request) summaryJSON {
 	v := summaryJSON{ID: req.ID, No: req.No, ReceivedAt: stamp(req.ReceivedAt), Method: req.Method, Path: req.Path,
-		Query: req.RawQuery, Status: req.Status, Verdict: req.Verdict, BodySize: req.Size, BodyKept: !req.TooLarge}
+		Query: req.RawQuery, Status: req.Status, Verdict: req.Verdict, BodySize: req.Size, BodyKept: !req.TooLarge,
+		BodyCut: !req.TooLarge && req.Kept < req.Size}
 	if req.EndpointID != store.Unmatched {
 		id := req.EndpointID
 		v.EndpointID = &id

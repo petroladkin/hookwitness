@@ -78,6 +78,15 @@ this secret key is not the one this database was used with: sealed signing keys 
 head -c 11000000 /dev/zero | curl -s -o /dev/null --data-binary @- http://127.0.0.1:8080/hooks   # n/v: body not kept (over the size limit)
 ```
 
+## Запит отримав 503 «busy»
+
+Hookwitness уже читав стільки байтів тіл запитів, скільки дозволяє
+`-max-inflight` (за замовчуванням більше з 256 MiB і подвоєного
+`-max-body`). Запит отримав `503` з `Retry-After: 5`, зберігся без тіла, а
+реєстр пише **Busy**; відправник, який повторює спробу, проходить. Якщо так
+буває за звичайного навантаження, збільште ліміт
+(`HOOKWITNESS_MAX_INFLIGHT=1GiB`).
+
 ## Мої запити потрапляють в Unmatched із 404
 
 Шлях не збігається з ендпоінтом точно. Порівняйте їх у реєстрі Unmatched:

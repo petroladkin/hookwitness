@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -265,5 +266,36 @@ func TestReportImages(t *testing.T) {
 	}
 	if n := strings.Count(render(t, PDF, o, rs), "/Subtype /Image"); n != 0 {
 		t.Fatalf("images off: %d images in the PDF", n)
+	}
+}
+
+// A deeply nested body keeps every report format small.
+func TestReportOfADeepBody(t *testing.T) {
+	const depth = 9999
+	body := strings.Repeat("[", depth) + "1" + strings.Repeat("]", depth)
+	req := store.Request{ID: 1, No: 1, Method: "POST", Path: "/deep", Status: 200, ReceivedAt: time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC),
+		Headers: []store.Header{{Name: "Content-Type", Value: "application/json"}}, Body: []byte(body), Size: int64(len(body))}
+	o := goldenOptions()
+	o.BodyLimit = 64 << 10
+	for _, f := range []Format{Markdown, HTML, PDF} {
+		if out := render(t, f, o, []store.Request{req}); len(out) > 4<<20 {
+			t.Errorf("%s: %d MB", f, len(out)>>20)
+		}
+	}
+}
+
+// A body not kept because the server was busy, and one of which only the
+// head was kept, say so.
+func TestReportBodyNotes(t *testing.T) {
+	at := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	busy := store.Request{ID: 1, No: 1, Method: "POST", Path: "/up", ReceivedAt: at, Size: 70000, TooLarge: true, Status: 503,
+		Outcome: emulate.Outcome{Source: emulate.FromBusy, Action: emulate.ActReply, Status: 503}.String()}
+	head := store.Request{ID: 2, No: 2, Method: "POST", Path: "/nowhere", ReceivedAt: at, Size: 200 << 10, Status: 404,
+		Body: []byte(strings.Repeat("x", 64<<10))}
+	md := render(t, Markdown, goldenOptions(), []store.Request{busy, head})
+	for _, want := range []string{"not kept: the server was busy (503)", "the first 64.0 KiB kept (no endpoint)"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("lacks %q:\n%s", want, md)
+		}
 	}
 }

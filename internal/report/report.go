@@ -421,8 +421,10 @@ type Body struct {
 	Tokens []payload.Token
 	Size   int64
 	SHA256 string
-	Cut    bool // only the first Shown bytes are in Text
-	Shown  int  // the limit a cut body was cut at
+	Cut    bool  // only the first Shown bytes are in Text
+	Shown  int   // the limit a cut body was cut at
+	Kept   int64 // bytes kept: less than Size when only the head was (Unmatched)
+	Busy   bool  // not kept: the server was busy (503)
 }
 
 // Answer is what Hookwitness did.
@@ -535,13 +537,14 @@ func maskValue(v string) string {
 }
 
 func viewBody(r store.Request, limit int) Body {
-	b := Body{Size: r.Size}
+	b := Body{Size: r.Size, Kept: int64(len(r.Body))}
 	if len(r.BodySHA256) > 0 {
 		b.SHA256 = hex.EncodeToString(r.BodySHA256)
 	}
 	switch {
 	case r.TooLarge:
 		b.Kind = BodyNotKept
+		b.Busy = emulate.ParseOutcome(r.Outcome, r.Status).Source == emulate.FromBusy
 		return b
 	case len(r.Body) == 0:
 		b.Kind = BodyEmpty
@@ -614,9 +617,15 @@ func bodyNote(b Body) string {
 	case BodyEmpty:
 		return "no body"
 	case BodyNotKept:
+		if b.Busy {
+			return size(b.Size) + " declared · not kept: the server was busy (503)"
+		}
 		return size(b.Size) + " declared · not kept: over the body limit"
 	}
 	s := size(b.Size)
+	if b.Kept < b.Size {
+		s += " · the first " + size(b.Kept) + " kept (no endpoint)"
+	}
 	if b.SHA256 != "" && (b.Kind == BodyBinary || b.Cut) {
 		s += " · sha256 " + b.SHA256
 	}

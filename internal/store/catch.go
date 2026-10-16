@@ -56,6 +56,7 @@ type Request struct {
 	Body       []byte
 	BodySHA256 []byte // nil when there is no body
 	Size       int64  // body bytes; for a refused body the declared length, -1 if unknown
+	Kept       int64  // body bytes stored: less than Size when only the head was kept (Unmatched)
 	TooLarge   bool
 	Status     int    // what hookwitness answered with; 0 when nothing was sent
 	Outcome    string // what it did, as JSON (internal/emulate.Outcome)
@@ -488,7 +489,7 @@ func pairs(hs []Header) [][2]string {
 }
 
 const requestColumns = `id, endpoint_id, no, received_at, method, path, raw_query, proto, remote_addr,
-	headers, body_sha256, size, too_large, status, outcome, verdict, verdicts`
+	headers, body_sha256, size, too_large, status, outcome, verdict, verdicts, ifnull(length(body), 0)`
 
 func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, error) {
 	var r Request
@@ -496,7 +497,7 @@ func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, er
 	var at int64
 	var headers string
 	dst := []any{&r.ID, &ep, &r.No, &at, &r.Method, &r.Path, &r.RawQuery, &r.Proto, &r.RemoteAddr,
-		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts}
+		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts, &r.Kept}
 	if withBody {
 		dst = append(dst, &r.Body)
 	}

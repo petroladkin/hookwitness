@@ -124,10 +124,11 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 		"addr", ln.Addr().String(), "db", cfg.DBPath, "schema", schema,
 		"ui", "http://"+ln.Addr().String()+cfg.AdminPrefix+"/",
 		"api", "http://"+ln.Addr().String()+api.Base(cfg.AdminPrefix),
-		"max_body", cfg.MaxBody, "retention", cfg.Retention, "secret_key", keySource)
+		"max_body", cfg.MaxBody, "max_inflight", cfg.MaxInFlight, "retention", cfg.Retention, "secret_key", keySource)
 
 	broker := live.New()
-	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, Retention: cfg.Retention, MaxWait: cfg.MaxWait, Keys: keys}
+	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, MaxInFlight: cfg.MaxInFlight,
+		Retention: cfg.Retention, MaxWait: cfg.MaxWait, Keys: keys}
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
 	})

@@ -263,3 +263,15 @@ func TestRequestImages(t *testing.T) {
 		t.Fatalf("no images: %v", got["images"])
 	}
 }
+
+// An Unmatched request whose head only was kept says so: body_cut, and
+// body_size is the whole.
+func TestBodyCut(t *testing.T) {
+	e := newEnv(t)
+	e.add(t, store.Unmatched, "head only", func(r *store.Request) { r.Path, r.Status, r.Size = "/nowhere", 404, 5000 })
+	e.add(t, store.Unmatched, "whole", func(r *store.Request) { r.Path, r.Status = "/nowhere", 404 })
+	got := decodeAs[requestList](t, e.do("GET", "/unmatched/requests", "")).Requests
+	if len(got) != 2 || got[0].BodyCut || !got[1].BodyCut || got[1].BodySize != 5000 || !got[1].BodyKept {
+		t.Fatalf("%+v", got)
+	}
+}

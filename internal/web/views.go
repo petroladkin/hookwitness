@@ -74,6 +74,7 @@ type exhibitView struct {
 	Query    []queryParam
 	Body     bodyView
 	Download string
+	Kept     int64 // body bytes kept: less than Size when only the head was (Unmatched)
 	Unmatch  bool
 	Limit    int64
 	Outcome  emulate.Outcome

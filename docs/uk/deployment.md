@@ -69,12 +69,17 @@ volumes:
 | `-addr` | `HOOKWITNESS_ADDR` | `127.0.0.1:8080` (в образі: `:8080`) | адреса, яку слухає сервер |
 | `-db` | `HOOKWITNESS_DB` | `hookwitness.db` (в образі: `/data/hookwitness.db`) | файл бази даних |
 | `-log-format` | `HOOKWITNESS_LOG_FORMAT` | `text` | `text` або `json` |
-| `-max-body` | `HOOKWITNESS_MAX_BODY` | `10MiB` | найбільше тіло, що зберігається, у байтах або з `KiB`, `MiB`, `GiB`; більше отримує `413` і не зберігається |
+| `-max-body` | `HOOKWITNESS_MAX_BODY` | `10MiB` | найбільше тіло, що зберігається, у байтах або з `KiB`, `MiB`, `GiB`, щонайбільше `512MiB`; більше отримує `413` і не зберігається |
+| `-max-inflight` | `HOOKWITNESS_MAX_INFLIGHT` | більше з `256MiB` і подвоєного `-max-body` | скільки байтів тіл запитів читається одночасно; тіло, що не вміщається, отримує `503` з `Retry-After: 5` і зберігається без тіла; не менше за `-max-body` |
 | `-retention` | `HOOKWITNESS_RETENTION` | `1000` | скільки запитів зберігати на ендпоінт і стільки ж без ендпоінта |
 | `-admin-prefix` | `HOOKWITNESS_ADMIN_PREFIX` | `/admin` | де живуть інтерфейс і API |
 | `-admin-hosts` | `HOOKWITNESS_ADMIN_HOSTS` | немає | імена хостів, на які відповідають інтерфейс і API, через кому |
 | `-max-wait` | `HOOKWITNESS_MAX_WAIT` | `5m` | найдовша затримка відповіді чи утримання таймауту, від 1s до 1h |
 | — | `HOOKWITNESS_SECRET_KEY` | немає | ключ секретів (нижче); без нього — файл ключа `<db>.key` |
+
+База виростає щонайбільше приблизно до (ендпоінти × `-retention` ×
+`-max-body`) плюс `-retention` × 64 KiB для реєстру Unmatched, який зберігає
+лише перші 64 KiB тіла.
 
 Ctrl-C або SIGTERM зупиняє сервер акуратно: запити в роботі завершуються,
 утримання таймаутів закінчуються.
