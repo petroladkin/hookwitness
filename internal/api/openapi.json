@@ -768,6 +768,16 @@
                 }
               }
             }
+          },
+          "500": {
+            "description": "The report could not be made before any of it was sent (`internal`); the log says why. Once sending has begun, a failure ends the download short instead.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -1091,6 +1101,16 @@
           },
           "422": {
             "description": "A parameter or field is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The report could not be made before any of it was sent (`internal`); the log says why. Once sending has begun, a failure ends the download short instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1907,7 +1927,7 @@
               "object",
               "null"
             ],
-            "description": "What was done: source, action (reply, timeout, drop, refused, error, abandoned — the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB), delay_ms, waited_ms, counter."
+            "description": "What was done: source, action (reply, timeout, drop, refused, error, abandoned — the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB; withheld says what of the configured reply HTTP did not send — a body and some headers with 204 or 304, a body to HEAD), delay_ms, waited_ms, counter."
           },
           "verdicts": {
             "type": "array",

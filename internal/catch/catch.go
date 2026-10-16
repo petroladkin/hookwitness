@@ -287,7 +287,9 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 			Body:    []byte("Hookwitness could not render this endpoint's reply: " + err.Error() + "\n")}
 	}
 	rendered = rendered.Protect()
-	pl.out.SetReply(rendered)
+	sent, withheld := rendered.AsSent(r.Method) // what net/http will send of it
+	pl.out.SetReply(sent)
+	pl.out.Withheld = withheld
 	if d := pl.reply.Delay(h.maxWait()); d > 0 && err == nil {
 		waited := h.wait(r, d)
 		pl.out.DelayMs = waited.Milliseconds()

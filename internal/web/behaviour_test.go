@@ -471,3 +471,36 @@ func TestReplyBytes(t *testing.T) {
 		t.Error("the exhibit does not show the raw reply body")
 	}
 }
+
+// A change made through the API (or another tab) while a UI edit is being
+// saved is kept: the edit is refused with the current version.
+func TestConcurrentChangeKept(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/c")
+	meanwhile := emulate.Config{Default: emulate.Reply{Status: 202}}.String()
+	e.h.beforeSave = func() { e.st.SetConfig(context.Background(), ep.ID, meanwhile) }
+	rec := e.edit(ep.ID, url.Values{"op": {"rule-save"}, "i": {"new"}, "when": {"every"}, "n": {"2"}, "do": {"timeout"}})
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "changed elsewhere") {
+		t.Fatalf("%d %s", rec.Code, errorOf(rec.Body.String()))
+	}
+	if got := e.config(t, ep.ID); got.String() != meanwhile {
+		t.Fatalf("the change made meanwhile was overwritten: %s", got)
+	}
+}
+
+// With "Refuse with my own reply" ticked, a bad value in the check itself
+// is still refused (it used to be lost and the default saved).
+func TestCheckFormKeepsTheFirstError(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/k")
+	e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"new"}, "name": {"S"}, "secret_kind": {"key"}, "value": {"whsec_test_1"}})
+	before := e.config(t, ep.ID).String()
+	rec := e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"stripe"}, "secret": {"S"}, "tolerance_s": {"abc"},
+		"own_error": {"on"}, "error_status": {"401"}, "error_body": {"no"}})
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(errorOf(rec.Body.String()), "tolerance") {
+		t.Fatalf("%d %q", rec.Code, errorOf(rec.Body.String()))
+	}
+	if e.config(t, ep.ID).String() != before {
+		t.Fatal("a check with a bad tolerance was saved")
+	}
+}

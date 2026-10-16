@@ -654,6 +654,9 @@ templ answer(x exhibitView) {
 			if x.Outcome.Cut {
 				<p class="note">Only the first 64 KiB of the reply are kept.</p>
 			}
+			if x.Outcome.Withheld != "" {
+				<p class="note">The configured reply's { x.Outcome.Withheld }.</p>
+			}
 		</div>
 	}
 }

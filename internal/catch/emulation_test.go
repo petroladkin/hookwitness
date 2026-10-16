@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -410,16 +411,22 @@ func TestEveryThirdIsExact(t *testing.T) {
 func TestWaitRecordsTheHoldBeforeShutdown(t *testing.T) {
 	h, st, _ := setup(t, 1<<20)
 	h.MaxWait = time.Hour
+	holding := make(chan struct{})
+	h.after = func(time.Duration) <-chan time.Time { close(holding); return nil } // the hold has begun; only Stop ends it
 	url := serve(t, h)
 	ep := configure(t, st, "/hold", emulate.Config{Default: emulate.Reply{Status: 200},
 		Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenEvery, N: 1}, Do: emulate.ActTimeout}}})
 	go do(t, http.DefaultClient, "POST", url+"/hold", "")
-	time.Sleep(200 * time.Millisecond)
+	<-holding
+	held := time.Now()
+	for time.Since(held) < 20*time.Millisecond { // poll, not sleep: at least this long held
+		time.Sleep(time.Millisecond)
+	}
 	h.Stop()
 	h.Wait()
 	_, o := lastOutcome(t, st, ep)
-	if o.Action != emulate.ActTimeout || o.WaitedMs < 150 {
-		t.Fatalf("after Wait: %+v, want the hold's wait recorded", o)
+	if o.Action != emulate.ActTimeout || o.WaitedMs < 20 {
+		t.Fatalf("after Wait: %+v, want the hold's wait (at least 20 ms) recorded", o)
 	}
 }
 
@@ -537,6 +544,62 @@ func TestProtectiveHeaders(t *testing.T) {
 		}
 		if strings.Join(csp, "|") != c.csp || strings.Join(sniff, "|") != "nosniff" {
 			t.Errorf("%s: outcome headers %v", c.path, o.Headers)
+		}
+	}
+}
+
+// What is recorded as sent is what went on the wire: no body (and no
+// Content-Type for 304) with 204 and 304, no body to HEAD; the outcome says
+// what was withheld.
+func TestOutcomeIsWhatWasSent(t *testing.T) {
+	h, st, _ := setup(t, 1<<20)
+	url := serve(t, h)
+	addr := strings.TrimPrefix(url, "http://")
+	for _, c := range []struct {
+		status   int
+		method   string
+		withheld string
+	}{
+		{204, "POST", "body of 11 B not sent: a 204 reply has none"},
+		{304, "GET", "body of 11 B, header Content-Type not sent: a 304 reply has none"},
+		{200, "HEAD", "body of 11 B not sent: the request was HEAD"},
+	} {
+		path := fmt.Sprintf("/s%d%s", c.status, c.method)
+		ep := configure(t, st, path, emulate.Config{Default: emulate.Reply{Status: c.status,
+			Headers: []emulate.Header{{Name: "Content-Type", Value: "application/json"}, {Name: "X-A", Value: "1"}}, Body: `{"ok":true}`}})
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(conn, "%s %s HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", c.method, path)
+		raw, _ := io.ReadAll(conn)
+		conn.Close()
+		head, body, _ := strings.Cut(string(raw), "\r\n\r\n")
+		wire := map[string]string{}
+		for _, line := range strings.Split(head, "\r\n")[1:] {
+			k, v, _ := strings.Cut(line, ": ")
+			wire[strings.ToLower(k)] = v
+		}
+		_, o := lastOutcome(t, st, ep)
+		recorded := map[string]string{}
+		for _, x := range o.Headers {
+			recorded[strings.ToLower(x.Name)] = x.Value
+		}
+		for k := range wire {
+			if k == "date" || k == "content-length" || k == "connection" {
+				continue
+			}
+			if recorded[k] != wire[k] {
+				t.Errorf("%s: header %s on the wire %q, recorded %q", path, k, wire[k], recorded[k])
+			}
+		}
+		for k := range recorded {
+			if _, ok := wire[k]; !ok {
+				t.Errorf("%s: header %s recorded, not on the wire", path, k)
+			}
+		}
+		if body != "" || o.Body != "" || o.Withheld != c.withheld {
+			t.Errorf("%s: wire body %q, recorded %q, withheld %q", path, body, o.Body, o.Withheld)
 		}
 	}
 }

@@ -284,3 +284,34 @@ func TestDelayObeysTheCurrentLimit(t *testing.T) {
 		t.Fatalf("plain delay %v", d)
 	}
 }
+
+// AsSent drops what Go's HTTP server does not send.
+func TestAsSent(t *testing.T) {
+	r := Rendered{Status: 200, Headers: []Header{{"Content-Type", "application/json"}, {"X-A", "1"}, {"Content-Length", "11"}}, Body: []byte(`{"ok":true}`)}
+	for _, c := range []struct {
+		status  int
+		method  string
+		headers string
+		body    string
+		note    string
+	}{
+		{200, "POST", "Content-Type X-A Content-Length", `{"ok":true}`, ""},
+		{200, "HEAD", "Content-Type X-A Content-Length", "", "body of 11 B not sent: the request was HEAD"},
+		{204, "POST", "Content-Type X-A", "", "body of 11 B, header Content-Length not sent: a 204 reply has none"},
+		{304, "GET", "X-A", "", "body of 11 B, header Content-Type, header Content-Length not sent: a 304 reply has none"},
+	} {
+		in := r
+		in.Status = c.status
+		sent, note := in.AsSent(c.method)
+		var names []string
+		for _, h := range sent.Headers {
+			names = append(names, h.Name)
+		}
+		if strings.Join(names, " ") != c.headers || string(sent.Body) != c.body || note != c.note || sent.Status != c.status {
+			t.Errorf("%d %s: %v %q %q", c.status, c.method, names, sent.Body, note)
+		}
+	}
+	if _, note := (Rendered{Status: 204}).AsSent("POST"); note != "" {
+		t.Errorf("nothing dropped, yet %q", note)
+	}
+}

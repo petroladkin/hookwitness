@@ -237,8 +237,7 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 
 	op := r.PostFormValue("op")
 	if op != "counter-reset" && r.PostFormValue("v") != configVersion(ep.Config) {
-		refuse(http.StatusConflict, op, "the behaviour was changed elsewhere (another tab or client) after this page was loaded, so nothing was saved; "+
-			"this is the current version, make the change again", nil)
+		refuse(http.StatusConflict, op, changedElsewhere, nil)
 		return
 	}
 	if op == "counter-reset" {
@@ -277,13 +276,33 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusUnprocessableEntity, section, err.Error(), ed)
 		return
 	}
-	if err := h.store.SetConfig(ctx, id, cfg.String()); err != nil {
+	if h.beforeSave != nil {
+		h.beforeSave()
+	}
+	// Saved only over the version this edit was made on: a change made
+	// meanwhile through the API, MCP or another tab is kept, not overwritten.
+	saved, err := h.store.SetConfigIf(ctx, id, ep.Config, cfg.String())
+	if err != nil {
 		h.fail(w, "save behaviour", err)
+		return
+	}
+	if !saved {
+		if fresh, err := h.store.Endpoint(ctx, id); err == nil {
+			if cur, err := emulate.Parse(fresh.Config); err == nil {
+				ep, stored = fresh, cur // refuse shows the current version
+			}
+		}
+		refuse(http.StatusConflict, op, changedElsewhere, nil)
 		return
 	}
 	h.log.Info("endpoint behaviour changed", "path", ep.Path, "op", op)
 	http.Redirect(w, r, savedURL(h.regPath(id), section), http.StatusSeeOther)
 }
+
+// changedElsewhere refuses an edit made on a version that is no longer the
+// stored one.
+const changedElsewhere = "the behaviour was changed elsewhere (another tab or client) meanwhile, so nothing was saved; " +
+	"this is the current version, make the change again"
 
 // savedURL shows the tab of a saved section and says so.
 func savedURL(base, section string) string {
@@ -352,9 +371,11 @@ func applyEdit(cfg *emulate.Config, op string, r *http.Request, keys *secret.Key
 		}
 		ch, err := formCheck(r)
 		if r.PostFormValue("own_error") == "on" {
-			var reply emulate.Reply
-			reply, err = formReply(r, "error_")
+			reply, rerr := formReply(r, "error_")
 			ch.Error = &reply
+			if err == nil { // the check's own error first: it is the one above
+				err = rerr
+			}
 		}
 		if i == len(cfg.Checks) {
 			cfg.Checks = append(cfg.Checks, ch)

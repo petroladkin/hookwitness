@@ -75,8 +75,11 @@ func fixture(t testing.TB) []store.Request {
 
 // sliceSource yields the requests, without bodies when asked.
 func sliceSource(rs []store.Request) Source {
-	return func(ctx context.Context, withBody bool, fn func(store.Request) error) error {
+	return func(ctx context.Context, withBody bool, through int64, fn func(store.Request) error) error {
 		for _, r := range rs {
+			if through > 0 && r.ID > through {
+				continue
+			}
 			if !withBody {
 				r.Body = nil
 			}
@@ -297,5 +300,56 @@ func TestReportBodyNotes(t *testing.T) {
 		if !strings.Contains(md, want) {
 			t.Errorf("lacks %q:\n%s", want, md)
 		}
+	}
+}
+
+// A request that arrives while the report is written is in neither its
+// summary nor its items: the items stop at the last request counted.
+func TestReportItemsMatchTheSummary(t *testing.T) {
+	at := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	rs := []store.Request{
+		{ID: 1, No: 1, Method: "POST", Path: "/o", ReceivedAt: at, Status: 200},
+		{ID: 2, No: 2, Method: "POST", Path: "/o", ReceivedAt: at.Add(time.Second), Status: 200},
+	}
+	var bodyPass int64 = -1
+	src := func(ctx context.Context, withBody bool, through int64, fn func(store.Request) error) error {
+		if withBody {
+			bodyPass = through
+		}
+		for _, r := range rs {
+			if through > 0 && r.ID > through {
+				continue
+			}
+			if err := fn(r); err != nil {
+				return err
+			}
+		}
+		if !withBody { // one more arrives between the passes
+			rs = append(rs, store.Request{ID: 3, No: 3, Method: "POST", Path: "/o", ReceivedAt: at.Add(2 * time.Second), Status: 500})
+		}
+		return nil
+	}
+	var buf bytes.Buffer
+	if err := Write(context.Background(), &buf, Markdown, goldenOptions(), src); err != nil {
+		t.Fatal(err)
+	}
+	md := buf.String()
+	if bodyPass != 2 || !strings.Contains(md, "| Requests | 2 |") || strings.Contains(md, "### #3") || !strings.Contains(md, "### #2") {
+		t.Fatalf("items bounded by %d:\n%s", bodyPass, md)
+	}
+}
+
+// Lazy starts the download (its headers) only with the first byte.
+func TestLazy(t *testing.T) {
+	var buf bytes.Buffer
+	started := 0
+	l := NewLazy(&buf, func() { started++ })
+	if l.Written() || started != 0 {
+		t.Fatal("started before writing")
+	}
+	l.Write([]byte("a"))
+	l.Write([]byte("b"))
+	if !l.Written() || started != 1 || buf.String() != "ab" {
+		t.Fatalf("written %v, started %d, %q", l.Written(), started, buf.String())
 	}
 }

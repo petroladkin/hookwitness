@@ -68,7 +68,11 @@ const BodyLimit = 64 << 10
 
 // Source calls fn for each reported request, oldest first; withBody asks
 // for the bodies too. It is called twice per report.
-type Source func(ctx context.Context, withBody bool, fn func(store.Request) error) error
+//
+// through bounds the requests read to those with an id up to it (0: no
+// bound): the second pass reads exactly what the summary counted, even when
+// requests arrive while the report is written.
+type Source func(ctx context.Context, withBody bool, through int64, fn func(store.Request) error) error
 
 // Options say what a report covers and how it is written.
 type Options struct {
@@ -110,6 +114,29 @@ func FileName(endpoint string, at time.Time, f Format) string {
 	return "hookwitness-" + name + "-" + at.UTC().Format("20060102T150405Z") + "." + string(f)
 }
 
+// Lazy is a writer that calls start just before its first byte: a handler
+// sets the download's headers there, so a report that fails before writing
+// anything can still be answered with an error instead of an empty file.
+type Lazy struct {
+	w       io.Writer
+	start   func()
+	written bool
+}
+
+// NewLazy writes to w, calling start before the first byte.
+func NewLazy(w io.Writer, start func()) *Lazy { return &Lazy{w: w, start: start} }
+
+func (l *Lazy) Write(p []byte) (int, error) {
+	if !l.written {
+		l.written = true
+		l.start()
+	}
+	return l.w.Write(p)
+}
+
+// Written reports whether any byte was written.
+func (l *Lazy) Written() bool { return l.written }
+
 // Write writes the report of the requests src yields.
 func Write(ctx context.Context, w io.Writer, f Format, o Options, src Source) error {
 	h, err := summarize(ctx, o, src)
@@ -133,11 +160,13 @@ func Write(ctx context.Context, w io.Writer, f Format, o Options, src Source) er
 	if err := wr.head(h); err != nil {
 		return err
 	}
-	err = src(ctx, true, func(r store.Request) error {
-		return wr.item(h.item(r))
-	})
-	if err != nil {
-		return err
+	if h.Count > 0 { // through 0 would mean no bound
+		err = src(ctx, true, h.lastID, func(r store.Request) error {
+			return wr.item(h.item(r))
+		})
+		if err != nil {
+			return err
+		}
 	}
 	return wr.end()
 }
@@ -168,6 +197,7 @@ type Head struct {
 	noImages   bool
 	mask       map[string]bool
 	deliveries map[int64]int // request id → delivery number, only for retries
+	lastID     int64         // the newest request counted: the items stop there
 }
 
 // Count is a labelled number.
@@ -268,8 +298,9 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 	var shaOrder []string
 	var markSHA []string // per mark, the body digest
 	var first, last time.Time
-	err := src(ctx, false, func(r store.Request) error {
+	err := src(ctx, false, 0, func(r store.Request) error {
 		h.Count++
+		h.lastID = max(h.lastID, r.ID)
 		if first.IsZero() {
 			first = r.ReceivedAt
 		}
