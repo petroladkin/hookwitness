@@ -1,7 +1,7 @@
 #!/bin/bash
 # Refuse a commit message matching the maintainer's local deny-list
 # (.git/info/private-patterns, see pre-commit). Messages are as public as code.
-patterns="$(git rev-parse --git-dir)/info/private-patterns"
+patterns="$(git rev-parse --git-common-dir)/info/private-patterns" # shared by linked worktrees
 [ -s "$patterns" ] || exit 0
 hits=$(grep -v '^#' "$1" | grep -iE -f "$patterns")
 if [ -n "$hits" ]; then
