@@ -7,7 +7,7 @@ fails when it falls out of step with the modules actually compiled in.
 
 ## github.com/a-h/templ
 
-Version v0.3.1020, license MIT.
+Version v0.3.1070, license MIT.
 
 ### LICENSE
 
@@ -749,7 +749,7 @@ SOFTWARE.
 
 ## github.com/signintech/gopdf
 
-Version v0.38.1, license MIT.
+Version v0.38.2, license MIT.
 
 ### LICENSE
 
@@ -814,7 +814,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## golang.org/x/image
 
-Version v0.46.0, license BSD-3-Clause.
+Version v0.47.0, license BSD-3-Clause.
 
 ### LICENSE
 
@@ -913,7 +913,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## golang.org/x/sync
 
-Version v0.23.0, license BSD-3-Clause.
+Version v0.24.0, license BSD-3-Clause.
 
 ### LICENSE
 
@@ -976,7 +976,7 @@ shall terminate as of the date such litigation is filed.
 
 ## golang.org/x/sys
 
-Version v0.48.0, license BSD-3-Clause.
+Version v0.49.0, license BSD-3-Clause.
 
 ### LICENSE
 
@@ -1039,7 +1039,7 @@ shall terminate as of the date such litigation is filed.
 
 ## golang.org/x/text
 
-Version v0.42.0, license BSD-3-Clause.
+Version v0.43.0, license BSD-3-Clause.
 
 ### LICENSE
 
