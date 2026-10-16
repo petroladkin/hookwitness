@@ -234,11 +234,17 @@
       ctx.lineTo(br.b, br.y + 6);
       ctx.stroke();
       ctx.setLineDash([]);
-      if (br.label) {
-        ctx.fillStyle = css("--ink");
-        ctx.font = "600 10px " + mono;
-        ctx.fillText(br.label, br.lx, br.y - 4);
-      }
+    });
+    // Labels after every bracket, edged with paper: a row's label sits
+    // where the row above may draw its line.
+    ctx.font = "600 10px " + mono;
+    ctx.fillStyle = css("--ink");
+    ctx.strokeStyle = css("--paper");
+    ctx.lineWidth = 3;
+    lay.brackets.forEach((br) => {
+      if (!br.label) return;
+      ctx.strokeText(br.label, br.lx, br.y - 4);
+      ctx.fillText(br.label, br.lx, br.y - 4);
     });
     ms.forEach((m) => {
       const mx = x(m.at);
