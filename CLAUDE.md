@@ -147,7 +147,8 @@ that makes it false.
   inline scripts or styles, nothing from other origins. Answers only to IP
   addresses, localhost and `-admin-hosts` names (DNS rebinding); refuses
   cross-origin form posts.
-- `internal/version` — version and commit, set via `-ldflags` by `make build`.
+- `internal/version` — version and commit, set via `-ldflags` by `make build`;
+  without them (`go install`) taken from the build info Go records.
 - `internal/repoguard` — tests over the repository itself: no private network
   addresses or home-directory paths in tracked files (exempt a line with
   `guard:allow`, a file with `guard:allow-file` in its first line), and
@@ -179,9 +180,12 @@ that makes it false.
   stage through `make build`, distroless static nonroot final stage; the
   build context is an allowlist.
 - `.github/workflows/ci.yml` — `make check`, then the amd64 image and its
-  container and API smoke tests on every PR and push; from `dev` (`:edge`) and
-  `v*` tags the amd64+arm64 image is pushed to GHCR with SBOM and provenance
-  attestations attached as referrers (not in the image index). Actions are
+  container and API smoke tests (job `image`, read-only) on every PR and push
+  to `dev` or `main`; on a push to `dev` (`:edge`) or a release tag
+  (`vX.Y.Z`, `vX.Y.Z-rc.N`; other tags start nothing) the job `publish`,
+  the only one with write permissions, pushes the amd64+arm64 image to GHCR
+  with SBOM and provenance attestations attached as referrers (not in the
+  image index); a release candidate gets only its own tag. Actions are
   pinned to commit SHAs; `.github/dependabot.yml` updates them, the Go modules
   and the base images weekly.
 
