@@ -10,7 +10,7 @@ Catch webhooks, get a verdict, attach the evidence.
 <!-- docs-check: skip: starts a long-running container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
-  ghcr.io/petroladkin/hookwitness:edge
+  ghcr.io/petroladkin/hookwitness:0.1
 ```
 
 <img src="docs/images/demo.gif" width="760" alt="A 20-second run: GitHub webhooks arrive live on the register; the third is answered 503 by a rule; one signed with the wrong secret turns red and its page says the signature does not match; then the report is downloaded and opened.">
@@ -23,9 +23,10 @@ docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
 - **Evidence for the ticket.** A Markdown, HTML or PDF report of what arrived
   and what was answered.
 
-Self-hosted: one binary or a container image. **Status: early development.**
-The catcher, scripted replies, verdicts, reports, the REST API and the MCP
-server work.
+Self-hosted: a container image, or one binary built from source. **Status:
+0.1, the first release.** The catcher, scripted replies, verdicts, reports,
+the REST API and the MCP server work; until 1.0, a minor version (0.2) may
+change the API or the flags, and the [changelog](CHANGELOG.md) says how.
 
 ## A short tour
 
@@ -56,8 +57,10 @@ With the container above running:
    the body and what Hookwitness answered.
 
 Keep `-v hookwitness:/data`: it holds your endpoints, secrets and requests
-across container upgrades. Or build from source: `make build && bin/hookwitness
-serve` (Go 1.27+). [Getting started](docs/getting-started.md) walks through it.
+across container upgrades. Or build from source with Go 1.27+: `go install
+github.com/petroladkin/hookwitness/cmd/hookwitness@latest`, or `make build &&
+bin/hookwitness serve` in a clone. [Getting started](docs/getting-started.md)
+walks through it.
 
 ## What it does
 
@@ -86,7 +89,7 @@ links to its source.
 
 | | Self-hosted | Signature and credential verdicts | Fault scenarios | Reports | MCP server |
 |---|---|---|---|---|---|
-| **Hookwitness** | [one binary or a container image](docs/deployment.md) | [GitHub, Stripe, Standard Webhooks, generic HMAC, bearer, Basic; JSON Schema](docs/authorization.md) | [status, delay, timeout, connection reset; every Nth, first N, random](docs/replies.md) | [Markdown, HTML, PDF](docs/reports.md) | [built in: Streamable HTTP, and stdio through a bridge](docs/agents.md#mcp) |
+| **Hookwitness** | [a container image, or one binary built from source](docs/deployment.md) | [GitHub, Stripe, Standard Webhooks, generic HMAC, bearer, Basic; JSON Schema](docs/authorization.md) | [status, delay, timeout, connection reset; every Nth, first N, random](docs/replies.md) | [Markdown, HTML, PDF](docs/reports.md) | [built in: Streamable HTTP, and stdio through a bridge](docs/agents.md#mcp) |
 | **[webhook.site](https://webhook.site)** | [open-source edition with Docker Compose](https://docs.webhook.site/open-source.html) | [none built in; paid Custom Actions can compute an HMAC in a script](https://docs.webhook.site/webhookscript/functions/string.html) | [status; delay up to 30 s (10 s in the open-source edition)](https://docs.webhook.site/api/tokens.html) | [CSV export on paid plans; JSON API](https://docs.webhook.site/api/requests.html) | [user-contributed servers](https://docs.webhook.site/api/about.html#mcp-servers) |
 | **[webhook-tester](https://github.com/tarampampam/webhook-tester)** | [container image, binaries, Helm chart](https://github.com/tarampampam/webhook-tester#readme) | [not in its documentation](https://github.com/tarampampam/webhook-tester#readme) | [status, headers, body; delay up to 30 s](https://github.com/tarampampam/webhook-tester/blob/master/api/openapi.yml) | [JSON API](https://github.com/tarampampam/webhook-tester/blob/master/api/openapi.yml) | not in its documentation |
 | **[WireMock](https://wiremock.org)** | [container image, JAR, Java library](https://wiremock.org/docs/download-and-installation/) | [request matching on headers and Basic credentials picks a stub; no verdict](https://wiremock.org/docs/request-matching/#basic-authentication) | [status; fixed and random delays; connection reset, empty and malformed responses](https://wiremock.org/docs/simulating-faults/) | [JSON request journal](https://wiremock.org/docs/verifying/#getting-all-requests) | [WireMock Cloud only](https://docs.wiremock.io/ai-mcp/mcp-installation) |

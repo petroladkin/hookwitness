@@ -17,7 +17,7 @@ var englishOnly = []string{"api.md"}
 
 // linked are the Markdown files whose relative links must resolve, besides
 // docs/ and docs/uk/.
-var linked = []string{"README.md", "CONTRIBUTING.md", "SECURITY.md", "skills/hookwitness/SKILL.md"}
+var linked = []string{"README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "skills/hookwitness/SKILL.md"}
 
 // TestDocsHaveTwins: every page of docs/ has its Ukrainian twin in docs/uk/
 // and the other way round, and the twins carry the same shell examples
@@ -220,4 +220,35 @@ func anchors(md string) []string {
 		seen[a]++
 	}
 	return out
+}
+
+// TestDocsImageTag: the documentation tells users to run one image tag, a
+// release's, never :edge (which the deployment page only explains).
+func TestDocsImageTag(t *testing.T) {
+	root := moduleRoot(t)
+	files := slices.Clone(linked)
+	for _, p := range pages(t, filepath.Join(root, "docs")) {
+		files = append(files, "docs/"+p)
+	}
+	for _, p := range pages(t, filepath.Join(root, "docs", "uk")) {
+		files = append(files, "docs/uk/"+p)
+	}
+	image := regexp.MustCompile(`ghcr\.io/petroladkin/hookwitness:([A-Za-z0-9._-]+)`)
+	where := map[string][]string{}
+	for _, f := range files {
+		for i, line := range strings.Split(read(t, filepath.Join(root, f)), "\n") {
+			for _, m := range image.FindAllStringSubmatch(line, -1) {
+				where[m[1]] = append(where[m[1]], f+":"+strconv.Itoa(i+1))
+			}
+		}
+	}
+	if len(where) == 0 {
+		t.Fatal("no image reference found in the documentation")
+	}
+	if len(where) > 1 {
+		t.Errorf("the documentation uses %d image tags, one expected: %v", len(where), where)
+	}
+	if w, ok := where["edge"]; ok {
+		t.Errorf("the documentation tells users to run :edge: %v", w)
+	}
 }

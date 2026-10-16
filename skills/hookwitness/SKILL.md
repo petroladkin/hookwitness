@@ -20,7 +20,7 @@ steps: `create_endpoint`, `set_secret`, `configure_endpoint`,
 ## 1. Start it
 
 ```sh
-docker run -d --rm --name hookwitness -p 127.0.0.1:8080:8080 ghcr.io/petroladkin/hookwitness:edge
+docker run -d --rm --name hookwitness -p 127.0.0.1:8080:8080 ghcr.io/petroladkin/hookwitness:0.1
 HW=http://localhost:8080
 API=$HW/admin/api/v1
 until curl -fs $HW/healthz >/dev/null; do sleep 0.5; done

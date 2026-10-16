@@ -8,13 +8,19 @@ in a volume, with its settings, its secret key, and behind a reverse proxy.
 <!-- docs-check: skip: starts a container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
-  ghcr.io/petroladkin/hookwitness:edge
+  ghcr.io/petroladkin/hookwitness:0.1
 ```
 
 The UI is at <http://127.0.0.1:8080/admin/>; webhooks go to any other path of
-port 8080. Images are built for linux/amd64 and linux/arm64. `:edge` follows
-the development branch; released versions are tagged `:X.Y.Z`, `:X.Y` and
-`:latest`.
+port 8080. Images are built for linux/amd64 and linux/arm64, with these tags:
+
+- `:0.1` (used in these pages) follows the newest 0.1.x release: fixes, no
+  breaking changes;
+- `:X.Y.Z`, such as `:0.1.0`, is one release and never changes;
+- `:latest` is the newest release, whatever its version;
+- `:edge` follows the development branch, with no promises.
+
+Release candidates (`:0.1.0-rc.1`) have only their own tag.
 
 ### Keep the data in a volume
 
@@ -38,7 +44,7 @@ key keeps the requests but loses the secrets.
 ```yaml
 services:
   hookwitness:
-    image: ghcr.io/petroladkin/hookwitness:edge
+    image: ghcr.io/petroladkin/hookwitness:0.1
     ports: ["127.0.0.1:8080:8080"]
     volumes: ["hookwitness:/data"]
     restart: unless-stopped
@@ -53,7 +59,7 @@ volumes:
 - Has a health check (`hookwitness health`, which asks `/healthz`); `docker
   ps` shows it.
 - Carries a signed build provenance and an SBOM:
-  `gh attestation verify oci://ghcr.io/petroladkin/hookwitness:edge --owner petroladkin`.
+  `gh attestation verify oci://ghcr.io/petroladkin/hookwitness:0.1 --owner petroladkin`.
 - `make image` builds it locally; `make image-smoke` runs the scenario CI runs
   against it.
 
@@ -118,8 +124,9 @@ reverse proxy that publishes only the catch paths.
 
 ## Build from source
 
-Requires Go 1.27 or newer. `make check` also needs a C compiler for the race
-detector; the binary itself is built without cgo.
+Requires Go 1.27 or newer. Without a clone, `go install
+github.com/petroladkin/hookwitness/cmd/hookwitness@latest` puts the newest
+release in `$(go env GOPATH)/bin` (`@v0.1.0` for a given one). In a clone:
 
 <!-- docs-check: skip: builds and starts the server this check already runs -->
 ```sh
@@ -128,13 +135,16 @@ bin/hookwitness version
 bin/hookwitness serve         # listens on 127.0.0.1:8080, database ./hookwitness.db
 ```
 
+`make check` also needs a C compiler for the race detector; the binary itself
+is built without cgo.
+
 `bin/hookwitness health` asks a running server's `/healthz` and exits 0 when
 it is up.
 
 ## Which build is running
 
 Every place that names Hookwitness names the build as `<version> (<commit>)`,
-for example `edge (5a45bb4)`: the line at the bottom of the Endpoints page
+for example `v0.1.0 (5a45bb4)`: the line at the bottom of the Endpoints page
 (and the logo's tooltip on every page), `hookwitness version`, and the
 "Generated … by Hookwitness" line of every report. So a report attached to a
 ticket says which build caught its requests. Released images say their tag

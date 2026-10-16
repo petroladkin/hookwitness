@@ -7,14 +7,20 @@ privately through GitHub: the repository's **Security** tab →
 **Report a vulnerability**. Say what is affected, how to reproduce it and
 what an attacker gains.
 
-The aim is to answer within a week. A confirmed problem is fixed on `dev`, and
-the advisory is published with the fix; you are credited unless you ask not
-to be.
+The aim is to answer within a week. A confirmed problem is fixed in a patch
+release of the supported version (below) and on `dev`, and the advisory is
+published with the fix; you are credited unless you ask not to be.
 
 ## Supported versions
 
-The project is in early development and has no releases yet: only the latest
-`dev` receives fixes.
+| Version | Fixes |
+|---|---|
+| 0.1.x, the newest patch release | yes: a patch release (0.1.1, 0.1.2…) and the `:0.1` image |
+| older 0.1.x releases | upgrade to the newest 0.1.x |
+| `:edge` and `dev` builds | fixed on `dev`; no promises in between |
+
+Before 1.0, only the newest minor version gets fixes: once 0.2.0 is out, 0.1
+does not.
 
 ## In scope
 

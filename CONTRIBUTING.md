@@ -1,8 +1,8 @@
 # Contributing to Hookwitness
 
-Thanks for looking. The project is in early development; the shape of the
-code is still settling, so **open an issue before a pull request** and say what
-problem the change solves. That costs less than a pull request that cannot be
+Thanks for looking. The project is young (0.1, before 1.0) and the shape of
+the code is still settling, so **open an issue before a pull request** and
+say what problem the change solves. That costs less than a pull request that cannot be
 merged.
 
 ## Sign your commits (DCO)
@@ -22,9 +22,14 @@ To fix a missing sign-off: `git commit --amend -s`, or
 
 ## Branches
 
-- Branch from `dev`, target `dev`. `main` only receives release branches.
+- Branch from `dev`, target `dev`. `main` holds the released versions: it
+  only receives release branches and hotfixes, and every merge into it is
+  tagged (`vX.Y.Z`).
 - Branch names: `feature/<name>`, `fix/<name>`; `release/x.y` and
   `hotfix/<name>` are for maintainers.
+- A fix for a released version (a security problem, a serious bug) goes on a
+  `hotfix/<name>` branch from `main`, is released as the next patch version
+  (0.1.0 → 0.1.1) and merged back into `dev`.
 - One branch, one concern. A fix and a refactor are two pull requests.
 - CI runs `make check` and the container and API smoke tests on every pull
   request; all must pass.
