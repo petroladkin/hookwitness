@@ -112,7 +112,7 @@ that makes it false.
   input apart from the generation time — golden files in `testdata/report`
   (protected; `go test ./internal/report -update` after an intended change).
 - `internal/secret` — the secret key (`HOOKWITNESS_SECRET_KEY` or `<db>.key`,
-  0600), sealing signing keys (AES-256-GCM), hashing tokens (PBKDF2-SHA256),
+  0600, created atomically: a synced temporary file hard-linked into place), sealing signing keys (AES-256-GCM), hashing tokens (PBKDF2-SHA256),
   keyed fingerprints. Plain secret values never reach the store, the logs or
   a rendered page.
 - `internal/catch` — records and answers caught requests (body limit, 413,

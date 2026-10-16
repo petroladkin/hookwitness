@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -51,12 +52,19 @@ type Key struct {
 	mu      sync.Mutex
 	matched map[[32]byte]bool // sha256(record, value) of successful token matches
 	slots   chan struct{}     // concurrent PBKDF2 runs
+
+	notes []string // worth a warning from the caller (Notes)
 }
 
+// Notes are things about how the key was loaded worth a warning in the
+// server's log: a key file that could not be created atomically.
+func (k *Key) Notes() []string { return k.notes }
+
 // Load returns the key from env (base64 of 32 bytes) or, when env is empty,
-// from the key file at path, created with mode 0600 when it does not exist.
+// from the key file at path, created with mode 0600 when it does not exist
+// (atomically: two servers starting together read the same key).
 func Load(env, path string) (*Key, error) {
-	raw, err := loadRaw(env, path)
+	raw, notes, err := loadRaw(env, path)
 	if err != nil {
 		return nil, err
 	}
@@ -72,49 +80,131 @@ func Load(env, path string) (*Key, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Key{aead: aead, finger: sub("fingerprint"), tokenKey: sub("token"),
+	return &Key{aead: aead, finger: sub("fingerprint"), tokenKey: sub("token"), notes: notes,
 		matched: map[[32]byte]bool{}, slots: make(chan struct{}, max(1, runtime.GOMAXPROCS(0)/2))}, nil
 }
 
-func loadRaw(env, path string) ([]byte, error) {
+func loadRaw(env, path string) ([]byte, []string, error) {
 	if env != "" {
 		b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(env))
 		if err != nil || len(b) != 32 {
-			return nil, errors.New("HOOKWITNESS_SECRET_KEY must be 32 bytes in base64 (openssl rand -base64 32)")
+			return nil, nil, errors.New("HOOKWITNESS_SECRET_KEY must be 32 bytes in base64 (openssl rand -base64 32)")
 		}
-		return b, nil
+		return b, nil, nil
 	}
+	var notes []string
 	st, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		atomic, cerr := createKeyFile(path)
+		if cerr != nil {
+			return nil, nil, fmt.Errorf("secret key file: %w", cerr)
+		}
+		if !atomic {
+			notes = append(notes, "the key file was created without a hard link (the file system has none): "+
+				"two servers starting together on this database could each make one")
+		}
+		// Whoever created it, the file on disk is the key from now on.
+		st, err = os.Stat(path)
+	}
 	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		raw := make([]byte, 32)
-		rand.Read(raw)
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err != nil {
-			return nil, fmt.Errorf("secret key file: %w", err)
-		}
-		_, err = f.WriteString(base64.StdEncoding.EncodeToString(raw) + "\n")
-		if cerr := f.Close(); err == nil {
-			err = cerr
-		}
-		if err != nil {
-			return nil, fmt.Errorf("secret key file: %w", err)
-		}
-		return raw, nil
 	case err != nil:
-		return nil, fmt.Errorf("secret key file: %w", err)
+		return nil, nil, fmt.Errorf("secret key file: %w", err)
 	case st.Mode().Perm()&0o077 != 0:
-		return nil, fmt.Errorf("secret key file %s is readable by others; chmod 600 it", path)
+		return nil, nil, fmt.Errorf("secret key file %s is readable by others; chmod 600 it", path)
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("secret key file: %w", err)
+		return nil, nil, fmt.Errorf("secret key file: %w", err)
+	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		return nil, nil, fmt.Errorf("secret key file %s is empty: left by an interrupted first start of an older version; "+
+			"delete it if no secrets were stored yet, or restore the key", path)
 	}
 	raw, err := base64.StdEncoding.DecodeString(string(bytes.TrimSpace(b)))
 	if err != nil || len(raw) != 32 {
-		return nil, fmt.Errorf("secret key file %s is not 32 bytes in base64", path)
+		return nil, nil, fmt.Errorf("secret key file %s is not 32 bytes in base64", path)
 	}
-	return raw, nil
+	return raw, notes, nil
+}
+
+// linkFile links a finished key into place (a variable for tests).
+var linkFile = os.Link
+
+// beforeLink runs just before the link (a variable for tests: a crash there).
+var beforeLink = func() {}
+
+// createKeyFile makes a new key at path so that the name only ever holds a
+// whole key: it is written and synced to a temporary file beside it, then
+// hard-linked to path, which fails if another process got there first (that
+// one's key is then read). A file system without hard links falls back to
+// creating path exclusively and writing it, which is not atomic: atomic is
+// false then.
+func createKeyFile(path string) (atomic bool, err error) {
+	dir, base := filepath.Split(path)
+	if dir == "" {
+		dir = "."
+	}
+	removeStaleTemps(dir, base)
+	raw := make([]byte, 32)
+	rand.Read(raw)
+	text := base64.StdEncoding.EncodeToString(raw) + "\n"
+
+	f, err := os.CreateTemp(dir, base+".tmp-*") // mode 0600
+	if err != nil {
+		return false, err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	_, err = f.WriteString(text)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return false, err
+	}
+	beforeLink()
+	switch err := linkFile(tmp, path); {
+	case err == nil, errors.Is(err, fs.ErrExist):
+		syncDir(dir)
+		return true, nil
+	}
+	// No hard links here: create it in place.
+	g, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_, err = g.WriteString(text)
+	if err == nil {
+		err = g.Sync()
+	}
+	if cerr := g.Close(); err == nil {
+		err = cerr
+	}
+	return false, err
+}
+
+// removeStaleTemps deletes temporary key files a crash left behind (older
+// than a minute, so a key being made right now is left alone).
+func removeStaleTemps(dir, base string) {
+	matches, _ := filepath.Glob(filepath.Join(dir, base+".tmp-*"))
+	for _, m := range matches {
+		if st, err := os.Stat(m); err == nil && time.Since(st.ModTime()) > time.Minute {
+			os.Remove(m)
+		}
+	}
+}
+
+func syncDir(dir string) {
+	if d, err := os.Open(dir); err == nil {
+		d.Sync()
+		d.Close()
+	}
 }
 
 // Seal encrypts a signing key for storage.

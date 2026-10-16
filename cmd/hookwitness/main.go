@@ -107,10 +107,10 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	if getenv("HOOKWITNESS_SECRET_KEY") == "" {
 		keySource = cfg.DBPath + ".key"
 	}
-	if same, err := st.KeyCheck(ctx, keys.Check()); err == nil && !same {
-		log.Warn("this secret key is not the one this database was used with: sealed signing keys cannot be opened and stored tokens never match; "+
-			"start with the original key (HOOKWITNESS_SECRET_KEY or the .key file next to the database), or replace the secrets", "secret_key", keySource)
+	for _, n := range keys.Notes() {
+		log.Warn(n, "secret_key", keySource)
 	}
+	checkKey(ctx, st, keys, keySource, log)
 	warnUnreadableSecrets(ctx, st, keys, log)
 
 	ln, err := net.Listen("tcp", cfg.Addr)
@@ -202,6 +202,19 @@ func probeAddr(addr string) string {
 // warnUnreadableSecrets logs the endpoints whose signing keys this key cannot
 // open (the database came without its key file, or the key changed): their
 // checks will say "not verifiable" until the secrets are replaced.
+// checkKey warns when the key is not the one the database was used with, or
+// when that cannot be told.
+func checkKey(ctx context.Context, st *store.Store, keys *secret.Key, keySource string, log *slog.Logger) {
+	same, err := st.KeyCheck(ctx, keys.Check())
+	switch {
+	case err != nil:
+		log.Warn("cannot check the secret key against the database", "secret_key", keySource, "err", err)
+	case !same:
+		log.Warn("this secret key is not the one this database was used with: sealed signing keys cannot be opened and stored tokens never match; "+
+			"start with the original key (HOOKWITNESS_SECRET_KEY or the .key file next to the database), or replace the secrets", "secret_key", keySource)
+	}
+}
+
 func warnUnreadableSecrets(ctx context.Context, st *store.Store, keys *secret.Key, log *slog.Logger) {
 	eps, err := st.Endpoints(ctx)
 	if err != nil {
