@@ -49,6 +49,20 @@ for (const [w, h] of [[358, 110], [1300, 150]]) {
     assert.ok(openLeft && openLeft.openLeft, "a bracket from off the paper has no left tick");
   });
 
+  test(`a label over its bracket fits between the ticks (${w} px)`, () => {
+    // Retries 1 s apart: a bracket narrower than any label, which goes beside.
+    const s = strip(w, h, [[180000, "a"], [181000, "a"], [190000, "b"], [196000, "b"]]);
+    for (const br of s.brackets) {
+      if (!br.label) continue;
+      const wd = measure(br.label);
+      const lo = Math.max(br.a, 0), hi = Math.min(br.b, s.pen);
+      if (br.lx - wd / 2 < hi && br.lx + wd / 2 > lo) {
+        assert.ok(br.lx - wd / 2 >= lo && br.lx + wd / 2 <= hi, `label ${br.label} over the ticks of ${lo}..${hi}`);
+      }
+    }
+    if (w > 1000) assert.ok(s.brackets.some((br) => br.label && br.lx > br.b), "the narrow bracket's label is not beside it"); // on a phone it may not fit at all
+  });
+
   test(`interleaved retries go on different rows (${w} px)`, () => {
     const s = strip(w, h, [[150000, "a"], [153000, "b"], [158000, "a"], [161000, "b"]]);
     const a = s.brackets.find((br) => br.group === "a");

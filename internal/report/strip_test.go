@@ -17,6 +17,7 @@ func TestStripBrackets(t *testing.T) {
 		mk(10, 1), mk(13, 2), mk(18, 1), mk(21, 2), // interleaved
 		mk(30, 3), mk(34, 3), mk(42, 3), // a chain
 		mk(50, 4), mk(50.5, 4), // a short gap
+		mk(54, 5), mk(54.4, 5), mk(55.2, 6), mk(55.6, 6), // narrow ones close by: labels compete
 	}}
 	s := newStrip(h)
 	row := map[int]float64{}
