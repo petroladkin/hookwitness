@@ -159,8 +159,9 @@ func (s *Set) Validate(name string, body []byte) Result {
 			found = []ranked{{Problem: Problem{Message: err.Error()}}}
 		}
 	}
-	res.Images = findImages(sch, inst)
-	for _, p := range dataURLProblems(res.Images) {
+	var imageProblems []Problem
+	res.Images, imageProblems = findImages(sch, inst)
+	for _, p := range imageProblems {
 		found = append(found, ranked{p, tokens(p.Path), p.Keyword})
 	}
 	if len(found) > 0 {

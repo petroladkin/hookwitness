@@ -93,6 +93,10 @@ that makes it false.
 - `internal/picture` — images a request carries: base64 / data URL
   decoding, signature sniffing, full decode of PNG, JPEG, GIF, WebP
   (golang.org/x/image), HEIC/AVIF recognised only, SVG refused, 40 MP limit;
+  decoding bounded by memory (`budget.go`: the decoded size estimated from
+  the header, 128 MB per image, 256 MB per validation, each image decoded
+  once, at most two decodes at once in the process, images shown remembered
+  by digest);
   finding them in a request (schema verdicts, data:image strings, an image
   body) and reading one by JSON pointer.
 - `internal/payload` — a body and a query prepared for people: JSON

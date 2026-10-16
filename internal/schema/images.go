@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,10 +20,12 @@ type Image = auth.Image
 
 // Images in schemas: a string with contentMediaType image/png (jpeg, gif,
 // webp, heic, avif, or image/* for any) and contentEncoding base64 — or a
-// data URL — is asserted to be such an image: the library calls these
-// media types and the decoder below while validating, so a broken image is
-// a problem at its JSON pointer like any other. A second walk over the
-// schema and the body then records every declared image (findImages).
+// data URL — is asserted to be such an image. The library calls these media
+// types and the decoder below while validating, as often as its branches
+// need, so they check the header only: a broken one is a problem at its
+// JSON pointer like any other. A second walk over the schema and the body
+// then records every declared image and decodes each once, within a budget
+// (findImages); an image whose pixels do not decode is a problem too.
 
 // assertImages registers the image media types and a base64 decoder that
 // also takes data URLs.
@@ -41,11 +44,14 @@ func assertImages(c *jsonschema.Compiler) {
 				}
 				b = e.Bytes
 			}
-			_, err := picture.Verify(b, t)
+			_, err := picture.Check(b, t)
 			return err
 		}})
 	}
 }
+
+// imageBudget is the decoding one validation may do (a variable for tests).
+var imageBudget int64 = picture.RequestBudget
 
 // isImageType reports a contentMediaType this package treats as an image.
 func isImageType(mt *jsonschema.MediaType) bool {
@@ -58,8 +64,12 @@ func isImageType(mt *jsonschema.MediaType) bool {
 // branches and the if / then / else branch the value takes, properties,
 // patternProperties, additionalProperties, dependentSchemas, items and
 // prefixItems.
-func findImages(sch *jsonschema.Schema, inst any) []Image {
-	found := map[string]Image{}
+func findImages(sch *jsonschema.Schema, inst any) ([]Image, []Problem) {
+	type candidate struct {
+		value, declared string
+		base64          bool
+	}
+	found := map[string]candidate{}
 	seen := map[*jsonschema.Schema]map[string]bool{} // guards recursive schemas
 	var walk func(s *jsonschema.Schema, v any, path []string, depth int)
 	walk = func(s *jsonschema.Schema, v any, path []string, depth int) {
@@ -77,7 +87,7 @@ func findImages(sch *jsonschema.Schema, inst any) []Image {
 
 		if str, ok := v.(string); ok && isImageType(s.ContentMediaType) {
 			if _, done := found[ptr]; !done {
-				found[ptr] = inspect(ptr, str, s.ContentMediaType.Name, s.ContentEncoding != nil)
+				found[ptr] = candidate{str, s.ContentMediaType.Name, s.ContentEncoding != nil}
 			}
 		}
 		walk(s.Ref, v, path, depth+1)
@@ -145,62 +155,78 @@ func findImages(sch *jsonschema.Schema, inst any) []Image {
 		}
 	}
 	walk(sch, inst, nil, 0)
-	out := make([]Image, 0, len(found))
-	for _, img := range found {
+	// In path order, so the budget goes to the same images every time.
+	paths := slices.Sorted(maps.Keys(found))
+	budget := picture.NewBudget(imageBudget)
+	out := make([]Image, 0, len(paths))
+	var probs []Problem
+	for _, p := range paths {
+		c := found[p]
+		img, new := inspect(p, c.value, c.declared, c.base64, budget)
 		out = append(out, img)
+		if new {
+			probs = append(probs, Problem{Path: p, Keyword: "contentMediaType", Message: img.Error})
+		}
 	}
-	slices.SortFunc(out, func(a, b Image) int { return strings.Compare(a.Path, b.Path) })
-	return out
+	return out, probs
 }
 
 // inspect decodes one declared image and says what it is. base64 tells
 // whether the schema declares the encoding; without it only a data URL
-// carries an image.
-func inspect(path, value, declared string, base64 bool) Image {
-	img := Image{Path: path, Declared: declared}
+// carries an image. problem reports an error the library's own check does
+// not see: pixels that do not decode, or a data URL naming another type.
+func inspect(path, value, declared string, base64 bool, budget *picture.Budget) (img Image, problem bool) {
+	img = Image{Path: path, Declared: declared}
 	if !base64 && !picture.IsDataImage(value) {
 		img.Error = "not a data URL, and the schema declares no contentEncoding base64"
-		return img
+		return img, false
 	}
 	e, err := picture.Decode(value)
 	if err != nil {
 		img.Error = err.Error()
-		return img
+		return img, false
 	}
 	img.Size = len(e.Bytes)
 	sum := sha256.Sum256(e.Bytes)
 	img.SHA256 = hex.EncodeToString(sum[:])
-	info, err := picture.Verify(e.Bytes, declared)
-	img.Type, img.Width, img.Height = info.Type, info.Width, info.Height
+	headerErr := false
+	info, notChecked, err := budget.Verify(e.Bytes, declared)
+	if err != nil {
+		_, hdr := picture.Check(e.Bytes, declared)
+		headerErr = hdr != nil // the library has reported it already
+	}
+	img.Type, img.Width, img.Height, img.NotChecked = info.Type, info.Width, info.Height, notChecked
 	switch {
 	case err != nil:
 		img.Error = err.Error()
+		return img, !headerErr
 	case e.URLType != "" && e.URLType != info.Type:
 		img.Error = fmt.Sprintf("the data URL says %s, the data is %s", e.URLType, info.Type)
+		return img, true
 	}
-	return img
+	return img, false
 }
 
-// dataURLProblems are the images whose data URL names another type than
-// their data: the library's checks do not see the URL's own type.
-func dataURLProblems(imgs []Image) []Problem {
-	var out []Problem
-	for _, img := range imgs {
-		if strings.HasPrefix(img.Error, "the data URL says") {
-			out = append(out, Problem{Path: img.Path, Keyword: "contentMediaType", Message: img.Error})
-		}
-	}
-	return out
-}
-
-// Undecoded counts the images recognised but not decodable here (HEIC,
-// AVIF): the check cannot say they are whole.
-func Undecoded(imgs []Image) int {
+// Unchecked counts the images whose pixels were not checked: recognised but
+// not decodable here (HEIC, AVIF), or over the decoding limits. The check
+// cannot say they are whole.
+func Unchecked(imgs []Image) int {
 	n := 0
 	for _, img := range imgs {
-		if img.Error == "" && img.Type != "" && !picture.Decodable(img.Type) {
+		if img.Error == "" && img.Type != "" && (!picture.Decodable(img.Type) || img.NotChecked != "") {
 			n++
 		}
 	}
 	return n
+}
+
+// WhyUnchecked is the reason the first image over the decoding limits gives,
+// "" when none is.
+func WhyUnchecked(imgs []Image) string {
+	for _, img := range imgs {
+		if img.Error == "" && img.NotChecked != "" {
+			return img.NotChecked
+		}
+	}
+	return ""
 }

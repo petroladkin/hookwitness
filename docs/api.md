@@ -281,7 +281,9 @@ One request adds:
   (`"data URL"`), and a body that is itself an image (`"body"`, `path` "").
   Each has `path`, `declared` (the schema's type), `type` (what the bytes
   are), `size`, `width`, `height`, `sha256`, `error` when it is not a valid
-  image of its declared type, and `url` for its bytes:
+  image of its declared type, `not_checked` when its pixels were not decoded
+  (over 128 MB to decode, or past the request's 256 MB; the header was
+  checked), and `url` for its bytes:
 
   ```json
   "images":[{"path":"/avatar","declared":"image/png","type":"image/png","size":4120,"width":64,"height":64,

@@ -60,6 +60,9 @@ type Image struct {
 	Height   int    `json:"height,omitempty"`
 	SHA256   string `json:"sha256,omitempty"` // of the decoded bytes
 	Error    string `json:"error,omitempty"`  // why it is not a valid image of its declared type
+	// NotChecked says why its pixels were not decoded (it would take too
+	// much memory); the header was checked.
+	NotChecked string `json:"not_checked,omitempty"`
 }
 
 // Header is one request header line as received.

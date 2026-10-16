@@ -24,6 +24,13 @@ import (
 // is refused before it is decoded.
 const MaxPixels = 40_000_000
 
+// Decoding costs memory by the pixel and by the bytes each pixel takes: a
+// small 16-bit PNG of 40 MP decodes to 320 MB. These bound it.
+const (
+	MaxDecodedBytes = 128 << 20 // one image: a larger one is not decoded, its check says so
+	RequestBudget   = 256 << 20 // all images decoded for one validation
+)
+
 // The media types this package knows.
 const (
 	PNG  = "image/png"
@@ -85,33 +92,39 @@ type Info struct {
 // Inspect sniffs b and reads its dimensions from the header; it does not
 // decode the pixels. It fails when b is not a known image or is too large.
 func Inspect(b []byte) (Info, error) {
+	info, _, err := header(b)
+	return info, err
+}
+
+// header is Inspect with the header's colour model, for DecodedBytes.
+func header(b []byte) (Info, image.Config, error) {
 	t := Sniff(b)
 	if t == "" {
 		if looksLikeSVG(b) {
-			return Info{}, errors.New("an SVG document, which is not accepted as an image")
+			return Info{}, image.Config{}, errors.New("an SVG document, which is not accepted as an image")
 		}
-		return Info{}, errors.New("not a PNG, JPEG, GIF, WebP, HEIC or AVIF image")
+		return Info{}, image.Config{}, errors.New("not a PNG, JPEG, GIF, WebP, HEIC or AVIF image")
 	}
 	if !Decodable(t) {
-		return Info{Type: t}, nil
+		return Info{Type: t}, image.Config{}, nil
 	}
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(b))
 	if err != nil {
-		return Info{Type: t}, fmt.Errorf("a broken %s header: %v", short(t), err)
+		return Info{Type: t}, cfg, fmt.Errorf("a broken %s header: %v", short(t), err)
 	}
 	if cfg.Width <= 0 || cfg.Height <= 0 {
-		return Info{Type: t}, fmt.Errorf("a %s of %d×%d pixels", short(t), cfg.Width, cfg.Height)
+		return Info{Type: t}, cfg, fmt.Errorf("a %s of %d×%d pixels", short(t), cfg.Width, cfg.Height)
 	}
+	info := Info{Type: t, Width: cfg.Width, Height: cfg.Height}
 	if int64(cfg.Width)*int64(cfg.Height) > MaxPixels {
-		return Info{Type: t, Width: cfg.Width, Height: cfg.Height},
-			fmt.Errorf("%d×%d pixels, over the limit of %d megapixels", cfg.Width, cfg.Height, MaxPixels/1_000_000)
+		return info, cfg, fmt.Errorf("%d×%d pixels, over the limit of %d megapixels", cfg.Width, cfg.Height, MaxPixels/1_000_000)
 	}
-	return Info{Type: t, Width: cfg.Width, Height: cfg.Height}, nil
+	return info, cfg, nil
 }
 
-// Verify checks that b is an image of the declared type (Any for any
-// known one) and, when it can be decoded here, that it decodes completely.
-func Verify(b []byte, declared string) (Info, error) {
+// Check is Inspect plus the declared type (Any for any known one): what can
+// be told from the header, without decoding the pixels.
+func Check(b []byte, declared string) (Info, error) {
 	info, err := Inspect(b)
 	if err != nil {
 		return info, err
@@ -119,13 +132,18 @@ func Verify(b []byte, declared string) (Info, error) {
 	if declared != Any && declared != info.Type {
 		return info, fmt.Errorf("a %s, declared %s", short(info.Type), short(declared))
 	}
-	if !Decodable(info.Type) {
-		return info, nil
-	}
-	if _, _, err := image.Decode(bytes.NewReader(b)); err != nil {
-		return info, fmt.Errorf("a truncated or corrupt %s: %v", short(info.Type), err)
-	}
 	return info, nil
+}
+
+// Verify checks that b is an image of the declared type and, when it can be
+// decoded here, that it decodes completely. One that would take more than
+// MaxDecodedBytes to decode is not decoded: the error says so.
+func Verify(b []byte, declared string) (Info, error) {
+	info, notChecked, err := NewBudget(MaxDecodedBytes).Verify(b, declared)
+	if err == nil && notChecked != "" {
+		err = errors.New("not checked: " + notChecked)
+	}
+	return info, err
 }
 
 // short is a media type's subtype in capitals: "PNG".

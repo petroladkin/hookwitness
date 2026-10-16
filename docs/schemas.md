@@ -130,6 +130,13 @@ declared, text or an SVG fails at its path. Images may have up to 40
 megapixels. HEIC and AVIF are recognised but cannot be decoded here, so
 their verdict is n/v.
 
+Decoding is bounded by memory, not only by pixels: an image that would take
+more than 128 MB to decode (a 16-bit PNG of 4000×4000 does), or the images
+after the first 256 MB of one request, are checked by their header only and
+marked *not checked*; the verdict is then n/v with the reason. Each image is
+decoded once per check, and showing a request again does not decode it
+again.
+
 The request's page shows the images above the body: those a schema
 declares, plain `data:image` strings, and a body that is itself an image. Each
 has a full-size viewer and a download. Reports carry them too. In the shot,

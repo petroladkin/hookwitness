@@ -225,9 +225,13 @@ func (c Config) verifySchema(ch Check, r Request, hasBody bool) auth.Verdict {
 		res := set.Validate(name, r.Body)
 		if res.OK {
 			v := auth.Verdict{Result: auth.Pass, Reason: "matches " + name, Images: res.Images}
-			if n := schema.Undecoded(res.Images); n > 0 {
-				// HEIC or AVIF: recognised, but whether it is whole cannot be told here.
+			if n := schema.Unchecked(res.Images); n > 0 {
+				// HEIC or AVIF, or over the decoding limits: recognised, but
+				// whether it is whole cannot be told here.
 				v.Result, v.Reason = auth.NotVerifiable, fmt.Sprintf("matches %s, but %d image(s) cannot be decoded here to check them", name, n)
+				if why := schema.WhyUnchecked(res.Images); why != "" {
+					v.Reason = fmt.Sprintf("matches %s, but %d image(s) were not decoded: %s", name, n, why)
+				}
 			}
 			return v
 		}

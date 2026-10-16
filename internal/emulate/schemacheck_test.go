@@ -2,7 +2,11 @@ package emulate
 
 import (
 	"bytes"
+	"compress/zlib"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"hash/crc32"
 	"os"
 	"slices"
 	"strings"
@@ -214,6 +218,40 @@ func TestSchemaCheckImages(t *testing.T) {
 	if v.Result != auth.Fail || len(v.Images) != 1 || v.Images[0].Error == "" || v.Problems[0].Path != "/photo" {
 		t.Fatalf("text as an image: %+v", v)
 	}
+	// Too large to decode: checked by its header, n/v with the reason.
+	if v, _ := verifyOne(t, cfg, `{"photo":"`+hugePNG()+`"}`, true); v.Result != auth.NotVerifiable ||
+		!strings.Contains(v.Reason, "were not decoded: decoding it takes") || v.Images[0].NotChecked == "" {
+		t.Fatalf("huge: %+v", v)
+	}
+}
+
+// hugePNG is a 16-bit RGBA PNG of 4100×4100 zero pixels in base64: a few
+// hundred kilobytes that would decode to 134 MB.
+func hugePNG() string {
+	const w, h = 4100, 4100
+	var out bytes.Buffer
+	out.WriteString("\x89PNG\r\n\x1a\n")
+	chunk := func(kind string, data []byte) {
+		binary.Write(&out, binary.BigEndian, uint32(len(data)))
+		out.WriteString(kind)
+		out.Write(data)
+		binary.Write(&out, binary.BigEndian, crc32.ChecksumIEEE(append([]byte(kind), data...)))
+	}
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:], w)
+	binary.BigEndian.PutUint32(ihdr[4:], h)
+	ihdr[8], ihdr[9] = 16, 6
+	chunk("IHDR", ihdr)
+	var z bytes.Buffer
+	zw, _ := zlib.NewWriterLevel(&z, zlib.BestSpeed)
+	row := make([]byte, 1+w*8)
+	for range h {
+		zw.Write(row)
+	}
+	zw.Close()
+	chunk("IDAT", z.Bytes())
+	chunk("IEND", nil)
+	return base64.StdEncoding.EncodeToString(out.Bytes())
 }
 
 // TestSchemaAlternatives runs testdata/schema/alternatives.json: any of

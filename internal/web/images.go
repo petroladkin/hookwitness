@@ -44,10 +44,17 @@ func (h *Handler) images(req store.Request, vs []auth.Verdict, body *bodyView) [
 		case "data URL":
 			note = append(note, "a data URL, no schema")
 		}
+		if f.NotChecked != "" {
+			note = append(note, "not checked: "+f.NotChecked)
+		}
 		v.Note = strings.Join(note, " · ")
-		if f.Error == "" && picture.Decodable(f.Type) {
+		switch {
+		case f.Error != "":
+		case f.NotChecked != "":
+			v.Hint = "not shown: too large to decode; download it"
+		case picture.Decodable(f.Type):
 			v.Src = base
-		} else if f.Error == "" {
+		default:
 			v.Hint = "cannot be shown here (" + f.Type + "); download it"
 		}
 		if f.Type == "" {

@@ -5,12 +5,15 @@ import (
 	"embed"
 	"fmt"
 	"image"
+	"image/color"
+	"image/draw"
 	"io"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/signintech/gopdf"
+	xdraw "golang.org/x/image/draw"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
 	"github.com/petroladkin/hookwitness/internal/picture"
@@ -596,8 +599,10 @@ func (p *pdfWriter) item(it Item) error {
 }
 
 // picture is an image drawn to fit the width (at most 260 pt high, never
-// enlarged): PNG and JPEG as sent, GIF and WebP decoded first, since a PDF
-// cannot hold them.
+// enlarged): 8-bit, non-interlaced PNG and JPEG as sent; GIF, WebP and the
+// PNGs a PDF writer cannot take as they are (16-bit, interlaced) decoded,
+// made 8-bit and at most pdfMaxSide pixels first. An image that cannot be
+// drawn leaves a line saying so; it never fails the report.
 func (p *pdfWriter) picture(img ItemImage) (block, bool) {
 	if len(img.Data) == 0 || img.Width <= 0 || img.Height <= 0 {
 		return block{}, false
@@ -612,29 +617,73 @@ func (p *pdfWriter) picture(img ItemImage) (block, bool) {
 	}
 	var holder gopdf.ImageHolder
 	var decoded image.Image
-	switch img.Type {
-	case picture.PNG, picture.JPEG:
+	var why string
+	if (img.Type == picture.PNG && pngAsIs(img.Data)) || img.Type == picture.JPEG {
 		hd, err := gopdf.ImageHolderByBytes(img.Data)
 		if err != nil {
-			return block{}, false
+			why = err.Error()
 		}
 		holder = hd
-	default:
-		im, _, err := image.Decode(bytes.NewReader(img.Data))
-		if err != nil {
-			return block{}, false
-		}
-		decoded = im
+	} else {
+		decoded, why = pdfImage(img.Data)
 	}
 	return block{h + 8, func(y float64) {
 		p.stroke(cRule, 0.5)
 		p.pdf.RectFromUpperLeftWithStyle(margin, y+2, w, h, "D")
-		if holder != nil {
-			p.keep(p.pdf.ImageByHolder(holder, margin, y+2, &gopdf.Rect{W: w, H: h}))
-		} else {
-			p.keep(p.pdf.ImageFrom(decoded, margin, y+2, &gopdf.Rect{W: w, H: h}))
+		var err error
+		switch {
+		case why != "":
+		case holder != nil:
+			err = p.pdf.ImageByHolder(holder, margin, y+2, &gopdf.Rect{W: w, H: h})
+		default:
+			err = p.pdf.ImageFrom(decoded, margin, y+2, &gopdf.Rect{W: w, H: h})
+		}
+		if err != nil {
+			why = err.Error()
+		}
+		if why != "" {
+			p.font(fSans, false, 8.5, cMuted)
+			p.text(margin+6, y+8, "This image could not be drawn in a PDF: "+why)
 		}
 	}}, true
+}
+
+// pngAsIs reports a PNG a PDF writer takes as it is: 8 bits or fewer per
+// sample and not interlaced (IHDR bit depth and interlace method).
+func pngAsIs(b []byte) bool { return len(b) > 28 && b[24] <= 8 && b[28] == 0 }
+
+// pdfMaxSide bounds a decoded image's longer side in a PDF: the page shows
+// it at most a few hundred points wide.
+const pdfMaxSide = 1200
+
+// pdfImage decodes an image for a PDF, within the per-image decoding limit,
+// as 8-bit NRGBA (gray stays gray), scaled down to pdfMaxSide.
+func pdfImage(b []byte) (image.Image, string) {
+	need, err := picture.DecodedBytes(b)
+	if err != nil {
+		return nil, err.Error()
+	}
+	if need > picture.MaxDecodedBytes {
+		return nil, fmt.Sprintf("decoding it takes %d MB, over the limit of %d MB", need>>20, picture.MaxDecodedBytes>>20)
+	}
+	im, _, err := image.Decode(bytes.NewReader(b))
+	if err != nil {
+		return nil, err.Error()
+	}
+	r := im.Bounds()
+	w, h := r.Dx(), r.Dy()
+	if long := max(w, h); long > pdfMaxSide {
+		w, h = max(1, w*pdfMaxSide/long), max(1, h*pdfMaxSide/long)
+	}
+	var dst draw.Image
+	switch im.ColorModel() {
+	case color.GrayModel, color.Gray16Model:
+		dst = image.NewGray(image.Rect(0, 0, w, h))
+	default:
+		dst = image.NewNRGBA(image.Rect(0, 0, w, h))
+	}
+	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), im, r, draw.Src, nil)
+	return dst, ""
 }
 
 // seg is a run of body text in one colour.
