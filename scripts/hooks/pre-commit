@@ -23,6 +23,10 @@ esac
 # and `git add -A` picks it up. This asks what the file is, not what it is
 # called, so commands nobody has written yet are covered too.
 #
+# Every staged path but a deletion is checked (--diff-filter=d): a rename or a
+# copy (status R or C; copies show only with diff.renames=copies) carries its
+# content too, and moving a binary to the root must not get past.
+#
 # A loop fed by process substitution rather than a pipeline inside $( ):
 # macOS ships bash 3.2, which cannot parse `case` inside a command substitution.
 root_binaries=""
@@ -34,7 +38,7 @@ while IFS= read -r -d '' path; do
       root_binaries="$root_binaries $path"
       ;;
   esac
-done < <(git diff --cached --name-only --diff-filter=AM -z)
+done < <(git diff --cached --name-only --diff-filter=d -z)
 if [ -n "$root_binaries" ]; then
   echo "refusing to commit a compiled binary at the repository root:" >&2
   printf '  %s\n' $root_binaries >&2
@@ -48,9 +52,12 @@ fi
 # expression per line, matched case-insensitively), staged added lines that
 # match any of them are refused. The list lives outside the repository so that
 # the repository does not itself publish what it is meant to keep out.
-patterns="$(git rev-parse --git-dir)/info/private-patterns"
+#
+# The list is read from the repository's common git directory, so a linked
+# worktree (git worktree add) is guarded by the same list as the main one.
+patterns="$(git rev-parse --git-common-dir)/info/private-patterns"
 if [ -s "$patterns" ]; then
-  hits=$(git diff --cached -U0 --no-color --diff-filter=AM \
+  hits=$(git diff --cached -U0 --no-color --diff-filter=d \
     | grep -E '^(\+\+\+ |\+)' \
     | awk '/^\+\+\+ /{file=substr($0,7); next} {print file": "substr($0,2)}' \
     | grep -iE -f "$patterns")

@@ -1,0 +1,190 @@
+package emulate
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"slices"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+)
+
+// Outcome sources: what decided the answer.
+const (
+	FromDefault   = "default"
+	FromRule      = "rule"
+	FromCheck     = "check"     // a request check refused it
+	FromLimit     = "limit"     // the body was over the limit
+	FromUnmatched = "unmatched" // no endpoint at that path
+	FromBusy      = "busy"      // too many bodies were being read at once; 503, the body not kept
+)
+
+// Outcome actions besides ActReply, ActTimeout and ActDrop.
+const (
+	ActRefused   = "refused"   // a check failed; the refusal reply was sent
+	ActError     = "error"     // the reply could not be rendered; 500 was sent
+	ActAbandoned = "abandoned" // the sender left during the reply's delay; nothing was sent
+)
+
+// maxRecordedBody bounds the reply body kept with the request.
+const maxRecordedBody = 64 << 10
+
+// Outcome is what Hookwitness did with a request, kept with it as evidence.
+type Outcome struct {
+	Source  string   `json:"source"`
+	Rule    int      `json:"rule,omitempty"`  // 1-based, for FromRule
+	Label   string   `json:"label,omitempty"` // the rule's condition
+	Check   string   `json:"check,omitempty"` // the failed check
+	Action  string   `json:"action"`
+	Status  int      `json:"status,omitempty"` // 0 when nothing was sent
+	Headers []Header `json:"headers,omitempty"`
+	Body    string   `json:"body,omitempty"` // first 64 KiB of the reply body, when it is text
+	// BodyBase64 holds the first 64 KiB instead, in base64, when the reply
+	// body is not UTF-8: kept exactly rather than as a lossy string.
+	BodyBase64 string `json:"body_base64,omitempty"`
+	Cut        bool   `json:"cut,omitempty"` // the body is truncated
+	// Withheld says what of the configured reply HTTP did not send: a
+	// body (and some headers) with 204 or 304, a body to a HEAD request.
+	Withheld string `json:"withheld,omitempty"`
+	DelayMs  int64  `json:"delay_ms,omitempty"`
+	WaitedMs int64  `json:"waited_ms,omitempty"` // a timeout: how long the sender waited
+	Error    string `json:"error,omitempty"`
+	Would    int    `json:"would_status,omitempty"` // abandoned: the status the reply would have had
+	Counter  int64  `json:"counter,omitempty"`      // the request's number since the reset
+}
+
+// SetReply records the reply actually sent.
+func (o *Outcome) SetReply(r Rendered) {
+	o.Status, o.Headers = r.Status, r.Headers
+	kept := r.Body
+	o.Cut = len(kept) > maxRecordedBody
+	if o.Cut {
+		kept = kept[:maxRecordedBody]
+	}
+	o.Body, o.BodyBase64 = "", ""
+	if utf8.Valid(r.Body) {
+		for len(kept) > 0 && !utf8.Valid(kept) { // cut inside a character: before it
+			kept = kept[:len(kept)-1]
+		}
+		o.Body = string(kept)
+	} else {
+		o.BodyBase64 = base64.StdEncoding.EncodeToString(kept)
+	}
+}
+
+// String is the stored form.
+func (o Outcome) String() string {
+	b, _ := json.Marshal(o)
+	return string(b)
+}
+
+// ParseOutcome reads a stored outcome; empty (requests caught before
+// outcomes were recorded) gives an Outcome with only the status.
+func ParseOutcome(s string, status int) Outcome {
+	var o Outcome
+	if s == "" || json.Unmarshal([]byte(s), &o) != nil {
+		return Outcome{Action: ActReply, Status: status}
+	}
+	return o
+}
+
+// Stamp is the short text on the exhibit: "500 sent", "timeout", "dropped",
+// "400 refused".
+func (o Outcome) Stamp() string {
+	switch o.Action {
+	case ActTimeout:
+		return "timeout"
+	case ActDrop:
+		return "dropped"
+	case ActRefused:
+		return strconv.Itoa(o.Status) + " refused"
+	case ActAbandoned:
+		return "sender left"
+	}
+	return strconv.Itoa(o.Status) + " sent"
+}
+
+// Why says what decided it: "rule 2 · every 3rd", "default reply",
+// "check 1: header X-Token missing".
+func (o Outcome) Why() string {
+	switch o.Source {
+	case FromRule:
+		return fmt.Sprintf("rule %d · %s", o.Rule, o.Label)
+	case FromCheck:
+		return o.Check
+	case FromLimit:
+		return "body over the limit"
+	case FromUnmatched:
+		return "no endpoint at this path"
+	case FromDefault:
+		return "default reply"
+	}
+	return ""
+}
+
+// StampWhy is Why short enough for a stamp: an authorization refusal names
+// the check, not its reason ("check 1: Stripe signature"); the reason is in
+// the Answer and Authorization sections.
+func (o Outcome) StampWhy() string {
+	w := o.Why()
+	if o.Source == FromCheck {
+		if parts := strings.SplitN(w, ": ", 3); len(parts) == 3 {
+			return parts[0] + ": " + parts[1]
+		}
+	}
+	return w
+}
+
+// Abandon records that the sender left after waited, before the reply's
+// delay ran out: nothing was sent. The reply stays for reference.
+func (o *Outcome) Abandon(waited int64) {
+	o.Would, o.Status = o.Status, 0
+	o.Action, o.WaitedMs = ActAbandoned, waited
+}
+
+// HeldUp reports an answer the sender never got: a timeout hold, or a
+// reply it did not wait for. The strip and reports count both as timeouts.
+func (o Outcome) HeldUp() bool { return o.Action == ActTimeout || o.Action == ActAbandoned }
+
+// Good reports a 2xx answer; the strip marks the rest.
+func (o Outcome) Good() bool {
+	return (o.Action == ActReply) && o.Status >= 200 && o.Status < 300
+}
+
+// AsSent is the reply as HTTP sends it for a request of method, as Go's
+// server does: a 204 (or 1xx) reply has no body, Content-Length or
+// Transfer-Encoding; a 304 neither those nor Content-Type; a reply to HEAD
+// has its headers but no body. withheld says what was dropped, "" when
+// nothing was.
+func (r Rendered) AsSent(method string) (sent Rendered, withheld string) {
+	var drop []string
+	var why string
+	switch {
+	case r.Status == http.StatusNotModified:
+		drop, why = []string{"Content-Type", "Content-Length", "Transfer-Encoding"}, "a 304 reply has none"
+	case r.Status == http.StatusNoContent || r.Status/100 == 1:
+		drop, why = []string{"Content-Length", "Transfer-Encoding"}, fmt.Sprintf("a %d reply has none", r.Status)
+	case method == http.MethodHead:
+		why = "the request was HEAD"
+	default:
+		return r, ""
+	}
+	sent = Rendered{Status: r.Status}
+	var notes []string
+	if len(r.Body) > 0 {
+		notes = append(notes, fmt.Sprintf("body of %d B", len(r.Body)))
+	}
+	for _, h := range r.Headers {
+		if slices.ContainsFunc(drop, func(d string) bool { return strings.EqualFold(d, h.Name) }) {
+			notes = append(notes, "header "+h.Name)
+			continue
+		}
+		sent.Headers = append(sent.Headers, h)
+	}
+	if len(notes) == 0 {
+		return sent, ""
+	}
+	return sent, strings.Join(notes, ", ") + " not sent: " + why
+}

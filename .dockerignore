@@ -1,0 +1,8 @@
+*
+!go.mod
+!go.sum
+!Makefile
+!cmd/
+!internal/
+!LICENSE
+!THIRD-PARTY-NOTICES.md

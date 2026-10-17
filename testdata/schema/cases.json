@@ -1,0 +1,254 @@
+[
+ {
+  "name": "2020-12 pass",
+  "schemas": [
+   {
+    "name": "Order",
+    "text": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"required\": [\n    \"type\",\n    \"order_id\",\n    \"amount\"\n  ],\n  \"properties\": {\n    \"type\": {\n      \"const\": \"order.paid\"\n    },\n    \"order_id\": {\n      \"type\": \"integer\",\n      \"minimum\": 1\n    },\n    \"amount\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"value\",\n        \"currency\"\n      ],\n      \"properties\": {\n        \"value\": {\n          \"type\": \"integer\"\n        },\n        \"currency\": {\n          \"type\": \"string\",\n          \"pattern\": \"^[A-Z]{3}$\"\n        }\n      }\n    },\n    \"paid_at\": {\n      \"type\": \"string\",\n      \"format\": \"date-time\"\n    },\n    \"address\": {\n      \"$ref\": \"Address\"\n    }\n  }\n}"
+   },
+   {
+    "name": "Address",
+    "text": "{\n  \"type\": \"object\",\n  \"required\": [\n    \"zip\"\n  ],\n  \"properties\": {\n    \"zip\": {\n      \"type\": \"string\",\n      \"pattern\": \"^[0-9]{5}$\"\n    }\n  }\n}"
+   }
+  ],
+  "schema": "Order",
+  "body": "{\"type\":\"order.paid\",\"order_id\":42,\"amount\":{\"value\":1999,\"currency\":\"EUR\"},\"paid_at\":\"2026-10-12T17:28:07Z\",\"address\":{\"zip\":\"01001\"}}",
+  "want": {
+   "ok": true
+  }
+ },
+ {
+  "name": "2020-12 missing field and wrong type",
+  "schemas": [
+   {
+    "name": "Order",
+    "text": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"required\": [\n    \"type\",\n    \"order_id\",\n    \"amount\"\n  ],\n  \"properties\": {\n    \"type\": {\n      \"const\": \"order.paid\"\n    },\n    \"order_id\": {\n      \"type\": \"integer\",\n      \"minimum\": 1\n    },\n    \"amount\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"value\",\n        \"currency\"\n      ],\n      \"properties\": {\n        \"value\": {\n          \"type\": \"integer\"\n        },\n        \"currency\": {\n          \"type\": \"string\",\n          \"pattern\": \"^[A-Z]{3}$\"\n        }\n      }\n    },\n    \"paid_at\": {\n      \"type\": \"string\",\n      \"format\": \"date-time\"\n    },\n    \"address\": {\n      \"$ref\": \"Address\"\n    }\n  }\n}"
+   },
+   {
+    "name": "Address",
+    "text": "{\n  \"type\": \"object\",\n  \"required\": [\n    \"zip\"\n  ],\n  \"properties\": {\n    \"zip\": {\n      \"type\": \"string\",\n      \"pattern\": \"^[0-9]{5}$\"\n    }\n  }\n}"
+   }
+  ],
+  "schema": "Order",
+  "body": "{\"type\":\"order.paid\",\"order_id\":\"42\",\"amount\":{\"value\":1999}}",
+  "want": {
+   "ok": false,
+   "total": 2,
+   "problems": [
+    {
+     "path": "/order_id",
+     "keyword": "type"
+    },
+    {
+     "path": "/amount",
+     "keyword": "required"
+    }
+   ]
+  }
+ },
+ {
+  "name": "format date-time asserted",
+  "schemas": [
+   {
+    "name": "Order",
+    "text": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"required\": [\n    \"type\",\n    \"order_id\",\n    \"amount\"\n  ],\n  \"properties\": {\n    \"type\": {\n      \"const\": \"order.paid\"\n    },\n    \"order_id\": {\n      \"type\": \"integer\",\n      \"minimum\": 1\n    },\n    \"amount\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"value\",\n        \"currency\"\n      ],\n      \"properties\": {\n        \"value\": {\n          \"type\": \"integer\"\n        },\n        \"currency\": {\n          \"type\": \"string\",\n          \"pattern\": \"^[A-Z]{3}$\"\n        }\n      }\n    },\n    \"paid_at\": {\n      \"type\": \"string\",\n      \"format\": \"date-time\"\n    },\n    \"address\": {\n      \"$ref\": \"Address\"\n    }\n  }\n}"
+   },
+   {
+    "name": "Address",
+    "text": "{\n  \"type\": \"object\",\n  \"required\": [\n    \"zip\"\n  ],\n  \"properties\": {\n    \"zip\": {\n      \"type\": \"string\",\n      \"pattern\": \"^[0-9]{5}$\"\n    }\n  }\n}"
+   }
+  ],
+  "schema": "Order",
+  "body": "{\"type\":\"order.paid\",\"order_id\":1,\"amount\":{\"value\":1,\"currency\":\"EUR\"},\"paid_at\":\"yesterday\"}",
+  "want": {
+   "ok": false,
+   "total": 1,
+   "problems": [
+    {
+     "path": "/paid_at",
+     "keyword": "format"
+    }
+   ]
+  }
+ },
+ {
+  "name": "$ref to another schema by name",
+  "schemas": [
+   {
+    "name": "Order",
+    "text": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"required\": [\n    \"type\",\n    \"order_id\",\n    \"amount\"\n  ],\n  \"properties\": {\n    \"type\": {\n      \"const\": \"order.paid\"\n    },\n    \"order_id\": {\n      \"type\": \"integer\",\n      \"minimum\": 1\n    },\n    \"amount\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"value\",\n        \"currency\"\n      ],\n      \"properties\": {\n        \"value\": {\n          \"type\": \"integer\"\n        },\n        \"currency\": {\n          \"type\": \"string\",\n          \"pattern\": \"^[A-Z]{3}$\"\n        }\n      }\n    },\n    \"paid_at\": {\n      \"type\": \"string\",\n      \"format\": \"date-time\"\n    },\n    \"address\": {\n      \"$ref\": \"Address\"\n    }\n  }\n}"
+   },
+   {
+    "name": "Address",
+    "text": "{\n  \"type\": \"object\",\n  \"required\": [\n    \"zip\"\n  ],\n  \"properties\": {\n    \"zip\": {\n      \"type\": \"string\",\n      \"pattern\": \"^[0-9]{5}$\"\n    }\n  }\n}"
+   }
+  ],
+  "schema": "Order",
+  "body": "{\"type\":\"order.paid\",\"order_id\":1,\"amount\":{\"value\":1,\"currency\":\"EUR\"},\"address\":{\"zip\":\"1\"}}",
+  "want": {
+   "ok": false,
+   "total": 1,
+   "problems": [
+    {
+     "path": "/address/zip",
+     "keyword": "pattern"
+    }
+   ]
+  }
+ },
+ {
+  "name": "draft-07 with definitions, format email asserted",
+  "schemas": [
+   {
+    "name": "User",
+    "text": "{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"definitions\": {\n    \"email\": {\n      \"type\": \"string\",\n      \"format\": \"email\"\n    }\n  },\n  \"type\": \"object\",\n  \"required\": [\n    \"user\"\n  ],\n  \"properties\": {\n    \"user\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"email\": {\n          \"$ref\": \"#/definitions/email\"\n        }\n      }\n    }\n  }\n}"
+   }
+  ],
+  "schema": "User",
+  "body": "{\"user\":{\"email\":\"not-an-email\"}}",
+  "want": {
+   "ok": false,
+   "total": 1,
+   "problems": [
+    {
+     "path": "/user/email",
+     "keyword": "format"
+    }
+   ]
+  }
+ },
+ {
+  "name": "draft-07 pass",
+  "schemas": [
+   {
+    "name": "User",
+    "text": "{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"definitions\": {\n    \"email\": {\n      \"type\": \"string\",\n      \"format\": \"email\"\n    }\n  },\n  \"type\": \"object\",\n  \"required\": [\n    \"user\"\n  ],\n  \"properties\": {\n    \"user\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"email\": {\n          \"$ref\": \"#/definitions/email\"\n        }\n      }\n    }\n  }\n}"
+   }
+  ],
+  "schema": "User",
+  "body": "{\"user\":{\"email\":\"qa@example.com\"}}",
+  "want": {
+   "ok": true
+  }
+ },
+ {
+  "name": "not JSON",
+  "schemas": [
+   {
+    "name": "User",
+    "text": "{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"definitions\": {\n    \"email\": {\n      \"type\": \"string\",\n      \"format\": \"email\"\n    }\n  },\n  \"type\": \"object\",\n  \"required\": [\n    \"user\"\n  ],\n  \"properties\": {\n    \"user\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"email\": {\n          \"$ref\": \"#/definitions/email\"\n        }\n      }\n    }\n  }\n}"
+   }
+  ],
+  "schema": "User",
+  "body": "{\"user\": {\"email\": }",
+  "want": {
+   "ok": false,
+   "total": 1,
+   "problems": [
+    {
+     "path": "",
+     "keyword": "json",
+     "message_contains": "at byte 19"
+    }
+   ]
+  }
+ },
+ {
+  "name": "empty body",
+  "schemas": [
+   {
+    "name": "User",
+    "text": "{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"definitions\": {\n    \"email\": {\n      \"type\": \"string\",\n      \"format\": \"email\"\n    }\n  },\n  \"type\": \"object\",\n  \"required\": [\n    \"user\"\n  ],\n  \"properties\": {\n    \"user\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"email\": {\n          \"$ref\": \"#/definitions/email\"\n        }\n      }\n    }\n  }\n}"
+   }
+  ],
+  "schema": "User",
+  "body": "",
+  "want": {
+   "ok": false,
+   "total": 1,
+   "problems": [
+    {
+     "path": "",
+     "keyword": "json",
+     "message_contains": "empty body"
+    }
+   ]
+  }
+ },
+ {
+  "name": "more than 20 problems",
+  "schemas": [
+   {
+    "name": "Many",
+    "text": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"f0\": {\n      \"type\": \"integer\"\n    },\n    \"f1\": {\n      \"type\": \"integer\"\n    },\n    \"f2\": {\n      \"type\": \"integer\"\n    },\n    \"f3\": {\n      \"type\": \"integer\"\n    },\n    \"f4\": {\n      \"type\": \"integer\"\n    },\n    \"f5\": {\n      \"type\": \"integer\"\n    },\n    \"f6\": {\n      \"type\": \"integer\"\n    },\n    \"f7\": {\n      \"type\": \"integer\"\n    },\n    \"f8\": {\n      \"type\": \"integer\"\n    },\n    \"f9\": {\n      \"type\": \"integer\"\n    },\n    \"f10\": {\n      \"type\": \"integer\"\n    },\n    \"f11\": {\n      \"type\": \"integer\"\n    },\n    \"f12\": {\n      \"type\": \"integer\"\n    },\n    \"f13\": {\n      \"type\": \"integer\"\n    },\n    \"f14\": {\n      \"type\": \"integer\"\n    },\n    \"f15\": {\n      \"type\": \"integer\"\n    },\n    \"f16\": {\n      \"type\": \"integer\"\n    },\n    \"f17\": {\n      \"type\": \"integer\"\n    },\n    \"f18\": {\n      \"type\": \"integer\"\n    },\n    \"f19\": {\n      \"type\": \"integer\"\n    },\n    \"f20\": {\n      \"type\": \"integer\"\n    },\n    \"f21\": {\n      \"type\": \"integer\"\n    },\n    \"f22\": {\n      \"type\": \"integer\"\n    },\n    \"f23\": {\n      \"type\": \"integer\"\n    },\n    \"f24\": {\n      \"type\": \"integer\"\n    }\n  }\n}"
+   }
+  ],
+  "schema": "Many",
+  "body": "{\"f0\": \"x\", \"f1\": \"x\", \"f2\": \"x\", \"f3\": \"x\", \"f4\": \"x\", \"f5\": \"x\", \"f6\": \"x\", \"f7\": \"x\", \"f8\": \"x\", \"f9\": \"x\", \"f10\": \"x\", \"f11\": \"x\", \"f12\": \"x\", \"f13\": \"x\", \"f14\": \"x\", \"f15\": \"x\", \"f16\": \"x\", \"f17\": \"x\", \"f18\": \"x\", \"f19\": \"x\", \"f20\": \"x\", \"f21\": \"x\", \"f22\": \"x\", \"f23\": \"x\", \"f24\": \"x\"}",
+  "want": {
+   "ok": false,
+   "total": 25,
+   "count": 20
+  }
+ },
+ {
+  "name": "remote $ref refused",
+  "schemas": [
+   {
+    "name": "Remote",
+    "text": "{\n  \"$ref\": \"https://example.com/schemas/order.json\"\n}"
+   }
+  ],
+  "compile_error": "never fetched"
+ },
+ {
+  "name": "file $ref refused",
+  "schemas": [
+   {
+    "name": "File",
+    "text": "{\n  \"$ref\": \"file:///etc/passwd\"\n}"
+   }
+  ],
+  "compile_error": "never fetched"
+ },
+ {
+  "name": "$ref to a missing name",
+  "schemas": [
+   {
+    "name": "Order",
+    "text": "{\n  \"$ref\": \"Customer\"\n}"
+   }
+  ],
+  "compile_error": "there is no schema named Customer"
+ },
+ {
+  "name": "invalid schema",
+  "schemas": [
+   {
+    "name": "Bad",
+    "text": "{\n  \"type\": 5\n}"
+   }
+  ],
+  "compile_error": "not a valid schema"
+ },
+ {
+  "name": "schema not JSON",
+  "schemas": [
+   {
+    "name": "Broken",
+    "text": "{\"type\": \"object\",}"
+   }
+  ],
+  "compile_error": "is not valid JSON"
+ },
+ {
+  "name": "bad name",
+  "schemas": [
+   {
+    "name": "9lives",
+    "text": "{}"
+   }
+  ],
+  "compile_error": "a name is letters"
+ }
+]

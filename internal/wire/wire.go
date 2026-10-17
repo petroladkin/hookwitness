@@ -1,0 +1,345 @@
+// Package wire keeps what net/http throws away: the header lines of each
+// request in the order, letter case and repetition they arrived in.
+//
+// net/http parses headers into a map, which loses their order. Listener wraps
+// every accepted connection in a Conn that follows the inbound HTTP/1.x byte
+// stream alongside net/http (request heads, then Content-Length or chunked
+// bodies) and queues each request head. A handler takes the head of its
+// request with Take. net/http still does the real parsing; a stream this
+// package cannot follow only switches it off for that connection.
+package wire
+
+import (
+	"bytes"
+	"context"
+	"net"
+	"net/http"
+	"net/textproto"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+// Header is one header line as received.
+type Header struct {
+	Name, Value string
+}
+
+// maxHead bounds a request head; net/http refuses larger ones anyway
+// (http.DefaultMaxHeaderBytes plus its slack).
+const maxHead = http.DefaultMaxHeaderBytes + 4096
+
+// Listener wraps the connections ln accepts so that Take works on their
+// requests. Use it together with ConnContext on the http.Server.
+func Listener(ln net.Listener) net.Listener { return listener{ln} }
+
+type listener struct{ net.Listener }
+
+func (l listener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &Conn{Conn: c}, nil
+}
+
+type ctxKey struct{}
+
+// ConnContext is for http.Server.ConnContext: it makes the connection's
+// recorded heads reachable from its requests.
+func ConnContext(ctx context.Context, c net.Conn) context.Context {
+	if wc, ok := c.(*Conn); ok {
+		return context.WithValue(ctx, ctxKey{}, wc)
+	}
+	return ctx
+}
+
+// Take returns the received header lines of r and removes them from its
+// connection's queue. Every request on a connection must be taken, in order,
+// or the following ones are attributed wrongly; the root handler does it.
+// ok is false when the order is unknown: no recording connection, or a
+// stream that could not be followed.
+func Take(r *http.Request) (hs []Header, ok bool) {
+	c, _ := r.Context().Value(ctxKey{}).(*Conn)
+	if c == nil || r.ProtoMajor != 1 {
+		return nil, false
+	}
+	return c.take(r.Method, r.RequestURI, r.Header)
+}
+
+// Conn records the request heads read through it.
+type Conn struct {
+	net.Conn
+	mu    sync.Mutex
+	p     parser
+	heads []head
+}
+
+type head struct {
+	line    string // request line
+	headers []Header
+}
+
+// Underlying returns the connection a Conn wraps, or c itself.
+func Underlying(c net.Conn) net.Conn {
+	if wc, ok := c.(*Conn); ok {
+		return wc.Conn
+	}
+	return c
+}
+
+func (c *Conn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 {
+		c.mu.Lock()
+		c.p.feed(b[:n], func(h head) { c.heads = append(c.heads, h) })
+		c.mu.Unlock()
+	}
+	return n, err
+}
+
+func (c *Conn) take(method, uri string, parsed http.Header) ([]Header, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.p.broken || len(c.heads) == 0 {
+		return nil, false
+	}
+	h := c.heads[0]
+	c.heads = c.heads[1:]
+	if !strings.HasPrefix(h.line, method+" "+uri+" ") || !sameHeaders(h.headers, parsed) {
+		// Out of step with net/http: stop guessing for this connection.
+		c.p.broken = true
+		c.heads = nil
+		return nil, false
+	}
+	return h.headers, true
+}
+
+// skipped are the header names net/http takes out of Request.Header (Host)
+// or rewrites while framing the body; they are left out of the comparison.
+var skipped = map[string]bool{"Host": true, "Transfer-Encoding": true, "Content-Length": true, "Trailer": true}
+
+// sameHeaders reports whether the recorded lines carry exactly the names and
+// values net/http parsed. Anything else means the two framed the stream
+// differently, and the recorded head must not be trusted as evidence.
+func sameHeaders(recorded []Header, parsed http.Header) bool {
+	got := map[string][]string{}
+	for _, h := range recorded {
+		k := textproto.CanonicalMIMEHeaderKey(h.Name)
+		if !skipped[k] {
+			got[k] = append(got[k], h.Value)
+		}
+	}
+	n := 0
+	for k, vs := range parsed {
+		if skipped[k] {
+			continue
+		}
+		n++
+		if !slices.Equal(got[k], vs) {
+			return false
+		}
+	}
+	return n == len(got)
+}
+
+type state int
+
+const (
+	inHead state = iota
+	inBody
+	inChunkSize
+	inChunkData
+	inChunkEnd
+	inTrailer
+)
+
+// parser follows HTTP/1.x request framing over a byte stream.
+type parser struct {
+	st     state
+	buf    []byte // head, chunk-size line or trailer being accumulated
+	remain int64  // body or chunk bytes still to skip
+	broken bool
+}
+
+func (p *parser) feed(b []byte, emit func(head)) {
+	for len(b) > 0 && !p.broken {
+		switch p.st {
+		case inHead:
+			// Blank lines before a request line are tolerated (RFC 9112, 2.2).
+			if len(p.buf) == 0 && (b[0] == '\r' || b[0] == '\n') {
+				b = b[1:]
+				continue
+			}
+			end, rest, done := p.line(b, true)
+			b = rest
+			if !done {
+				continue
+			}
+			h, framing, length, ok := parseHead(end)
+			if !ok || len(end) > maxHead {
+				p.broken = true
+				return
+			}
+			emit(h)
+			switch framing {
+			case "chunked":
+				p.st = inChunkSize
+			case "length":
+				if length > 0 {
+					p.st, p.remain = inBody, length
+				}
+			}
+		case inBody, inChunkData:
+			n := min(int64(len(b)), p.remain)
+			b, p.remain = b[n:], p.remain-n
+			if p.remain == 0 {
+				if p.st == inBody {
+					p.st = inHead
+				} else {
+					p.st = inChunkEnd
+				}
+			}
+		case inChunkEnd:
+			// The CRLF after chunk data.
+			i := bytes.IndexByte(b, '\n')
+			if i < 0 {
+				b = nil
+				continue
+			}
+			b, p.st = b[i+1:], inChunkSize
+		case inChunkSize:
+			line, rest, done := p.line(b, false)
+			b = rest
+			if !done {
+				continue
+			}
+			size, ok := chunkSize(line)
+			if !ok {
+				p.broken = true
+				return
+			}
+			if size == 0 {
+				p.st = inTrailer
+			} else {
+				p.st, p.remain = inChunkData, size
+			}
+		case inTrailer:
+			end, rest, done := p.line(b, true)
+			b = rest
+			if !done {
+				continue
+			}
+			_ = end
+			p.st = inHead
+		}
+	}
+}
+
+// line accumulates b into p.buf until a line end (whole == false) or an empty
+// line after at least one line (whole == true, a head or a trailer section).
+// It returns the accumulated bytes when complete and the unread rest of b.
+func (p *parser) line(b []byte, whole bool) (got, rest []byte, done bool) {
+	start := len(p.buf)
+	p.buf = append(p.buf, b...)
+	var end int
+	switch {
+	case whole && p.st == inTrailer && bytes.HasPrefix(p.buf, []byte("\r\n")):
+		end = 2 // an empty trailer section
+	case whole && p.st == inTrailer && bytes.HasPrefix(p.buf, []byte("\n")):
+		end = 1
+	case whole:
+		end = blankLine(p.buf, max(0, start-2))
+	default:
+		if i := bytes.IndexByte(p.buf[start:], '\n'); i >= 0 {
+			end = start + i + 1
+		}
+	}
+	if end == 0 {
+		if len(p.buf) > maxHead {
+			p.broken = true
+		}
+		return nil, nil, false
+	}
+	got = p.buf[:end]
+	rest = b[end-start:]
+	p.buf = nil
+	return got, rest, true
+}
+
+// blankLine finds the first line end followed by an empty line (LF LF or
+// LF CR LF, so CRLF CRLF and bare LFs alike) at or after from, and returns
+// the offset just past it, or 0. Searching only from the newly read bytes
+// keeps a head dripped in byte by byte linear.
+func blankLine(buf []byte, from int) int {
+	for i := from; i < len(buf); i++ {
+		if buf[i] != '\n' {
+			continue
+		}
+		switch {
+		case i+1 < len(buf) && buf[i+1] == '\n':
+			return i + 2
+		case i+2 < len(buf) && buf[i+1] == '\r' && buf[i+2] == '\n':
+			return i + 3
+		}
+	}
+	return 0
+}
+
+// parseHead splits a request head into the request line and header lines,
+// and works out how its body is framed, as net/http does: chunked when
+// Transfer-Encoding ends in chunked, otherwise Content-Length.
+func parseHead(raw []byte) (h head, framing string, length int64, ok bool) {
+	lines := strings.Split(strings.TrimRight(string(raw), "\r\n"), "\n")
+	h.line = strings.TrimSuffix(lines[0], "\r")
+	if !strings.Contains(h.line, " HTTP/1.") {
+		return head{}, "", 0, false
+	}
+	framing = "length"
+	cl := ""
+	// Like net/http, Transfer-Encoding counts only from HTTP/1.1 on.
+	te := !strings.HasSuffix(h.line, " HTTP/1.0")
+	for _, l := range lines[1:] {
+		l = strings.TrimSuffix(l, "\r")
+		if l == "" {
+			continue
+		}
+		if (l[0] == ' ' || l[0] == '\t') && len(h.headers) > 0 {
+			// Obsolete line folding: continues the previous value.
+			last := &h.headers[len(h.headers)-1]
+			last.Value += " " + strings.Trim(l, " \t")
+			continue
+		}
+		name, value, found := strings.Cut(l, ":")
+		if !found {
+			return head{}, "", 0, false
+		}
+		value = strings.Trim(value, " \t")
+		h.headers = append(h.headers, Header{name, value})
+		switch strings.ToLower(name) {
+		case "transfer-encoding":
+			codings := strings.Split(value, ",")
+			if te && strings.EqualFold(strings.TrimSpace(codings[len(codings)-1]), "chunked") {
+				framing = "chunked"
+			}
+		case "content-length":
+			cl = value
+		}
+	}
+	if framing == "length" && cl != "" {
+		n, err := strconv.ParseInt(cl, 10, 64)
+		if err != nil || n < 0 {
+			return head{}, "", 0, false
+		}
+		length = n
+	}
+	return h, framing, length, true
+}
+
+func chunkSize(line []byte) (int64, bool) {
+	s := strings.TrimRight(string(line), "\r\n")
+	s, _, _ = strings.Cut(s, ";")
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 16, 64)
+	return n, err == nil && n >= 0
+}

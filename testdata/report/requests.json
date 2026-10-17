@@ -1,0 +1,367 @@
+[
+ {
+  "id": 11,
+  "no": 1,
+  "received_at": "2026-10-11T12:00:01.250Z",
+  "method": "POST",
+  "path": "/orders",
+  "raw_query": "source=test&retry",
+  "remote_addr": "203.0.113.5:40100",
+  "headers": [
+   [
+    "Host",
+    "hooks.example.com"
+   ],
+   [
+    "Content-Type",
+    "application/json"
+   ],
+   [
+    "X-GitHub-Event",
+    "order"
+   ],
+   [
+    "X-Hub-Signature-256",
+    "sha256=5d1f8a0c2b9e4f7a6c3d2e1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a19"
+   ],
+   [
+    "User-Agent",
+    "Shop-Hookshot/2.1"
+   ]
+  ],
+  "body": "{\"type\":\"order.paid\",\"order_id\":1042,\"amount\":{\"value\":4200,\"currency\":\"UAH\"},\"customer\":{\"name\":\"Олена Петренко\",\"email\":\"olena@example.com\"}}",
+  "status": 200,
+  "outcome": {
+   "source": "default",
+   "action": "reply",
+   "status": 200,
+   "counter": 1
+  },
+  "verdict": "pass",
+  "verdicts": [
+   {
+    "check": 1,
+    "label": "GitHub signature",
+    "result": "pass",
+    "reason": "signature matches",
+    "at": "2026-10-11T12:00:01.250Z"
+   },
+   {
+    "check": 2,
+    "label": "JSON Schema by /type",
+    "result": "pass",
+    "reason": "matches OrderPaid",
+    "at": "2026-10-11T12:00:01.250Z"
+   }
+  ],
+  "endpoint_id": 3,
+  "proto": "HTTP/1.1",
+  "size": 156,
+  "body_sha256": "297faa831cf94fb8e066ebdeed6983970b596249fac91f32396137b101c505c4"
+ },
+ {
+  "id": 12,
+  "no": 2,
+  "received_at": "2026-10-11T12:00:02.750Z",
+  "method": "POST",
+  "path": "/orders",
+  "raw_query": "",
+  "remote_addr": "203.0.113.5:40102",
+  "headers": [
+   [
+    "Content-Type",
+    "application/json"
+   ],
+   [
+    "X-Hub-Signature-256",
+    "sha256=5d1f8a0c2b9e4f7a6c3d2e1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a19"
+   ]
+  ],
+  "body": "{\"type\":\"order.paid\",\"order_id\":1042,\"amount\":{\"value\":4200,\"currency\":\"UAH\"},\"customer\":{\"name\":\"Олена Петренко\",\"email\":\"olena@example.com\"}}",
+  "status": 200,
+  "outcome": {
+   "source": "rule",
+   "rule": 1,
+   "label": "every 2nd",
+   "action": "reply",
+   "status": 200,
+   "delay_ms": 1500,
+   "counter": 2
+  },
+  "verdict": "pass",
+  "verdicts": [
+   {
+    "check": 1,
+    "label": "GitHub signature",
+    "result": "pass",
+    "reason": "signature matches",
+    "at": "2026-10-11T12:00:01.250Z"
+   },
+   {
+    "check": 2,
+    "label": "JSON Schema by /type",
+    "result": "pass",
+    "reason": "matches OrderPaid",
+    "at": "2026-10-11T12:00:01.250Z"
+   }
+  ],
+  "endpoint_id": 3,
+  "proto": "HTTP/1.1",
+  "size": 156,
+  "body_sha256": "297faa831cf94fb8e066ebdeed6983970b596249fac91f32396137b101c505c4"
+ },
+ {
+  "id": 14,
+  "no": 3,
+  "received_at": "2026-10-11T12:00:09.000Z",
+  "method": "POST",
+  "path": "/orders",
+  "raw_query": "",
+  "remote_addr": "198.51.100.7:51000",
+  "headers": [
+   [
+    "Content-Type",
+    "application/json"
+   ],
+   [
+    "X-Hub-Signature-256",
+    "sha256=00"
+   ]
+  ],
+  "body": "{\"type\":\"order.paid\",\"order_id\":\"1043\",\"amount\":{\"value\":-5},\"note\":\"use ``` fences and `code` and | pipes\"}",
+  "status": 400,
+  "outcome": {
+   "source": "check",
+   "check": "check 2: JSON Schema by /type: 3 errors against OrderPaid",
+   "action": "refused",
+   "status": 400
+  },
+  "verdict": "fail",
+  "verdicts": [
+   {
+    "check": 1,
+    "label": "GitHub signature",
+    "result": "fail",
+    "reason": "signature does not match",
+    "expected": "sha256=9b1c…",
+    "received": "sha256=00",
+    "at": "2026-10-11T12:00:09.000Z"
+   },
+   {
+    "check": 2,
+    "label": "JSON Schema by /type",
+    "result": "fail",
+    "reason": "3 errors against OrderPaid",
+    "problems": [
+     {
+      "path": "/order_id",
+      "keyword": "type",
+      "message": "got string, want integer"
+     },
+     {
+      "path": "/amount/value",
+      "keyword": "minimum",
+      "message": "must be >= 1 but found -5"
+     }
+    ],
+    "total": 3,
+    "at": "2026-10-11T12:00:09.000Z"
+   }
+  ],
+  "endpoint_id": 3,
+  "proto": "HTTP/1.1",
+  "size": 108,
+  "body_sha256": "ae6c31f60a471162c0c13dde1d8a95e368221f6c5be24534d915a22e193b9bb8"
+ },
+ {
+  "id": 15,
+  "no": 4,
+  "received_at": "2026-10-11T12:00:15.500Z",
+  "method": "PUT",
+  "path": "/orders",
+  "raw_query": "a=%7C&b=x%60y",
+  "remote_addr": "198.51.100.7:51002",
+  "headers": [
+   [
+    "Content-Type",
+    "text/plain"
+   ]
+  ],
+  "body": "line one\n```\nnot a fence end\n````\nline | with | pipes\n",
+  "status": 0,
+  "outcome": {
+   "source": "rule",
+   "rule": 2,
+   "label": "first 1",
+   "action": "timeout",
+   "waited_ms": 30000
+  },
+  "verdict": "n/c",
+  "verdicts": [
+   {
+    "check": 2,
+    "label": "JSON Schema by /type",
+    "result": "n/c",
+    "reason": "no /type in the request",
+    "at": "2026-10-11T12:00:15.500Z"
+   }
+  ],
+  "endpoint_id": 3,
+  "proto": "HTTP/1.1",
+  "size": 54,
+  "body_sha256": "5a3c50281a69f8d294b19db08bc37ef28eff8c1747e8560e5c06df62d8d2afb0"
+ },
+ {
+  "id": 16,
+  "no": 5,
+  "received_at": "2026-10-11T12:00:31.000Z",
+  "method": "POST",
+  "path": "/orders",
+  "raw_query": "",
+  "remote_addr": "198.51.100.7:51004",
+  "headers": [
+   [
+    "Content-Type",
+    "image/png"
+   ]
+  ],
+  "body_b64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4z8DwHwAFAAIBpaHWpAAAAABJRU5ErkJggg==",
+  "status": 0,
+  "outcome": {
+   "source": "rule",
+   "rule": 3,
+   "label": "random 10%",
+   "action": "drop"
+  },
+  "verdict": "",
+  "verdicts": null,
+  "endpoint_id": 3,
+  "proto": "HTTP/1.1",
+  "size": 70,
+  "body_sha256": "1390c4e2d05b99f4f8e1e4e9ff9c5e4548f1fd2ae03c292081976c358949e749"
+ },
+ {
+  "id": 17,
+  "no": 6,
+  "received_at": "2026-10-11T12:00:44.125Z",
+  "method": "POST",
+  "path": "/orders",
+  "raw_query": "",
+  "remote_addr": "198.51.100.7:51006",
+  "headers": [
+   [
+    "Content-Type",
+    "application/json"
+   ],
+   [
+    "Content-Length",
+    "2000000"
+   ]
+  ],
+  "too_large": true,
+  "size": 2000000,
+  "status": 413,
+  "outcome": {
+   "source": "limit",
+   "action": "reply",
+   "status": 413
+  },
+  "verdict": "n/v",
+  "verdicts": [
+   {
+    "check": 2,
+    "label": "JSON Schema by /type",
+    "result": "n/v",
+    "reason": "body not kept (over the size limit)",
+    "at": "2026-10-11T12:00:44.125Z"
+   }
+  ],
+  "endpoint_id": 3,
+  "proto": "HTTP/1.1",
+  "body_sha256": ""
+ },
+ {
+  "id": 18,
+  "no": 7,
+  "received_at": "2026-10-11T12:01:00.000Z",
+  "method": "POST",
+  "path": "/orders",
+  "raw_query": "",
+  "remote_addr": "198.51.100.7:51008",
+  "headers": [
+   [
+    "Authorization",
+    "Bearer test-token-0123456789abcdef"
+   ],
+   [
+    "Cookie",
+    "session=abc; theme=dark"
+   ],
+   [
+    "Content-Type",
+    "text/plain"
+   ]
+  ],
+  "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "status": 500,
+  "outcome": {
+   "source": "default",
+   "action": "error",
+   "status": 500,
+   "error": "template: reply:1: function \"nope\" not defined"
+  },
+  "verdict": "",
+  "verdicts": null,
+  "endpoint_id": 3,
+  "proto": "HTTP/1.1",
+  "size": 300,
+  "body_sha256": "0d4e2ca9e9cbced7a7a5380eb29e1a3783b9b6d0db72de36a1051038e1c1fbc7"
+ },
+ {
+  "id": 19,
+  "no": 8,
+  "received_at": "2026-10-11T12:01:05.500Z",
+  "method": "POST",
+  "path": "/orders",
+  "raw_query": "",
+  "remote_addr": "198.51.100.7:51010",
+  "headers": [
+   [
+    "Content-Type",
+    "application/json"
+   ]
+  ],
+  "body": "{\"type\":\"avatar.updated\",\"user_id\":77,\"avatar\":\"iVBORw0KGgoAAAANSUhEUgAAABgAAAAQCAIAAACDRijCAAAAIklEQVR4nGNUMehhoAZgooopDKMGEQNGDSIMRg0iDAafQQBJpAEAFvi3hAAAAABJRU5ErkJggg==\",\"badge\":\"data:image/gif;base64,R0lGODdhCAAIAIEAAMIzHwAAAAAAAAAAACwAAAAACAAIAAAIDwABCBxIsKDBgwgTKkwYEAA7\"}",
+  "status": 200,
+  "outcome": {
+   "source": "default",
+   "action": "reply",
+   "status": 200
+  },
+  "verdict": "pass",
+  "verdicts": [
+   {
+    "check": 2,
+    "label": "JSON Schema by /type",
+    "result": "pass",
+    "reason": "matches Avatar",
+    "images": [
+     {
+      "path": "/avatar",
+      "declared": "image/png",
+      "type": "image/png",
+      "size": 91,
+      "width": 24,
+      "height": 16,
+      "sha256": "6e67d5560e2bf3b3c001ee0db0ce4cd55c87f8ec75f74e872c0c7fea1a1af25c"
+     }
+    ],
+    "at": "2026-10-11T12:01:05.500Z"
+   }
+  ],
+  "endpoint_id": 3,
+  "proto": "HTTP/1.1",
+  "size": 279,
+  "body_sha256": "1e03aca15365834447cbe88a8bf7ad82a2fea7d3a0930e251609766146be52b5"
+ }
+]

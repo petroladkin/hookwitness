@@ -1,8 +1,8 @@
 # Contributing to Hookwitness
 
-Thanks for looking. The project is in early development; the shape of the
-code is still settling, so **open an issue before a pull request** and say what
-problem the change solves. That costs less than a pull request that cannot be
+Thanks for looking. The project is young (0.1, before 1.0) and the shape of
+the code is still settling, so **open an issue before a pull request** and
+say what problem the change solves. That costs less than a pull request that cannot be
 merged.
 
 ## Sign your commits (DCO)
@@ -22,15 +22,22 @@ To fix a missing sign-off: `git commit --amend -s`, or
 
 ## Branches
 
-- Branch from `dev`, target `dev`. `main` only receives release branches.
+- Branch from `dev`, target `dev`. `main` holds the released versions: it
+  only receives release branches and hotfixes, and every merge into it is
+  tagged (`vX.Y.Z`).
 - Branch names: `feature/<name>`, `fix/<name>`; `release/x.y` and
   `hotfix/<name>` are for maintainers.
+- A fix for a released version (a security problem, a serious bug) goes on a
+  `hotfix/<name>` branch from `main`, is released as the next patch version
+  (0.1.0 → 0.1.1) and merged back into `dev`.
 - One branch, one concern. A fix and a refactor are two pull requests.
+- CI runs `make check` and the container and API smoke tests on every pull
+  request; all must pass.
 
 Enable the repository's git hooks once per clone:
 
 ```sh
-git config core.hooksPath scripts/hooks
+make hooks
 ```
 
 They refuse commits on `dev`/`main` and compiled binaries at the repository
@@ -42,11 +49,42 @@ root.
   `fix:`, `docs:`, `chore:`, `refactor:`, `test:`. The body says why, not
   what.
 - Code, comments, identifiers, commit messages and docs are in English.
-- Tests go with the change.
+- Tests go with the change, and `make check` passes (Go 1.27+).
+
+## Documentation
+
+User documentation lives in `docs/`, with a Ukrainian twin of every page in
+`docs/uk/` (the API reference `docs/api.md` is English only). A change that
+changes what a user sees changes the page that describes it, and its twin, in
+the same pull request.
+
+- The shell examples (```` ```sh ```` blocks) are run by `make docs-check`
+  against a fresh build (needs curl, jq, openssl): a command ending in
+  `# pass`, `# fail: <reason>` or `# 200` asserts the verdict or status of the
+  request it sent, and comment lines right after a command are its expected
+  output. `scripts/docscheck/main.go` documents the rest. Twins keep the same
+  `sh` blocks; a repository test checks that, the relative links and anchors,
+  and that every image is used.
+- Screenshots in `docs/images/` come from `make media` (Node 22+ and Chrome):
+  a seeded instance shot at 1280 px in the light theme. Each shot shows what
+  its page's text creates, with the same paths, values and requests: the
+  script follows the page step by step, so change both together. The strip
+  is shot from a real minute of traffic, so a full run takes about two
+  minutes; `node scripts/media/media.mjs bin/hookwitness docs/images <name>`
+  takes one shot. Regenerate them when the UI visibly changes; the times on
+  the pages differ on every run, so commit the images whose content changed,
+  not every file git reports.
+- The README's demo (`docs/images/demo.gif`) is recorded by the same script
+  from a real run and encoded by ffmpeg in a container, so it needs Docker
+  too; it must stay under 5 MB. Regenerate it with `make media` (or the
+  `demo` shot alone) when the register, a request page or the report dialog
+  visibly changes. The repository's social preview
+  (`docs/media/social-preview.png`, 1280×640) comes from the `social` shot;
+  GitHub has no API for it, so a maintainer uploads it under Settings →
+  General → Social preview.
 
 ## Reporting a problem
 
 Bugs go to the issue tracker: what you did, what you saw, what you expected.
-Please do not report security problems in public issues; contact the
-maintainer privately (a SECURITY.md with the channel will be added before the
-first release).
+Please do not report security problems in public issues; report them
+privately as [SECURITY.md](SECURITY.md) describes.

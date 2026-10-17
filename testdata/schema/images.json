@@ -1,0 +1,437 @@
+[
+ {
+  "name": "PNG declared and sent",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/png\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAE0lEQVR4nGM8YSPHAANMcBY6BwArMAEoAht6zwAAAABJRU5ErkJggg==\"}",
+  "want": {
+   "ok": true
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "type": "image/png",
+    "width": 4,
+    "height": 3
+   }
+  ]
+ },
+ {
+  "name": "JPEG declared and sent",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/jpeg\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAADAAQDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDBooor5w/QD//Z\"}",
+  "want": {
+   "ok": true
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "type": "image/jpeg",
+    "width": 4,
+    "height": 3
+   }
+  ]
+ },
+ {
+  "name": "GIF declared and sent",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/gif\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"R0lGODdhBAADAIEAAMg8HgAAAAAAAAAAACwAAAAABAADAAAICAABCBxIUGBAADs=\"}",
+  "want": {
+   "ok": true
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "type": "image/gif",
+    "width": 4,
+    "height": 3
+   }
+  ]
+ },
+ {
+  "name": "WebP declared and sent",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/webp\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==\"}",
+  "want": {
+   "ok": true
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "type": "image/webp",
+    "width": 1,
+    "height": 1
+   }
+  ]
+ },
+ {
+  "name": "any image accepts a JPEG",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/*\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAADAAQDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDBooor5w/QD//Z\"}",
+  "want": {
+   "ok": true
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "type": "image/jpeg",
+    "width": 4,
+    "height": 3
+   }
+  ]
+ },
+ {
+  "name": "a JPEG declared PNG",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/png\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAADAAQDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDBooor5w/QD//Z\"}",
+  "want": {
+   "ok": false,
+   "total": 1,
+   "problems": [
+    {
+     "path": "/photo",
+     "keyword": "contentMediaType",
+     "message_contains": "not a valid image/png: a JPEG, declared PNG"
+    }
+   ]
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "type": "image/jpeg",
+    "width": 4,
+    "height": 3,
+    "error_contains": "a JPEG, declared PNG"
+   }
+  ]
+ },
+ {
+  "name": "a truncated PNG",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/png\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"iVBORw0KGgoAAAANSUhEUgAAADwAAAA8CAIAAAC1nk4lAAAAdklEQVR4nNXOQREAMAjAsNL59zwPfLhGQWZ81EiQBEmQBA==\"}",
+  "want": {
+   "ok": false,
+   "total": 1,
+   "problems": [
+    {
+     "path": "/photo",
+     "keyword": "contentMediaType",
+     "message_contains": "truncated or corrupt PNG"
+    }
+   ]
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "type": "image/png",
+    "width": 60,
+    "height": 60,
+    "error_contains": "truncated or corrupt PNG"
+   }
+  ]
+ },
+ {
+  "name": "not base64",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/png\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"not base64 at all!\"}",
+  "want": {
+   "ok": false,
+   "total": 1,
+   "problems": [
+    {
+     "path": "/photo",
+     "keyword": "contentEncoding",
+     "message_contains": "not valid base64"
+    }
+   ]
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "error_contains": "not valid base64"
+   }
+  ]
+ },
+ {
+  "name": "text, not an image",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/*\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"aGVsbG8sIHdvcmxk\"}",
+  "want": {
+   "ok": false,
+   "total": 1,
+   "problems": [
+    {
+     "path": "/photo",
+     "keyword": "contentMediaType",
+     "message_contains": "not a PNG, JPEG, GIF, WebP, HEIC or AVIF image"
+    }
+   ]
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "error_contains": "not a PNG, JPEG"
+   }
+  ]
+ },
+ {
+  "name": "an SVG is refused",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/*\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiLz4=\"}",
+  "want": {
+   "ok": false,
+   "total": 1,
+   "problems": [
+    {
+     "path": "/photo",
+     "keyword": "contentMediaType",
+     "message_contains": "an SVG document, which is not accepted as an image"
+    }
+   ]
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "error_contains": "an SVG document"
+   }
+  ]
+ },
+ {
+  "name": "over 40 megapixels",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/png\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"iVBORw0KGgoAAAANSUhEUgAAJxAAABOICAIAAACYNeAfAAAADElEQVR4nGM4YSMHAALyASNM6jO1AAAAAElFTkSuQmCC\"}",
+  "want": {
+   "ok": false,
+   "total": 1,
+   "problems": [
+    {
+     "path": "/photo",
+     "keyword": "contentMediaType",
+     "message_contains": "over the limit of 40 megapixels"
+    }
+   ]
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "type": "image/png",
+    "width": 10000,
+    "height": 5000,
+    "error_contains": "over the limit of 40 megapixels"
+   }
+  ]
+ },
+ {
+  "name": "a data URL with contentEncoding",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/png\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAE0lEQVR4nGM8YSPHAANMcBY6BwArMAEoAht6zwAAAABJRU5ErkJggg==\"}",
+  "want": {
+   "ok": true
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "type": "image/png",
+    "width": 4,
+    "height": 3
+   }
+  ]
+ },
+ {
+  "name": "a data URL without contentEncoding",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentMediaType\": \"image/png\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAE0lEQVR4nGM8YSPHAANMcBY6BwArMAEoAht6zwAAAABJRU5ErkJggg==\"}",
+  "want": {
+   "ok": true
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "type": "image/png",
+    "width": 4,
+    "height": 3
+   }
+  ]
+ },
+ {
+  "name": "a data URL naming another type than its data",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/*\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"data:image/jpeg;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAE0lEQVR4nGM8YSPHAANMcBY6BwArMAEoAht6zwAAAABJRU5ErkJggg==\"}",
+  "want": {
+   "ok": false,
+   "total": 1,
+   "problems": [
+    {
+     "path": "/photo",
+     "keyword": "contentMediaType",
+     "message_contains": "the data URL says image/jpeg, the data is image/png"
+    }
+   ]
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "type": "image/png",
+    "width": 4,
+    "height": 3,
+    "error_contains": "the data URL says image/jpeg"
+   }
+  ]
+ },
+ {
+  "name": "HEIC recognised, not decodable here",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"photo\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/heic\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"photo\": \"AAAAGGZ0eXBoZWljAAAAAAAAAAAAAAAAAAAAAA==\"}",
+  "want": {
+   "ok": true
+  },
+  "images": [
+   {
+    "path": "/photo",
+    "type": "image/heic"
+   }
+  ]
+ },
+ {
+  "name": "images inside arrays, by $ref and oneOf",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"items\": {\"type\": \"array\", \"items\": {\"$ref\": \"Picture\"}}, \"cover\": {\"oneOf\": [{\"type\": \"object\", \"required\": [\"png\"], \"properties\": {\"png\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/png\"}}}, {\"type\": \"object\", \"required\": [\"jpeg\"], \"properties\": {\"jpeg\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/jpeg\"}}}]}}}"
+   },
+   {
+    "name": "Picture",
+    "text": "{\"type\": \"object\", \"properties\": {\"caption\": {\"type\": \"string\"}, \"image\": {\"type\": \"string\", \"contentEncoding\": \"base64\", \"contentMediaType\": \"image/*\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"kind\": \"gallery\", \"items\": [{\"caption\": \"front\", \"image\": \"iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAE0lEQVR4nGM8YSPHAANMcBY6BwArMAEoAht6zwAAAABJRU5ErkJggg==\"}, {\"caption\": \"back\", \"image\": \"data:image/gif;base64,R0lGODdhBAADAIEAAMg8HgAAAAAAAAAAACwAAAAABAADAAAICAABCBxIUGBAADs=\"}], \"cover\": {\"jpeg\": \"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAADAAQDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDBooor5w/QD//Z\"}}",
+  "want": {
+   "ok": true
+  },
+  "images": [
+   {
+    "path": "/cover/jpeg",
+    "type": "image/jpeg",
+    "width": 4,
+    "height": 3
+   },
+   {
+    "path": "/items/0/image",
+    "type": "image/png",
+    "width": 4,
+    "height": 3
+   },
+   {
+    "path": "/items/1/image",
+    "type": "image/gif",
+    "width": 4,
+    "height": 3
+   }
+  ]
+ },
+ {
+  "name": "a string not declared as an image is left alone",
+  "schemas": [
+   {
+    "name": "Upload",
+    "text": "{\"type\": \"object\", \"properties\": {\"note\": {\"type\": \"string\"}}}"
+   }
+  ],
+  "schema": "Upload",
+  "body": "{\"note\": \"iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAE0lEQVR4nGM8YSPHAANMcBY6BwArMAEoAht6zwAAAABJRU5ErkJggg==\"}",
+  "want": {
+   "ok": true
+  },
+  "images": []
+ }
+]

@@ -1,0 +1,27 @@
+{
+  "_comment": "Golden vectors for internal/auth. github and standard are the providers' published examples; the rest were computed independently with openssl (commands beside each). Do not edit to make a test pass.",
+  "github": [
+    {"name": "published", "secret": "It's a Secret to Everybody", "body": "Hello, World!",
+     "header": "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17"}
+  ],
+  "standard": [
+    {"name": "published", "secret": "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw", "id": "msg_p5jXN8AQM9LWM0D4loKWxJek",
+     "timestamp": "1614265330", "body": "{\"test\": 2432232314}",
+     "signature": "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE="}
+  ],
+  "stripe": [
+    {"name": "openssl", "secret": "whsec_test_9c2b7a", "timestamp": "1760200000", "body": "{\"id\":\"evt_test_1\",\"object\":\"event\"}",
+     "v1": "c4bcbd5f52620b4375b19652c4f0d6dedb0b6624d2cc0cf9af8a79cd1125297a",
+     "openssl": "printf '1760200000.{\"id\":\"evt_test_1\",\"object\":\"event\"}' | openssl dgst -sha256 -hmac 'whsec_test_9c2b7a'"}
+  ],
+  "hmac": [
+    {"name": "github legacy sha1", "secret": "It's a Secret to Everybody", "body": "Hello, World!",
+     "header": "X-Hub-Signature", "algo": "sha1", "encoding": "hex", "prefix": "sha1=",
+     "value": "sha1=01dc10d0c83e72ed246219cdd91669667fe2ca59",
+     "openssl": "printf 'Hello, World!' | openssl dgst -sha1 -hmac \"It's a Secret to Everybody\""},
+    {"name": "sha512 base64", "secret": "hmac_test_key", "body": "{\"order\":42}",
+     "header": "X-Signature", "algo": "sha512", "encoding": "base64", "prefix": "",
+     "value": "oKKcOD14u5keg7AttPdXKvLfJl8krpKc1K6g4YTlSF3z6hjq6JImIxoeyfjKNhnyffr3XDOBR4GgbD7qal2oAQ==",
+     "openssl": "printf '{\"order\":42}' | openssl dgst -sha512 -hmac 'hmac_test_key' -binary | base64"}
+  ]
+}

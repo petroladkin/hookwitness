@@ -1,0 +1,1151 @@
+package web
+
+import (
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/petroladkin/hookwitness/internal/emulate"
+	"github.com/petroladkin/hookwitness/internal/store"
+)
+
+// favicon is inline so that browsers do not ask the server for
+// /favicon.ico, which would land in the Unmatched register.
+const favicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2324308C'/%3E%3Cpath d='M3 12V4M3 8h4M7 12V4M10 12l1.5-8 1.5 8' stroke='%23E6ECE7' stroke-width='1.6' fill='none'/%3E%3C/svg%3E"
+
+templ layout(nav navView, pageTitle string) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="color-scheme" content="light dark"/>
+			<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"historyCacheSize":0}'/>
+			<title>{ pageTitle } · Hookwitness</title>
+			<link rel="icon" href={ templ.SafeURL(favicon) }/>
+			<link rel="stylesheet" href={ templ.SafeURL(nav.Asset("app.css")) }/>
+			<script src={ nav.Asset("vendor/htmx/htmx.min.js") } defer></script>
+			<script src={ nav.Asset("vendor/htmx-ext-sse/sse.min.js") } defer></script>
+			<script src={ nav.Asset("strip.js") } defer></script>
+			<script src={ nav.Asset("app.js") } defer></script>
+		</head>
+		<body>
+			<div class="wrap">
+				@masthead(nav)
+				{ children... }
+			</div>
+		</body>
+	</html>
+}
+
+templ masthead(nav navView) {
+	<header class="mast">
+		<a class="brand" href={ templ.SafeURL(nav.Prefix + "/") } title={ "Hookwitness " + nav.Build }>Hookwitness</a>
+		if len(nav.Endpoints) > 0 || nav.Unmatched > 0 {
+			<div class="endpoint">
+				<label for="register-select">Endpoint</label>
+				<select id="register-select" data-navigate>
+					if nav.Current < 0 {
+						<option value="" selected>Choose…</option>
+					}
+					for _, e := range nav.Endpoints {
+						<option value={ nav.registerURL(e.ID) } selected?={ nav.Current == e.ID }>{ e.Path }</option>
+					}
+					<option value={ nav.registerURL(store.Unmatched) } selected?={ nav.Current == store.Unmatched }>Unmatched · { strconv.Itoa(nav.Unmatched) }</option>
+				</select>
+			</div>
+		}
+		<div class="status">
+			if nav.OnRegister {
+				<span class="rec" id="feed-state" data-state="connecting"><i aria-hidden="true"></i><span>Connecting</span></span>
+			}
+			<span class="addr">{ nav.Host }</span>
+			<a class="btn" href={ templ.SafeURL(nav.Prefix + "/") }>Endpoints</a>
+		</div>
+	</header>
+}
+
+templ endpointsPage(nav navView, creating bool, formPath, formErr string) {
+	@layout(nav, "Endpoints") {
+		<main class="sheet">
+			<h1 class="title">Endpoints</h1>
+			<p class="lede">
+				An endpoint is an exact path on this server. Point a sender at it and every request that arrives is
+				kept as evidence. Requests to any other path are answered 404 and kept under Unmatched.
+			</p>
+			<div class="toolbar">
+				<div class="toolbar-note">
+					<p class="note">
+						<a href={ templ.SafeURL(nav.registerURL(store.Unmatched)) }>Unmatched requests</a>
+						· { strconv.Itoa(nav.Unmatched) } kept
+					</p>
+				</div>
+				<a class="btn solid" href={ templ.SafeURL(nav.Prefix + "/?edit=new") }>New endpoint</a>
+			</div>
+			if len(nav.Endpoints) == 0 {
+				<p class="empty">No endpoints yet. Create one with New endpoint, then send it a request.</p>
+			} else {
+				<div class="scroll">
+					<table class="eps">
+						<thead>
+							<tr><th>Path</th><th>Catch URL</th><th class="num">Kept</th><th>Last received</th><th><span class="sr">Actions</span></th></tr>
+						</thead>
+						<tbody>
+							for _, e := range nav.Endpoints {
+								<tr>
+									<td><a href={ templ.SafeURL(nav.registerURL(e.ID)) }>{ e.Path }</a></td>
+									<td class="url">http://{ nav.Host }{ e.Path }</td>
+									<td class="num">{ strconv.Itoa(e.Count) }</td>
+									<td class="when">{ lastSeen(e.LastAt) }</td>
+									<td class="acts">
+										<a class="btn quiet" href={ templ.SafeURL(nav.registerURL(e.ID) + "/behaviour") }>Behaviour</a>
+										@clearForm(nav, e.ID, nav.Prefix+"/", e.Path)
+										<form method="post" action={ templ.SafeURL(nav.registerURL(e.ID) + "/delete") } data-confirm={ "Delete " + e.Path + " and its " + strconv.Itoa(e.Count) + " requests?" }>
+											<button class="btn quiet" type="submit">Delete</button>
+										</form>
+									</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+			if creating {
+				<dialog class="modal" data-modal data-close={ nav.Prefix + "/" } open aria-labelledby="dialog-title">
+					<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/endpoints") }>
+						<div class="modal-head">
+							<h2 id="dialog-title">New endpoint</h2>
+							<a class="close" href={ templ.SafeURL(nav.Prefix + "/") } aria-label="Close">×</a>
+						</div>
+						if formErr != "" {
+							<p class="error banner" role="alert">Not created: { formErr }</p>
+						}
+						<label for="path">Path</label>
+						<input
+							id="path"
+							name="path"
+							value={ formPath }
+							placeholder="/stripe/webhooks"
+							autocomplete="off"
+							spellcheck="false"
+							autofocus
+							aria-describedby="path-help"
+							if formErr != "" {
+								aria-invalid="true"
+							}
+						/>
+						<p id="path-help" class="help">
+							Leave it empty for a random path. Letters, digits and <code>. _ ~ -</code> between slashes;
+							a trailing slash is part of the path.
+						</p>
+						<div class="acts">
+							<button class="btn solid" type="submit">Create endpoint</button>
+							<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/") }>Cancel</a>
+						</div>
+					</form>
+				</dialog>
+			}
+			<p class="build">Hookwitness { nav.Build }</p>
+		</main>
+	}
+}
+
+templ clearForm(nav navView, regID int64, next, what string) {
+	<form method="post" action={ templ.SafeURL(nav.registerURL(regID) + "/clear") } data-confirm={ "Clear every request kept for " + what + "?" }>
+		<input type="hidden" name="next" value={ next }/>
+		<button class="btn quiet" type="submit">Clear</button>
+	</form>
+}
+
+templ registerPage(nav navView, reg registerView, ex *exhibitView) {
+	@layout(nav, title(reg)) {
+		<section class="strip" aria-label="Arrivals over the last two minutes">
+			<canvas id="trace" aria-hidden="true"></canvas>
+			<div class="legend"><b>Last 2 min</b> · height = body size · red: not 2xx · dashed: timeout · ×: dropped · red bar under the line: a failed check · same body bracketed</div>
+		</section>
+		<main class="desk">
+			<section class="register" aria-label="Caught requests">
+				<div class="reg-head">
+					<span class="reg-name">{ title(reg) }</span>
+					<span><span id="kept" data-count="kept">{ strconv.Itoa(reg.Count) }</span> kept</span>
+				</div>
+				<div class="reg-tools">
+					if reg.ID == store.Unmatched {
+						@clearForm(nav, reg.ID, reg.Base, "Unmatched")
+					} else {
+						@clearForm(nav, reg.ID, reg.Base, reg.Path)
+						<a class="btn" href={ templ.SafeURL(reg.Base + "/behaviour") }>Behaviour</a>
+					}
+					<a class="btn" href={ templ.SafeURL(reg.Base + "?report") }>Report</a>
+					if reg.ID != store.Unmatched {
+						<a class="btn" href={ templ.SafeURL(reg.Base + "?draft") }>Draft schema</a>
+					}
+				</div>
+				if reg.Verdicts.On {
+					<div class="verdict-counts">
+						<span>Verdicts</span>
+						<b class="v-pass"><span data-count="pass">{ strconv.Itoa(reg.Verdicts.Pass) }</span> pass</b>
+						<b class="v-fail"><span data-count="fail">{ strconv.Itoa(reg.Verdicts.Fail) }</span> fail</b>
+						<b class="v-nv"><span data-count="nv">{ strconv.Itoa(reg.Verdicts.NV) }</span> n/v</b>
+						<b class="v-nv" hidden?={ reg.Verdicts.NC == 0 }><span data-count="nc">{ strconv.Itoa(reg.Verdicts.NC) }</span> n/c</b>
+						<form method="post" action={ templ.SafeURL(reg.Base + "/recheck") } data-confirm={ "Re-check the " + strconv.Itoa(reg.Count) + " kept requests with the current checks, secrets and schemas? Their replies stay as sent." }>
+							<button class="btn quiet" type="submit">Re-check <span data-count="kept">{ strconv.Itoa(reg.Count) }</span></button>
+						</form>
+					</div>
+					if reg.Verdicts.Rechecked != "" {
+						<p class="saved banner" role="status">Re-checked { reg.Verdicts.Rechecked } requests with the current checks, secrets and schemas.</p>
+					}
+				}
+				<ol
+					class="reg-list"
+					id="register"
+					aria-label="Caught requests, newest first"
+					hx-ext="sse"
+					sse-connect={ reg.Base + "/events?after=" + id(reg.Newest) }
+					sse-swap="request,update"
+					hx-swap="afterbegin"
+					data-selected={ id(reg.Selected) }
+					data-keep={ strconv.Itoa(reg.Keep) }
+				>
+					for _, r := range reg.Rows {
+						@row(r)
+					}
+					if reg.More && len(reg.Rows) > 0 {
+						@moreRow(reg.Base, reg.Rows[len(reg.Rows)-1].ID)
+					}
+				</ol>
+				if len(reg.Rows) == 0 {
+					<p class="empty" id="register-empty">Nothing caught yet.</p>
+				}
+			</section>
+			<article class="exhibit" id="exhibit" aria-live="polite">
+				if ex != nil {
+					@exhibit(*ex)
+				} else {
+					@noExhibit(nav, reg)
+				}
+			</article>
+		</main>
+		if reg.Export != nil {
+			@reportDialog(*reg.Export)
+		}
+		if reg.Draft != nil {
+			@draftDialog(*reg.Draft)
+		}
+	}
+}
+
+templ reportDialog(v exportView) {
+	<dialog class="modal" data-modal data-close={ v.Close } open aria-labelledby="dialog-title">
+		<form class="card" method="get" action={ templ.SafeURL(v.Action) }>
+			<div class="modal-head">
+				<h2 id="dialog-title">Report</h2>
+				<a class="close" href={ templ.SafeURL(v.Close) } aria-label="Close">×</a>
+			</div>
+			if v.Error != "" {
+				<p class="error banner" role="alert">No report: { v.Error }</p>
+			}
+			<p class="help">Evidence to attach to a ticket: the requests, what Hookwitness answered and every verdict, with a summary on top. Times are UTC.</p>
+			<div class="grid2 even">
+				<label>
+					Format
+					<select name="format" aria-invalid?={ v.Field == "format" }>
+						<option value="html" selected?={ v.Format == "html" }>HTML, one file</option>
+						<option value="md" selected?={ v.Format == "md" }>Markdown</option>
+						<option value="pdf" selected?={ v.Format == "pdf" }>PDF, A4</option>
+					</select>
+				</label>
+				<label>
+					Requests
+					<select name="scope" aria-invalid?={ v.Field == "scope" }>
+						<option value="all" selected?={ v.Scope == "all" }>All { strconv.Itoa(v.Count) } kept</option>
+						<option value="range" selected?={ v.Scope == "range" }>Received in a time range</option>
+						<option value="picked" selected?={ v.Scope == "picked" }>Picked by number</option>
+					</select>
+				</label>
+			</div>
+			<label>
+				Images in the requests
+				<select name="images">
+					<option value="shown" selected?={ v.Images == "shown" }>Shown (HTML and PDF), listed (Markdown)</option>
+					<option value="listed" selected?={ v.Images == "listed" }>Listed only: a smaller file</option>
+				</select>
+			</label>
+			<div class="grid2 even for-range">
+				<label>From, UTC <input type="datetime-local" name="from" step="0.001" value={ v.From } aria-invalid?={ v.Field == "from" }/></label>
+				<label>To, UTC <input type="datetime-local" name="to" step="0.001" value={ v.To } aria-invalid?={ v.Field == "to" }/></label>
+			</div>
+			<label class="for-picked">
+				Request numbers
+				<input name="pick" value={ v.Pick } placeholder="3, 5-9" spellcheck="false" autocomplete="off" aria-invalid?={ v.Field == "pick" }/>
+			</label>
+			<fieldset class="masks">
+				<legend>Mask header values</legend>
+				<p class="help">Masked values are replaced by their length, e.g. •••• 71 chars; signatures taken from them in verdicts too.</p>
+				<div class="mask-list">
+					for _, m := range v.Masks {
+						<label class="check"><input type="checkbox" name="mask" value={ m.Name } checked?={ m.On }/> <code>{ m.Name }</code></label>
+					}
+				</div>
+				<label>Other headers <input name="mask_other" value={ v.Other } placeholder="X-Api-Key, X-Session" spellcheck="false" autocomplete="off" aria-invalid?={ v.Field == "mask_other" }/></label>
+			</fieldset>
+			<div class="acts">
+				<button class="btn solid" type="submit">Download report</button>
+				<a class="btn quiet" href={ templ.SafeURL(v.Close) }>Close</a>
+			</div>
+		</form>
+	</dialog>
+}
+
+// draftDialog picks the requests a schema is drafted from; the schema
+// editor opens on the draft, and nothing is stored until it is saved.
+templ draftDialog(v draftDialogView) {
+	<dialog class="modal" data-modal data-close={ v.Close } open aria-labelledby="dialog-title">
+		<form class="card" method="get" action={ templ.SafeURL(v.Action) }>
+			<div class="modal-head">
+				<h2 id="dialog-title">Draft schema</h2>
+				<a class="close" href={ templ.SafeURL(v.Close) } aria-label="Close">×</a>
+			</div>
+			<input type="hidden" name="tab" value="schemas"/>
+			<input type="hidden" name="edit" value="schema-draft"/>
+			<p class="help">A JSON Schema from what these requests' bodies have in common: types, keys (required when every body has them), array items, formats. You review it in the schema editor; nothing is saved until you save it.</p>
+			if len(v.Values) > 0 {
+				<label>
+					From
+					<select name="by">
+						<option value="value" selected?={ v.By == "value" }>all requests with the same { strings.TrimPrefix(v.Label, "JSON Schema by ") }</option>
+						<option value="pick" selected?={ v.By == "pick" }>requests picked by number</option>
+					</select>
+				</label>
+				<label class="for-value">
+					Value
+					<select name="value">
+						for _, c := range v.Values {
+							<option value={ c.Value } selected?={ c.Value == v.Value }>{ c.Value } · { strconv.Itoa(c.N) }</option>
+						}
+					</select>
+				</label>
+			} else {
+				<input type="hidden" name="by" value="pick"/>
+			}
+			<label class="for-pick">
+				Request numbers
+				<input name="pick" value={ v.Pick } placeholder="3, 5-9" spellcheck="false" autocomplete="off" autofocus/>
+			</label>
+			<div class="acts">
+				<button class="btn solid" type="submit">Draft schema</button>
+				<a class="btn quiet" href={ templ.SafeURL(v.Close) }>Close</a>
+			</div>
+		</form>
+	</dialog>
+}
+
+templ noExhibit(nav navView, reg registerView) {
+	<div class="ex-empty">
+		if reg.ID == store.Unmatched {
+			<p>Requests to paths that no endpoint has land here, answered 404, so a typo in a sender’s URL shows up at once.</p>
+		} else if len(reg.Rows) == 0 {
+			<p>Point a sender at this endpoint, or send a test request:</p>
+			<pre class="try">{ tryCommand(nav.Host, reg.Path) }</pre>
+			<p>It appears in the register on the left as it arrives.</p>
+		} else {
+			<p>Choose a request in the register to see it in full.</p>
+		}
+	</div>
+}
+
+templ moreRow(base string, beforeID int64) {
+	<li class="more">
+		<button class="btn quiet" type="button" hx-get={ base + "/rows?before=" + id(beforeID) } hx-target="closest li" hx-swap="outerHTML">Show older</button>
+	</li>
+}
+
+templ rowsChunk(rows []rowView, more bool, base string) {
+	for _, r := range rows {
+		@row(r)
+	}
+	if more && len(rows) > 0 {
+		@moreRow(base, rows[len(rows)-1].ID)
+	}
+}
+
+templ row(r rowView) {
+	<li
+		class={ "row", templ.KV("bad", r.mark() != "ok"), templ.KV("fresh", r.Fresh) }
+		id={ "req-" + id(r.ID) }
+		data-id={ id(r.ID) }
+		data-at={ strconv.FormatInt(r.At.UnixMilli(), 10) }
+		data-size={ strconv.FormatInt(r.Size, 10) }
+		data-group={ r.Group }
+		data-mark={ r.mark() }
+		if r.Verdict != "" {
+			data-verdict={ r.Verdict }
+		}
+	>
+		<a href={ templ.SafeURL(r.Href) } hx-get={ r.Href } hx-target="#exhibit" hx-push-url="true" hx-swap="innerHTML">
+			<span class="no">{ id(r.No) }</span>
+			<span class="m">
+				{ r.Method } <em>{ size(r.Size) }</em>
+				if r.Verdict != "" {
+					<span class={ "tag", "verdict-" + verdictClass(r.Verdict) }>checks { r.Verdict }</span>
+				}
+			</span>
+			<span class="t">{ clock(r.At) }</span>
+			<span class="ev">
+				if r.TooLarge && r.Outcome.Source == emulate.FromBusy {
+					Busy: 503, body not kept
+				} else if r.TooLarge {
+					Refused: body over the limit
+				} else if r.Detail != "" {
+					{ r.Detail }
+				} else if r.Size == 0 {
+					No body
+				}
+				if r.Delivery > 1 {
+					<span class="retry">retry { strconv.Itoa(r.Delivery - 1) }</span>
+				}
+				if t := r.tag(); t != "" {
+					<span class={ "tag", "mark-" + r.mark() }>{ t }</span>
+				}
+			</span>
+		</a>
+	</li>
+}
+
+templ exhibit(x exhibitView) {
+	<div class="ex-top" data-exhibit={ id(x.ID) }>
+		<div class="ex-no"><small>№</small>{ id(x.No) }</div>
+		<div class="ex-line">
+			<div class="ex-path">
+				<b>{ x.Method }</b> { x.Path }
+				if x.RawQuery != "" {
+					<span class="q">?{ x.RawQuery }</span>
+				}
+			</div>
+			<div class="ex-meta">
+				<span>received <b>{ fullTime(x.At) }</b></span>
+				<span>from <b>{ host(x.From) }</b></span>
+				<span>body <b>{ size(x.Size) }</b></span>
+				<span>{ x.Proto }</span>
+				if x.Delivery > 1 {
+					<span>delivery <b>{ strconv.Itoa(x.Delivery) }</b> of this body</span>
+				}
+			</div>
+		</div>
+		<div class={ "stamp", templ.KV("bad", !x.Outcome.Good()) }>
+			{ x.Outcome.Stamp() }
+			if w := x.Outcome.StampWhy(); w != "" {
+				<small>{ w }</small>
+			}
+		</div>
+	</div>
+	<div class="ex-actions">
+		if !x.TooLarge && x.Size > 0 {
+			<a class="btn" href={ templ.SafeURL(x.Download) } download>Download body</a>
+		}
+		<a class="btn" href={ templ.SafeURL(x.Self + "?report") }>Report</a>
+		if !x.Unmatch {
+			<a class="btn" href={ templ.SafeURL(x.Self + "?draft") }>Draft schema</a>
+		}
+	</div>
+	if len(x.Images) > 0 {
+		@images(x)
+	}
+	<h2>Body</h2>
+	if x.TooLarge && x.Outcome.Source == emulate.FromBusy {
+		<div class="too">
+			Hookwitness was reading other bodies up to its <code>-max-inflight</code> limit when this one
+			arrived ({ size(x.Size) } declared), so it answered 503 with <code>Retry-After</code> and did not keep the body.
+			Should that happen under normal load, start hookwitness with a larger <code>-max-inflight</code>.
+		</div>
+	} else if x.TooLarge {
+		<div class="too">
+			The sender tried to deliver { size(x.Size) }. The limit is { size(x.Limit) }, so the body was not kept
+			if x.Unmatch {
+				(and the path has no endpoint: the answer was 404).
+			} else {
+				and Hookwitness answered 413.
+			}
+			Start hookwitness with a larger <code>-max-body</code> to catch it.
+		</div>
+	} else {
+		if x.Kept < x.Size {
+			<p class="note">
+				Only the first { size(x.Kept) } of { size(x.Size) } were kept: the path has no endpoint, and the Unmatched
+				register keeps the start of a body.
+			</p>
+		}
+		switch x.Body.Kind {
+			case bodyEmpty:
+				<p class="note">No body.</p>
+			case bodyJSON:
+				if x.BadPaths > 0 {
+					<p class="note">Marked in the body: where a schema check found problems.</p>
+				}
+				<pre class="body json">
+					for _, t := range x.Body.JSON {
+						if t.Class == "" && !t.Bad && !t.Image {
+							{ t.Text }
+						} else {
+							<span class={ t.Class, templ.KV("bad", t.Bad), templ.KV("img", t.Image) }>{ t.Text }</span>
+							if t.Elided != "" {
+								<span class="elided">{ t.Elided }</span>
+							}
+						}
+					}
+				</pre>
+				<details class="raw">
+					<summary>Raw view</summary>
+					<pre class="body">{ x.Body.Text }</pre>
+				</details>
+			case bodyText:
+				<pre class="body">{ x.Body.Text }</pre>
+				if x.Body.Truncated {
+					<p class="note">Only the first 256 KiB are shown; download the body for all of it.</p>
+				}
+			case bodyBinary:
+				<p class="note">Binary, { size(x.Size) }. The first bytes:</p>
+				<pre class="body hex">{ x.Body.Hex }</pre>
+		}
+	}
+	@verdicts(x)
+	@answer(x)
+	<h2>Headers · { strconv.Itoa(len(x.Headers)) }</h2>
+	<div class="scroll">
+		<table class="kv">
+			<tbody>
+				for _, hd := range x.Headers {
+					<tr><th>{ hd.Name }</th><td>{ hd.Value }</td></tr>
+				}
+			</tbody>
+		</table>
+	</div>
+	<h2>Query</h2>
+	if len(x.Query) == 0 {
+		<p class="note">No query string.</p>
+	} else {
+		<div class="scroll">
+			<table class="kv">
+				<tbody>
+					for _, q := range x.Query {
+						<tr><th>{ q.Name }</th><td>{ q.Value }</td></tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+templ images(x exhibitView) {
+	<h2>Images · { strconv.Itoa(len(x.Images)) }</h2>
+	<ul class="images">
+		for _, im := range x.Images {
+			<li class={ templ.KV("bad", im.Error != "") }>
+				if im.Src != "" {
+					<button type="button" class="thumb" data-full={ im.Src } data-download={ im.Download } data-title={ im.Label } aria-label={ "Open " + im.Label + " full size" }>
+						<img src={ im.Src } alt={ "The image at " + im.Label } loading="lazy"/>
+					</button>
+				} else {
+					<div class={ "thumb", "none", templ.KV("hint", im.Hint != "") } aria-hidden="true">?</div>
+				}
+				<div class="img-text">
+					<code>{ im.Label }</code>
+					<span class="note">{ im.Note }</span>
+					if im.Error != "" {
+						<span class="error">{ im.Error }</span>
+					}
+					if im.Hint != "" {
+						<span class="note">{ im.Hint }</span>
+					}
+					if im.Download != "" {
+						<a href={ templ.SafeURL(im.Download) } download>Download</a>
+					}
+				</div>
+			</li>
+		}
+	</ul>
+	<dialog class="viewer" id="viewer" aria-label="Image">
+		<div class="viewer-bar">
+			<code class="viewer-title"></code>
+			<button type="button" class="btn quiet" data-viewer="zoom" aria-pressed="false">1:1</button>
+			<a class="btn quiet" data-viewer="download" href="#" download>Download</a>
+			<button type="button" class="btn quiet" data-viewer="close">Close</button>
+		</div>
+		<div class="viewer-stage"><img alt=""/></div>
+	</dialog>
+}
+
+templ notFoundPage(nav navView, msg string) {
+	@layout(nav, "Not found") {
+		<main class="sheet">
+			<h1 class="title">Not found</h1>
+			<p class="lede">{ msg }</p>
+			<p><a href={ templ.SafeURL(nav.Prefix + "/") }>Back to the endpoints</a></p>
+		</main>
+	}
+}
+
+// answer is what Hookwitness did with the request.
+templ verdicts(x exhibitView) {
+	if len(x.Verdicts) > 0 {
+		<h2>Verdicts</h2>
+		<div class="verdicts">
+			for _, v := range x.Verdicts {
+				<div class={ "verdict", "verdict-" + verdictClass(string(v.Result)) }>
+					<div class="vstamp">{ vstamp(v) }</div>
+					<p class="note">{ v.Reason }<span class="when">{ " · check " + strconv.Itoa(v.Check) + " · checked " + fullTime(v.At) }</span></p>
+					if len(v.Problems) > 0 {
+						<div class="scroll">
+							<table class="kv problems">
+								<tbody>
+									for _, pr := range v.Problems {
+										<tr><th>{ problemPath(pr.Path) }</th><td><code>{ pr.Keyword }</code> { pr.Message }</td></tr>
+									}
+								</tbody>
+							</table>
+						</div>
+						if v.Total > len(v.Problems) {
+							<p class="note">… and { strconv.Itoa(v.Total - len(v.Problems)) } more ({ strconv.Itoa(v.Total) } in all).</p>
+						}
+					}
+					if v.Expected != "" || v.Received != "" {
+						<div class="scroll">
+							<table class="kv">
+								<tbody>
+									<tr><th>expected</th><td>{ v.Expected }</td></tr>
+									<tr><th>received</th><td>{ v.Received }</td></tr>
+								</tbody>
+							</table>
+						</div>
+					}
+				</div>
+			}
+		</div>
+	}
+}
+
+templ answer(x exhibitView) {
+	if x.Outcome.Source != "" {
+		<h2>Answer</h2>
+		<div class="answer">
+			<p class="note">
+				{ answerText(x.Outcome) }
+				if x.Outcome.Error != "" {
+					<code>{ x.Outcome.Error }</code>
+				}
+			</p>
+			if len(x.Outcome.Headers) > 0 {
+				<div class="scroll">
+					<table class="kv">
+						<tbody>
+							for _, hd := range x.Outcome.Headers {
+								<tr><th>{ hd.Name }</th><td>{ hd.Value }</td></tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+			if x.Outcome.Body != "" {
+				<pre class="body sent">{ x.Outcome.Body }</pre>
+			}
+			if x.Outcome.BodyBase64 != "" {
+				<p class="note">The body is not UTF-8; its bytes, in base64:</p>
+				<pre class="body sent">{ x.Outcome.BodyBase64 }</pre>
+			}
+			if x.Outcome.Cut {
+				<p class="note">Only the first 64 KiB of the reply are kept.</p>
+			}
+			if x.Outcome.Withheld != "" {
+				<p class="note">The configured reply's { x.Outcome.Withheld }.</p>
+			}
+		</div>
+	}
+}
+
+templ behaviourPage(nav navView, b behaviourView) {
+	@layout(nav, "Behaviour · "+b.Path) {
+		<main class="sheet behaviour">
+			<p class="crumb"><a href={ templ.SafeURL(b.Base) }>{ b.Path }</a></p>
+			<h1 class="title">Behaviour</h1>
+			<p class="lede">
+				How this endpoint answers. Checks run first and can refuse a request; then the first rule whose
+				condition holds decides; otherwise the default reply. Changes apply to the next request.
+			</p>
+			<nav class="tabs" aria-label="Behaviour">
+				for _, t := range behaviourTabs {
+					<a href={ templ.SafeURL(b.Base + "/behaviour?tab=" + t) } aria-current={ tabCurrent(b.Tab == t) }>
+						{ tabTitle(t) }
+						if n := tabCount(b.Config, t); n != "" {
+							<small>{ n }</small>
+						}
+					</a>
+				}
+			</nav>
+			switch b.Tab {
+				case "checks":
+					@toolbar(b, "check-new", "New check") {
+						<p class="note">Required headers refuse a request without them. Authorization and JSON Schema checks record a verdict on every request and refuse only when enforced. Refused requests are not counted.</p>
+					}
+					@checkList(b)
+				case "default":
+					@toolbar(b, "default", "Edit default reply") {
+						<p class="note">The answer when no check refuses the request and no rule matches.</p>
+					}
+					@replySummary(b.Config.Default)
+				case "secrets":
+					@toolbar(b, "secret-new", "New secret") {
+						<p class="note">Signing keys and tokens for authorization checks. Write-only: a saved value is never shown again, only its fingerprint. Test and staging secrets only.</p>
+					}
+					@secretList(b)
+				case "schemas":
+					@toolbar(b, "schema-new", "New schema") {
+						<p class="note">JSON Schemas for schema checks (draft-04 to 2020-12; 2020-12 when <code>$schema</code> is absent). A schema refers to another one by name, as <code>{ `{"$ref": "Address"}` }</code>; nothing is ever fetched.</p>
+					}
+					@schemaList(b)
+				case "vars":
+					@toolbar(b, "var-new", "New variable") {
+						<p class="note">Test values for templates, as <code>{ "{{.Var.NAME}}" }</code>. Stored in plain text: never real secrets.</p>
+					}
+					@varList(b)
+				default:
+					@toolbar(b, "rule-new", "New rule") {
+						<form class="counter" id="counter" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+							<input type="hidden" name="op" value="counter-reset"/>
+							<span class="note"><b class="big">{ i64(b.Counter) }</b> counted since the reset</span>
+							<button class="btn quiet" type="submit">Reset counter</button>
+						</form>
+					}
+					@ruleList(b)
+			}
+			if b.Editor != nil {
+				@editorDialog(b, b.Editor)
+			}
+		</main>
+	}
+}
+
+// toolbar holds a tab's note and its one main action, always in the same
+// place; the outcome of the last edit goes under it.
+templ toolbar(b behaviourView, edit, label string) {
+	<div class="toolbar">
+		<div class="toolbar-note">
+			{ children... }
+		</div>
+		<a class="btn solid" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + tabOf(edit) + "&edit=" + edit) }>{ label }</a>
+	</div>
+	if b.NoDraft != "" {
+		<p class="error banner" role="alert">No draft: { b.NoDraft }.</p>
+	} else if b.Error != "" && b.Editor == nil {
+		<p class="error banner" role="alert">Not saved: { b.Error }</p>
+	} else if name := unusedSaved(b); name != "" {
+		<p class="saved banner" role="status">
+			Secret saved. It does nothing until a check uses it:
+			<a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=check-new&secret=" + name) }>add a check that uses { name }</a>.
+		</p>
+	} else if b.Saved != "" {
+		<p class="saved banner" role="status">{ savedText(b.Saved) }</p>
+	}
+}
+
+templ rowActions(b behaviourView, kind string, i, n int, move bool) {
+	<form class="acts" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+		<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
+		<input type="hidden" name="v" value={ b.Version }/>
+		<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + tabOf(kind) + "&edit=" + kind + "-" + strconv.Itoa(i)) }>Edit</a>
+		if move {
+			<button class="btn quiet" type="submit" name="op" value={ kind + "-up" } disabled?={ i == 0 } aria-label="Move up">↑</button>
+			<button class="btn quiet" type="submit" name="op" value={ kind + "-down" } disabled?={ i == n-1 } aria-label="Move down">↓</button>
+		}
+		<button class="btn quiet" type="submit" name="op" value={ kind + "-del" } data-confirm={ "Delete " + kind + " " + strconv.Itoa(i+1) + "?" }>Delete</button>
+	</form>
+}
+
+templ ruleList(b behaviourView) {
+	if len(b.Config.Rules) == 0 {
+		<p class="empty">No rules: every request gets the default reply.</p>
+	} else {
+		<ol class="items">
+			for i, rule := range b.Config.Rules {
+				<li id={ "rule-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "rule-"+strconv.Itoa(i)) }>
+					<span class="no">{ strconv.Itoa(i + 1) }</span>
+					<span class="what"><b>{ rule.When.Label() }</b> → { ruleAction(rule) }</span>
+					@rowActions(b, "rule", i, len(b.Config.Rules), true)
+				</li>
+			}
+		</ol>
+		<p class="help">The first rule whose condition holds decides; the rest are skipped.</p>
+	}
+}
+
+templ checkList(b behaviourView) {
+	if len(b.Config.Checks) == 0 {
+		<p class="empty">No checks: every request goes on to the rules.</p>
+	} else {
+		<ol class="items">
+			for i, ch := range b.Config.Checks {
+				<li id={ "check-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "check-"+strconv.Itoa(i)) }>
+					<span class="no">{ strconv.Itoa(i + 1) }</span>
+					if ch.GivesVerdict() {
+						<span class="what"><b>{ ch.Label() }</b> · { checkSummary(ch) }</span>
+					} else {
+						<span class="what"><b>{ ch.Header }</b> { checkSummary(ch) }</span>
+					}
+					@rowActions(b, "check", i, len(b.Config.Checks), false)
+				</li>
+			}
+		</ol>
+	}
+}
+
+templ varList(b behaviourView) {
+	if len(b.Config.Vars) == 0 {
+		<p class="empty">No variables.</p>
+	} else {
+		<ol class="items">
+			for i, v := range b.Config.Vars {
+				<li id={ "var-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "var-"+strconv.Itoa(i)) }>
+					<span class="no">{ strconv.Itoa(i + 1) }</span>
+					<span class="what"><b>{ v.Name }</b> = { v.Value }</span>
+					@rowActions(b, "var", i, len(b.Config.Vars), false)
+				</li>
+			}
+		</ol>
+	}
+}
+
+templ secretList(b behaviourView) {
+	if len(b.Config.Secrets) == 0 {
+		<p class="empty">No secrets. Authorization checks need one: a signing key or a token.</p>
+	} else {
+		<ol class="items">
+			for i, sc := range b.Config.Secrets {
+				<li id={ "secret-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "secret-"+strconv.Itoa(i)) }>
+					<span class="no">{ strconv.Itoa(i + 1) }</span>
+					<span class="what">
+						<b>{ sc.Name }</b> · { secretKindTitle(sc.Kind) } · fingerprint <code>{ sc.Fingerprint }</code> · 
+						if len(b.Config.SecretUsers(sc.Name)) == 0 {
+							not used: <a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=check-new&secret=" + sc.Name) }>add a check</a>
+						} else {
+							{ secretUse(b.Config, sc.Name) }
+						}
+					</span>
+					<form class="acts" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+						<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
+						<input type="hidden" name="v" value={ b.Version }/>
+						<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=secrets&edit=secret-" + strconv.Itoa(i)) }>Replace</a>
+						<button class="btn quiet" type="submit" name="op" value="secret-del" data-confirm={ "Delete secret " + sc.Name + "?" }>Delete</button>
+					</form>
+				</li>
+			}
+		</ol>
+	}
+}
+
+templ schemaList(b behaviourView) {
+	if len(b.Config.Schemas) == 0 {
+		<p class="empty">No schemas. A JSON Schema check needs one.</p>
+	} else {
+		<ol class="items">
+			for i, sc := range b.Config.Schemas {
+				<li id={ "schema-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "schema-"+strconv.Itoa(i)) }>
+					<span class="no">{ strconv.Itoa(i + 1) }</span>
+					<span class="what">
+						<b>{ sc.Name }</b> · { schemaDraft(sc.Text) } · { size(int64(len(sc.Text))) } ·
+						if len(b.Config.SchemaUsers(sc.Name)) == 0 {
+							not used: <a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=check-new&schema=" + sc.Name) }>add a check</a>
+						} else {
+							{ schemaUse(b.Config, sc.Name) }
+						}
+					</span>
+					@rowActions(b, "schema", i, len(b.Config.Schemas), false)
+				</li>
+			}
+		</ol>
+	}
+}
+
+templ replySummary(r emulate.Reply) {
+	<dl class="summary">
+		<dt>Status</dt>
+		<dd>{ strconv.Itoa(r.Status) }</dd>
+		<dt>Delay</dt>
+		<dd>{ delayLabel(r) }</dd>
+		<dt>Headers</dt>
+		<dd>
+			if len(r.Headers) == 0 {
+				none
+			} else {
+				<pre>{ emulate.FormatHeaders(r.Headers) }</pre>
+			}
+		</dd>
+		<dt>Body</dt>
+		<dd>
+			if r.BodyBase64 != "" {
+				<pre>{ r.BodyBase64 }</pre>
+				<p class="note">bytes, base64: { size(rawSize(r.BodyBase64)) }</p>
+			} else if r.Body == "" {
+				empty
+			} else {
+				<pre>{ r.Body }</pre>
+			}
+		</dd>
+	</dl>
+}
+
+// editorDialog creates or edits one item; it opens over the list and closes
+// back to it.
+templ editorDialog(b behaviourView, e *editor) {
+	<dialog class="modal" data-modal data-close={ b.Base + "/behaviour?tab=" + b.Tab } open aria-labelledby="dialog-title">
+		<form class="card" method="post" action={ templ.SafeURL(b.Base + "/behaviour") } enctype={ formEnctype(e) }>
+			<div class="modal-head">
+				<h2 id="dialog-title">{ editorTitle(e) }</h2>
+				<a class="close" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + b.Tab) } aria-label="Close">×</a>
+			</div>
+			if b.Error != "" {
+				<p class="error banner" role="alert">Not saved: { b.Error }</p>
+			}
+			<input type="hidden" name="v" value={ b.Version }/>
+			switch e.Kind {
+				case "rule":
+					<input type="hidden" name="op" value="rule-save"/>
+					<input type="hidden" name="i" value={ e.I }/>
+					@ruleFields(b, e.Rule)
+				case "check":
+					<input type="hidden" name="op" value="check-save"/>
+					<input type="hidden" name="i" value={ e.I }/>
+					@checkFields(b, e.Check)
+				case "secret":
+					<input type="hidden" name="op" value="secret-save"/>
+					<input type="hidden" name="i" value={ e.I }/>
+					@secretFields(e)
+				case "schema":
+					<input type="hidden" name="op" value="schema-save"/>
+					<input type="hidden" name="i" value={ e.I }/>
+					@schemaFields(e)
+				case "var":
+					<input type="hidden" name="op" value="var-save"/>
+					<input type="hidden" name="i" value={ e.I }/>
+					<div class="grid2">
+						<label>Name <input name="name" value={ e.Var.Name } required spellcheck="false" autocomplete="off" autofocus placeholder="TOKEN"/></label>
+						<label>Value <input name="value" value={ e.Var.Value } spellcheck="false" autocomplete="off" placeholder="tok_test"/></label>
+					</div>
+					<p class="help">Letters, digits and _, not starting with a digit. Use as <code>{ "{{.Var." + varOrName(e.Var.Name) + "}}" }</code>.</p>
+				default:
+					<input type="hidden" name="op" value="default"/>
+					@replyFields(b, "default", "", e.Reply)
+			}
+			<div class="acts">
+				<button class="btn solid" type="submit">{ editorSave(e) }</button>
+				<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + b.Tab) }>Cancel</a>
+			</div>
+			if e.Kind != "var" && e.Kind != "secret" && e.Kind != "schema" {
+				@templateRef()
+			}
+		</form>
+	</dialog>
+}
+
+templ templateRef() {
+	<details class="help" id="templates">
+		<summary>Templates in headers and bodies</summary>
+		<p class="note">Header values and bodies are Go templates. They can use the request and the variables:</p>
+		<pre>{ templateHelp }</pre>
+	</details>
+}
+
+templ replyFields(b behaviourView, id, prefix string, r emulate.Reply) {
+	<div class="grid3">
+		<label>Status <input type="number" name={ prefix + "status" } value={ strconv.Itoa(r.Status) } min="200" max="599" required/></label>
+		<label>Delay, ms <input type="number" name={ prefix + "delay" } value={ ms(r.DelayMs) } min="0" placeholder="0"/></label>
+		<label>+ random jitter, ms <input type="number" name={ prefix + "jitter" } value={ ms(r.JitterMs) } min="0" placeholder="0"/></label>
+	</div>
+	<label for={ id + "-headers" }>Headers, one per line as <code>Name: value</code></label>
+	<textarea id={ id + "-headers" } name={ prefix + "headers" } rows="3" spellcheck="false" placeholder="Content-Type: application/json">{ emulate.FormatHeaders(r.Headers) }</textarea>
+	<div class="body-as">
+		<label for={ id + "-body" }>Body</label>
+		<select name={ prefix + "body_as" } aria-label="Body as">
+			<option value="template" selected?={ r.BodyBase64 == "" }>a template</option>
+			<option value="base64" selected?={ r.BodyBase64 != "" }>bytes, base64</option>
+		</select>
+	</div>
+	<textarea id={ id + "-body" } name={ prefix + "body" } rows="4" spellcheck="false">{ replyBodyText(r) }</textarea>
+	<p class="help">Delay plus jitter up to { span(b.MaxWait) }. Content-Length, Transfer-Encoding and Connection are set by the server.</p>
+}
+
+templ ruleFields(b behaviourView, rule emulate.Rule) {
+	<div class="grid3 when">
+		<label>
+			When
+			<select name="when" autofocus>
+				<option value="every" selected?={ rule.When.Kind == "every" }>every Nth request</option>
+				<option value="first" selected?={ rule.When.Kind == "first" }>the first N requests</option>
+				<option value="random" selected?={ rule.When.Kind == "random" }>at random, p%</option>
+			</select>
+		</label>
+		<label class="for-n">N <input type="number" name="n" value={ blank(rule.When.N) } min="1"/></label>
+		<label class="for-p">p, % <input type="number" name="percent" value={ percent(rule.When.Percent) } min="0" max="100" step="any"/></label>
+	</div>
+	<label>
+		Do
+		<select name="do">
+			<option value="reply" selected?={ rule.Do == "reply" }>reply as below</option>
+			<option value="timeout" selected?={ rule.Do == "timeout" }>time out: hold, never answer</option>
+			<option value="drop" selected?={ rule.Do == "drop" }>drop: reset the connection</option>
+		</select>
+	</label>
+	<div class="reply-fields">
+		@replyFields(b, "rule", "", replyOrDefault(rule))
+	</div>
+	<p class="help for-hold">No reply is sent: the request is still recorded. A timeout holds the connection up to { span(b.MaxWait) }.</p>
+}
+
+templ checkFields(b behaviourView, ch emulate.Check) {
+	<label>
+		Kind
+		<select name="kind" autofocus>
+			<option value="header" selected?={ checkKind(ch) == "header" }>{ kindTitle("header") }</option>
+			for _, k := range emulate.AuthKinds {
+				<option value={ k } selected?={ checkKind(ch) == k }>{ kindTitle(k) }</option>
+			}
+			<option value="schema" selected?={ checkKind(ch) == "schema" }>{ kindTitle("schema") }</option>
+		</select>
+	</label>
+	<div class="kinded k-schema">
+		<div class="grid2">
+			<label>
+				Pick the schema by
+				<select name="select_from">
+					<option value="" selected?={ ch.Select == nil }>nothing: the same for every request</option>
+					<option value="body" selected?={ ch.Select != nil && ch.Select.From == "body" }>a value in the body (JSON pointer)</option>
+					<option value="header" selected?={ ch.Select != nil && ch.Select.From == "header" }>a header</option>
+				</select>
+			</label>
+		</div>
+		<fieldset class="masks for-schema">
+			<legend>Schemas · the body must match one</legend>
+			<div class="mask-list">
+				for _, sc := range b.Config.Schemas {
+					<label class="check"><input type="checkbox" name="schema" value={ sc.Name } checked?={ checkUses(ch, sc.Name) }/> <code>{ sc.Name }</code></label>
+				}
+			</div>
+			<p class="help">Tick more than one when the sender may send either shape (v1 or v2): the verdict names the one that matched, or the closest one and its problems.</p>
+		</fieldset>
+		<div class="for-select">
+			<label>Pointer or header <input name="select_key" value={ selectKey(ch) } spellcheck="false" autocomplete="off" placeholder="/type or X-GitHub-Event"/></label>
+			<label for="check-map">Values to schemas, one per line as <code>value = SchemaName</code></label>
+			<textarea id="check-map" name="select_map" rows="3" spellcheck="false" placeholder="order.paid = OrderPaid">{ formatMapping(ch.Select) }</textarea>
+			<p class="help">The value at the pointer, or of the header, picks the schema from these lines.</p>
+			<fieldset class="masks">
+				<legend>Other values, or none · default</legend>
+				<div class="mask-list">
+					for _, sc := range b.Config.Schemas {
+						<label class="check"><input type="checkbox" name="select_default" value={ sc.Name } checked?={ ch.Select != nil && slices.Contains(ch.Select.Default, sc.Name) }/> <code>{ sc.Name }</code></label>
+					}
+				</div>
+				<p class="help">A value without a line, or a request without the value, must match one of the ticked schemas. Tick none to leave such requests unchecked: verdict <b>n/c</b>, never refused.</p>
+			</fieldset>
+		</div>
+	</div>
+	<label class="kinded k-header k-hmac">Header <input name="header" value={ ch.Header } spellcheck="false" autocomplete="off" placeholder="X-Signature"/></label>
+	<div class="grid2 kinded k-header">
+		<label>
+			Must
+			<select name="match">
+				<option value="present" selected?={ ch.Match == "present" }>be present</option>
+				<option value="equals" selected?={ ch.Match == "equals" }>equal</option>
+				<option value="regex" selected?={ ch.Match == "regex" }>match the regex</option>
+			</select>
+		</label>
+		<label>Value <input name="value" value={ ch.Value } spellcheck="false" autocomplete="off"/></label>
+	</div>
+	<div class="grid2 kinded k-github k-stripe k-standard k-hmac k-bearer k-basic">
+		<label>
+			Secret
+			<select name="secret">
+				<option value="">choose…</option>
+				for _, sc := range b.Config.Secrets {
+					<option value={ sc.Name } selected?={ ch.Secret == sc.Name }>{ sc.Name } ({ secretKindTitle(sc.Kind) })</option>
+				}
+			</select>
+		</label>
+		<label class="kinded k-basic">User <input name="user" value={ ch.User } spellcheck="false" autocomplete="off"/></label>
+		<label class="kinded k-stripe k-standard">Tolerance, s <input type="number" name="tolerance_s" value={ blank(ch.ToleranceS) } min="1" max="86400" placeholder="300"/></label>
+	</div>
+	<div class="grid3 kinded k-hmac">
+		<label>
+			Algorithm
+			<select name="algo">
+				for _, a := range []string{"sha256", "sha1", "sha512"} {
+					<option value={ a } selected?={ ch.Algo == a }>{ a }</option>
+				}
+			</select>
+		</label>
+		<label>
+			Encoding
+			<select name="encoding">
+				<option value="hex" selected?={ ch.Encoding != "base64" }>hex</option>
+				<option value="base64" selected?={ ch.Encoding == "base64" }>base64</option>
+			</select>
+		</label>
+		<label>Prefix <input name="prefix" value={ ch.Prefix } spellcheck="false" autocomplete="off" placeholder="sha256="/></label>
+	</div>
+	<label class="kinded k-hmac" for="check-content">Signed content: a template, empty means the raw body</label>
+	<textarea class="kinded k-hmac" id="check-content" name="content" rows="2" spellcheck="false" placeholder="{{.Body}}">{ ch.Content }</textarea>
+	<label class="check kinded k-stripe k-standard"><input type="checkbox" name="ignore_timestamp" checked?={ ch.IgnoreTimestamp }/> Accept any timestamp (replayed captures)</label>
+	<label class="check kinded k-github k-stripe k-standard k-hmac k-bearer k-basic k-schema"><input type="checkbox" name="enforce" checked?={ ch.Enforce }/> Enforce: refuse a request that does not pass (otherwise it gets the usual reply and only the verdict is recorded)</label>
+	<label class="check"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header, 401, or 400 listing the schema problems)</label>
+	<div class="reply-fields">
+		@replyFields(b, "check", "error_", errorOrStandard(ch))
+	</div>
+}
+
+templ secretFields(e *editor) {
+	if e.I == "new" {
+		<div class="grid2">
+			<label>Name <input name="name" value={ e.Secret.Name } required spellcheck="false" autocomplete="off" autofocus placeholder="WEBHOOK_SECRET"/></label>
+			<label>
+				Kind
+				<select name="secret_kind">
+					<option value="key" selected?={ e.Secret.Kind != "token" }>signing key (GitHub, Stripe, Standard Webhooks, HMAC)</option>
+					<option value="token" selected?={ e.Secret.Kind == "token" }>token or password (bearer, basic)</option>
+				</select>
+			</label>
+		</div>
+	} else {
+		<p class="note"><b>{ e.Secret.Name }</b> · { secretKindTitle(e.Secret.Kind) } · now <code>{ e.Secret.Fingerprint }</code>. The new value replaces it; the checks that use it keep working with the new one.</p>
+	}
+	<label>Value <input type="password" name="value" value="" required autocomplete="new-password" spellcheck="false"/></label>
+	<p class="help">Stored sealed (signing keys) or as a salted hash (tokens and passwords) and never shown again. Use test and staging secrets only: whoever can open this page can use them to sign requests.</p>
+}
+
+templ schemaFields(e *editor) {
+	if d := e.Draft; d != nil {
+		<input type="hidden" name="draft_from" value={ d.From }/>
+		<p class="help">Drafted from { d.From }. Review it: a draft knows only what those bodies had.</p>
+		if d.Exists {
+			<fieldset class="masks">
+				<legend>Against the stored { e.Schema.Name } · saving replaces it</legend>
+				if len(d.Changes) == 0 {
+					<p class="help">No differences in keys, types or formats.</p>
+				} else {
+					<ul class="changes">
+						for _, c := range d.Changes {
+							<li><code>{ c }</code></li>
+						}
+					</ul>
+				}
+			</fieldset>
+		}
+		if d.MapCheck > 0 {
+			<input type="hidden" name="map_check" value={ strconv.Itoa(d.MapCheck) }/>
+			<input type="hidden" name="map_value" value={ d.MapValue }/>
+			<input type="hidden" name="map_label" value={ d.MapLabel }/>
+			<label class="check"><input type="checkbox" name="map" checked/> Also map <code>{ d.MapValue }</code> to this schema in check { strconv.Itoa(d.MapCheck) } ({ d.MapLabel })</label>
+		}
+	}
+	<label>Name <input name="name" value={ e.Schema.Name } required spellcheck="false" autocomplete="off" autofocus placeholder="OrderPaid"/></label>
+	<label for="schema-text">Schema (JSON)</label>
+	<textarea id="schema-text" name="text" rows="14" spellcheck="false" placeholder="{&#34;type&#34;: &#34;object&#34;}">{ e.Schema.Text }</textarea>
+	<label>Or upload a file <input type="file" name="file" accept=".json,application/json,application/schema+json"/></label>
+	<p class="help">A file replaces the text above; up to 1 MiB. Refer to this endpoint's other schemas by name (<code>{ `"$ref": "Address"` }</code>); any other reference is refused.</p>
+}
