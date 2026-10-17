@@ -452,7 +452,7 @@ The same pattern works for `stripe`, `standard` (a `whsec_` key), `hmac` and
 
 <!-- docs-check: skip: starts a container; scripts/docker-smoke.sh runs it in CI -->
 ```sh
-docker run -d --name hookwitness -p 127.0.0.1:8080:8080 ghcr.io/petroladkin/hookwitness:edge
+docker run -d --name hookwitness -p 127.0.0.1:8080:8080 ghcr.io/petroladkin/hookwitness:0.1
 ```
 
 - Without a volume every run starts empty, which suits tests. Add
@@ -472,7 +472,7 @@ Compose, for a sender under test:
 ```yaml
 services:
   hookwitness:
-    image: ghcr.io/petroladkin/hookwitness:edge
+    image: ghcr.io/petroladkin/hookwitness:0.1
     ports: ["127.0.0.1:8080:8080"]           # the API and UI for the test on the host
     environment:
       HOOKWITNESS_ADMIN_HOSTS: hookwitness   # the API for tests inside the network

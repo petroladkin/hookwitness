@@ -8,13 +8,20 @@
 <!-- docs-check: skip: starts a container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
-  ghcr.io/petroladkin/hookwitness:edge
+  ghcr.io/petroladkin/hookwitness:0.1
 ```
 
 Інтерфейс — на <http://127.0.0.1:8080/admin/>; вебхуки йдуть на будь-який
-інший шлях порту 8080. Образи зібрано для linux/amd64 і linux/arm64. `:edge`
-іде за гілкою розробки; випущені версії мають теги `:X.Y.Z`, `:X.Y` і
-`:latest`.
+інший шлях порту 8080. Образи зібрано для linux/amd64 і linux/arm64, з такими
+тегами:
+
+- `:0.1` (його вживають ці сторінки) іде за найновішим релізом 0.1.x:
+  виправлення, без несумісних змін;
+- `:X.Y.Z`, наприклад `:0.1.0`, — один реліз, він ніколи не змінюється;
+- `:latest` — найновіший реліз, хоч якої версії;
+- `:edge` іде за гілкою розробки, без жодних обіцянок.
+
+Кандидати в релізи (`:0.1.0-rc.1`) мають лише власний тег.
 
 ### Тримайте дані в томі
 
@@ -40,7 +47,7 @@ docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
 ```yaml
 services:
   hookwitness:
-    image: ghcr.io/petroladkin/hookwitness:edge
+    image: ghcr.io/petroladkin/hookwitness:0.1
     ports: ["127.0.0.1:8080:8080"]
     volumes: ["hookwitness:/data"]
     restart: unless-stopped
@@ -55,7 +62,7 @@ volumes:
 - Має перевірку здоров'я (`hookwitness health`, що питає `/healthz`);
   `docker ps` її показує.
 - Несе підписане походження збірки (provenance) і SBOM:
-  `gh attestation verify oci://ghcr.io/petroladkin/hookwitness:edge --owner petroladkin`.
+  `gh attestation verify oci://ghcr.io/petroladkin/hookwitness:0.1 --owner petroladkin`.
 - `make image` збирає його локально; `make image-smoke` запускає той самий
   сценарій, що й CI.
 
@@ -118,8 +125,9 @@ Ctrl-C або SIGTERM зупиняє сервер акуратно: запити
 
 ## Збірка з вихідного коду
 
-Потрібен Go 1.27 або новіший. `make check` також потребує компілятора C для
-race-детектора; сам бінарник збирається без cgo.
+Потрібен Go 1.27 або новіший. Без клону `go install
+github.com/petroladkin/hookwitness/cmd/hookwitness@latest` кладе найновіший
+реліз у `$(go env GOPATH)/bin` (`@v0.1.0` — для конкретного). У клоні:
 
 <!-- docs-check: skip: builds and starts the server this check already runs -->
 ```sh
@@ -128,13 +136,16 @@ bin/hookwitness version
 bin/hookwitness serve         # listens on 127.0.0.1:8080, database ./hookwitness.db
 ```
 
+`make check` також потребує компілятора C для race-детектора; сам бінарник
+збирається без cgo.
+
 `bin/hookwitness health` питає `/healthz` запущеного сервера і виходить з
 кодом 0, коли він працює.
 
 ## Яка збірка працює
 
 Усюди, де згадано Hookwitness, збірку названо як `<версія> (<коміт>)`,
-наприклад `edge (5a45bb4)`: рядок унизу сторінки Endpoints (і підказка на
+наприклад `v0.1.0 (5a45bb4)`: рядок унизу сторінки Endpoints (і підказка на
 логотипі на кожній сторінці), `hookwitness version` і рядок «Generated … by
 Hookwitness» кожного звіту. Тож звіт, доданий до тікета, каже, яка збірка
 впіймала його запити. Випущені образи кажуть свій тег (`v1.2.0 (…)`), образ

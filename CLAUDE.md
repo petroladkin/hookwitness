@@ -53,6 +53,8 @@ version`, reports, the UI and `/healthz` name the build as `<version>
 (<commit>)` (the image from `dev` is `edge`); `hookwitness health` probes
 `/healthz` (the container's health check). A container image (distroless, non-root, data
 in the `/data` volume) is built, smoke-tested and published to GHCR by CI.
+Released: 0.1.0 (`CHANGELOG.md`); the documentation tells users to run the
+image `:0.1` (`TestDocsImageTag`), and `main` holds the tagged releases.
 This section must describe what is true now — update it in the same change
 that makes it false.
 
@@ -237,6 +239,13 @@ Go, sqlite, templ, HTMX, Server-Sent Events, Docker.
 - Documentation changes in the same change as the code it describes: the
   page in `docs/` and its twin in `docs/uk/` (translated in the same change;
   the shell blocks stay identical), and `make docs-check` passes.
+- Releases: a `release/X.Y` branch from `dev` (the docs' image tag moves to
+  `:X.Y` there, never on `dev` before the image exists; `CHANGELOG.md` gets
+  the version's entry, curated from `feat`/`fix`/`perf` commits), a
+  `vX.Y.Z-rc.N` tag checked first, then the merge into `main`, the tag
+  `vX.Y.Z` on it, and the merge back into `dev`. A fix to a release is a
+  `hotfix/*` branch from `main`, released as the next patch. A pushed tag is
+  never moved or deleted: fix forward.
 - Tests that measure wall-clock time assert only what runner load cannot
   fake: never early, and ended well before the alternative (a delay applied
   twice, a hold past its cap); exact durations go through the catcher's timer

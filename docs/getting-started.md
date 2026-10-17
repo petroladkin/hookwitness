@@ -10,7 +10,7 @@ With Docker:
 <!-- docs-check: skip: starts a long-running container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
-  ghcr.io/petroladkin/hookwitness:edge
+  ghcr.io/petroladkin/hookwitness:0.1
 ```
 
 Or from source (Go 1.27 or newer):
