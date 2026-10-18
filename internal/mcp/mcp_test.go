@@ -157,7 +157,7 @@ func TestToolList(t *testing.T) {
 		got[tool.Name] = tool
 	}
 	want := []string{"create_endpoint", "list_endpoints", "get_endpoint", "configure_endpoint", "set_secret", "wait_for_request",
-		"list_requests", "get_request", "expect", "reset_endpoint", "recheck", "delete_endpoint"}
+		"list_requests", "get_request", "expect", "reset_endpoint", "recheck", "delete_endpoint", "switch_endpoint"}
 	if len(got) != len(want) {
 		t.Fatalf("%d tools, want %d", len(got), len(want))
 	}
@@ -177,7 +177,7 @@ func TestToolList(t *testing.T) {
 			t.Errorf("%s is not marked destructive", name)
 		}
 	}
-	for _, name := range []string{"create_endpoint", "configure_endpoint", "set_secret", "recheck"} {
+	for _, name := range []string{"create_endpoint", "configure_endpoint", "set_secret", "recheck", "switch_endpoint"} {
 		if a := got[name].Annotations; a.DestructiveHint == nil || *a.DestructiveHint {
 			t.Errorf("%s is marked destructive", name)
 		}

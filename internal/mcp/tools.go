@@ -135,6 +135,10 @@ func (s *tools) register(srv *sdk.Server) {
 	sdk.AddTool(srv, &sdk.Tool{Name: "recheck", Annotations: idempotent,
 		Description: "Verify an endpoint's kept requests again with its current checks, secrets and schemas, e.g. after fixing a secret. Only verdicts change."},
 		s.recheck)
+	sdk.AddTool(srv, &sdk.Tool{Name: "switch_endpoint", Annotations: idempotent,
+		Description: "Turn an endpoint off (enabled false) or on (enabled true). Off keeps its path, behaviour, secrets, requests and counter; " +
+			"requests to its path are answered 404 and kept in the Unmatched register until it is on again."},
+		s.switchEndpoint)
 	sdk.AddTool(srv, &sdk.Tool{Name: "delete_endpoint", Annotations: destructive,
 		Description: "Delete an endpoint with its behaviour, secrets and requests."},
 		s.deleteEndpoint)
@@ -165,7 +169,17 @@ func (s *tools) listEndpoints(ctx context.Context, _ *sdk.CallToolRequest, _ str
 		return nil, nil, err
 	}
 	eps, _ := out["endpoints"].([]any)
-	return result(fmt.Sprintf("%d endpoint(s)", len(eps)), out)
+	off := 0
+	for _, ep := range eps {
+		if m, _ := ep.(map[string]any); m["enabled"] == false {
+			off++
+		}
+	}
+	summary := fmt.Sprintf("%d endpoint(s)", len(eps))
+	if off > 0 {
+		summary += fmt.Sprintf(", %d off (requests to an off endpoint go to Unmatched)", off)
+	}
+	return result(summary, out)
 }
 
 func (s *tools) getEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in EndpointIn) (*sdk.CallToolResult, map[string]any, error) {
@@ -185,7 +199,37 @@ func (s *tools) getEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in Endp
 		return nil, nil, err
 	}
 	ep["behaviour"] = b
-	return result(fmt.Sprintf("%v (endpoint %v): %v request(s) kept", ep["path"], num(ep["id"]), num(ep["requests"])), ep)
+	summary := fmt.Sprintf("%v (endpoint %v): %v request(s) kept", ep["path"], num(ep["id"]), num(ep["requests"]))
+	if ep["enabled"] == false {
+		summary += "; off: requests to it go to Unmatched"
+	}
+	return result(summary, ep)
+}
+
+type SwitchIn struct {
+	Endpoint string `json:"endpoint" jsonschema:"the endpoint: its id or its exact path"`
+	Enabled  *bool  `json:"enabled" jsonschema:"false turns it off, true on"`
+}
+
+func (s *tools) switchEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in SwitchIn) (*sdk.CallToolResult, map[string]any, error) {
+	if in.Enabled == nil {
+		return nil, nil, errors.New("say enabled: false to turn the endpoint off, true to turn it on")
+	}
+	p, err := s.c.endpointPath(ctx, in.Endpoint)
+	if err != nil {
+		return nil, nil, err
+	}
+	if p == "/unmatched" {
+		return nil, nil, errors.New("the Unmatched register cannot be turned off")
+	}
+	ep, err := s.c.call(ctx, http.MethodPatch, p, nil, map[string]bool{"enabled": *in.Enabled})
+	if err != nil {
+		return nil, nil, err
+	}
+	if *in.Enabled {
+		return result(fmt.Sprintf("%v is on: it catches again with its behaviour and counter", ep["path"]), ep)
+	}
+	return result(fmt.Sprintf("%v is off: requests to it are answered 404 and kept in the Unmatched register", ep["path"]), ep)
 }
 
 type ConfigureIn struct {
