@@ -23,31 +23,50 @@ func (h *Handler) patchEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Path *string `json:"path"`
+		Path    *string `json:"path"`
+		Enabled *bool   `json:"enabled"`
 	}
 	if !decode(w, r, &in, false) {
 		return
 	}
-	if in.Path == nil {
-		WriteError(w, http.StatusUnprocessableEntity, "invalid", "give the new path", "path")
+	if in.Path == nil && in.Enabled == nil {
+		WriteError(w, http.StatusUnprocessableEntity, "invalid", "give the new path, enabled, or both", "path")
 		return
 	}
-	p := strings.TrimSpace(*in.Path)
-	if msg := catch.CheckPath(h.o.Reserved, p); msg != "" {
-		WriteError(w, http.StatusUnprocessableEntity, "invalid", msg, "path")
-		return
+	var c store.EndpointChange
+	if in.Path != nil {
+		p := strings.TrimSpace(*in.Path)
+		if msg := catch.CheckPath(h.o.Reserved, p); msg != "" {
+			WriteError(w, http.StatusUnprocessableEntity, "invalid", msg, "path")
+			return
+		}
+		if p != ep.Path {
+			c.Path = &p
+		}
 	}
-	if p != ep.Path {
-		err := h.store.SetPath(r.Context(), ep.ID, p)
+	if in.Enabled != nil && *in.Enabled != ep.Enabled {
+		c.Enabled = in.Enabled
+	}
+	if c.Path != nil || c.Enabled != nil {
+		err := h.store.UpdateEndpoint(r.Context(), ep.ID, c)
 		if errors.Is(err, store.ErrDuplicatePath) {
-			WriteError(w, http.StatusConflict, "duplicate_path", p+" is already an endpoint.", "path")
+			WriteError(w, http.StatusConflict, "duplicate_path", *c.Path+" is already an endpoint.", "path")
+			return
+		}
+		if errors.Is(err, store.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no endpoint %d", ep.ID), "")
 			return
 		}
 		if err != nil {
-			h.fail(w, "change path", err)
+			h.fail(w, "change endpoint", err)
 			return
 		}
-		h.log.Info("endpoint moved", logAttrs(r, "from", ep.Path, "to", p, "via", "api")...)
+	}
+	if c.Path != nil {
+		h.log.Info("endpoint moved", logAttrs(r, "from", ep.Path, "to", *c.Path, "via", "api")...)
+	}
+	if c.Enabled != nil {
+		h.log.Info("endpoint turned "+onOff(*c.Enabled), logAttrs(r, "path", ep.Path, "via", "api")...)
 	}
 	h.writeEndpoint(w, r, ep.ID)
 }
@@ -200,4 +219,12 @@ func (h *Handler) endpointReport(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) unmatchedReport(w http.ResponseWriter, r *http.Request) {
 	h.report(w, r, store.Unmatched, "")
+}
+
+// onOff names an endpoint's state as the UI and the logs say it.
+func onOff(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
 }
