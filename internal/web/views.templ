@@ -15,11 +15,16 @@ const favicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' vi
 
 templ layout(nav navView, pageTitle string) {
 	<!DOCTYPE html>
-	<html lang="en">
+	<html
+		lang="en"
+		if nav.Theme != "" {
+			data-theme={ nav.Theme }
+		}
+	>
 		<head>
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
-			<meta name="color-scheme" content="light dark"/>
+			<meta name="color-scheme" content={ colorScheme(nav.Theme) }/>
 			<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"historyCacheSize":0}'/>
 			<title>{ pageTitle } · Hookwitness</title>
 			<link rel="icon" href={ templ.SafeURL(favicon) }/>
@@ -93,6 +98,7 @@ templ mastNav(nav navView) {
 		}
 		<span class="addr">{ hostOf(nav.Catch) }</span>
 		<a class="btn" href={ templ.SafeURL(nav.Prefix + "/") }>Endpoints</a>
+		@themeSwitch(nav)
 		if nav.Admin {
 			<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users") }>Users</a>
 		}
@@ -103,6 +109,17 @@ templ mastNav(nav navView) {
 			</form>
 		}
 	</div>
+}
+
+// themeSwitch chooses this browser's theme: a form, so it works without
+// scripts; app.js applies the choice at once and posts it in the background.
+templ themeSwitch(nav navView) {
+	<form class="theme" method="post" action={ templ.SafeURL(nav.Prefix + "/theme") } aria-label="Theme">
+		<input type="hidden" name="next" value={ nav.Here }/>
+		for _, t := range themes {
+			<button type="submit" name="theme" value={ t.value } aria-pressed={ strconv.FormatBool(nav.Theme == t.theme) } title={ t.title }>{ t.label }</button>
+		}
+	</form>
 }
 
 templ endpointsPage(nav navView, d endpointsDialog) {

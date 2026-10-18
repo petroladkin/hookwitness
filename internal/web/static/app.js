@@ -457,7 +457,25 @@
     }
     window.addEventListener("resize", draw);
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+    new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
   }
+  // The theme switch: applied at once, kept by the server in the background
+  // (without scripts the form posts and the page comes back themed).
+  document.addEventListener("submit", (e) => {
+    const form = e.target.closest("form.theme");
+    const b = e.submitter;
+    if (!form || !b || b.name !== "theme") return;
+    e.preventDefault();
+    const t = b.value === "auto" ? "" : b.value;
+    if (t) document.documentElement.dataset.theme = t;
+    else delete document.documentElement.dataset.theme;
+    const meta = document.querySelector('meta[name="color-scheme"]');
+    if (meta) meta.content = t || "light dark";
+    form.querySelectorAll("button[name=theme]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    const data = new FormData(form);
+    data.set("theme", b.value);
+    fetch(form.action, { method: "POST", body: new URLSearchParams(data), redirect: "manual", credentials: "same-origin" }).catch(() => {});
+  });
   // Images under a request's body: a thumbnail opens the viewer, fitted to
   // the window; 1:1 shows the pixels, scrolling when larger. The exhibit is
   // swapped by htmx, so clicks are taken at the document.

@@ -214,7 +214,8 @@ that makes it false.
   `static/vendor/<name>/` with `LICENSE` and `SOURCE`). Strict CSP: no
   inline scripts or styles, nothing from other origins. Answers only to IP
   addresses, localhost and `-admin-hosts` names (DNS rebinding; a valid
-  token skips it); refuses cross-origin form posts. The admin's gate
+  token skips it); refuses cross-origin form posts. The theme (`theme.go`):
+  the `hw_theme` cookie written into `<html data-theme>` by the server. The admin's gate
   (`access.go`: credentials, then the host check, then the rules per route)
   and the login, account and users pages (`users.go`, `access.templ`); the
   live feed checks its session at each heartbeat (`event: login`).

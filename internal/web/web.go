@@ -147,6 +147,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("GET "+p+"/login", h.loginPage)
 	mux.HandleFunc("POST "+p+"/login", h.login)
 	mux.HandleFunc("POST "+p+"/logout", h.logout)
+	mux.HandleFunc("POST "+p+"/theme", h.setTheme)
 	mux.HandleFunc("GET "+p+"/account", h.accountPage)
 	mux.HandleFunc("POST "+p+"/account/password", h.changePassword)
 	mux.HandleFunc("POST "+p+"/account/tokens", h.createToken)
@@ -311,6 +312,8 @@ func (h *Handler) nav(r *http.Request, current int64, onRegister bool) (navView,
 		OnRegister: onRegister,
 		Asset:      h.assetURL,
 		Build:      version.String(),
+		Theme:      theme(r),
+		Here:       r.URL.RequestURI(),
 	}
 	if h.auth != nil {
 		on, err := h.uiLoginOn(r.Context())
