@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/api"
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/config"
@@ -36,6 +37,7 @@ Commands:
   serve     start the server (hookwitness serve -h for its flags)
   health    exit 0 when the server at -addr / HOOKWITNESS_ADDR answers /healthz
   mcp       bridge an MCP client on stdio to a server's /mcp (hookwitness mcp -url http://127.0.0.1:8080)
+  user      add, change, remove and list who may log in (hookwitness user -h)
   version   print the version and exit
 `
 
@@ -62,6 +64,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return health(ctx, args[1:], getenv, stderr)
 	case "mcp":
 		return mcpBridge(ctx, args[1:], stderr)
+	case "user":
+		return userCmd(ctx, args[1:], getenv, stdout, stderr)
 	case "version", "--version", "-version":
 		fmt.Fprintln(stdout, "hookwitness", version.String())
 		return 0
@@ -113,6 +117,25 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	checkKey(ctx, st, keys, keySource, log)
 	warnUnreadableSecrets(ctx, st, keys, log)
 
+	machine, machineWarn := "", ""
+	if f := getenv("HOOKWITNESS_API_TOKEN_FILE"); f != "" {
+		if machine, machineWarn, err = access.ReadMachineToken(f); err != nil {
+			log.Error("cannot read the machine token", "err", err)
+			return 1
+		}
+	}
+	auth := access.New(st, keys, machine)
+	boot, err := bootstrap(ctx, st, auth, getenv)
+	if err != nil {
+		log.Error("cannot create the first admin", "err", err)
+		return 1
+	}
+	users, err := st.Users(ctx)
+	if err != nil {
+		log.Error("cannot read the users", "err", err)
+		return 1
+	}
+
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
 		log.Error("cannot listen", "addr", cfg.Addr, "err", err)
@@ -141,7 +164,25 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 		"ui", "http://"+adminLn.Addr().String()+cfg.AdminPrefix+"/",
 		"api", "http://"+adminLn.Addr().String()+api.Base(cfg.AdminPrefix),
 		"max_body", cfg.MaxBody, "max_inflight", cfg.MaxInFlight, "retention", cfg.Retention, "secret_key", keySource)
+	if len(users) > 0 {
+		attrs = append(attrs, "login", "on", "users", len(users))
+	} else {
+		attrs = append(attrs, "login", "off")
+	}
+	if machine != "" {
+		attrs = append(attrs, "machine_token", "on")
+	}
 	log.Info("hookwitness started", attrs...)
+	if boot != nil {
+		log.Info(boot[0].(string), boot[1:]...)
+	}
+	if machineWarn != "" {
+		log.Warn(machineWarn)
+	}
+	if len(users) == 0 && !loopback(adminLn.Addr()) {
+		log.Warn("the admin is open without login on this address: if it is reachable, anyone can read every caught request and change every endpoint; "+
+			"add a user to turn login on (HOOKWITNESS_ADMIN_USER, hookwitness user add, or the Users page)", "admin_addr", adminLn.Addr().String())
+	}
 
 	broker := live.New()
 	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, MaxInFlight: cfg.MaxInFlight,
@@ -149,6 +190,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, Separate: separate, PublicURL: cfg.PublicURL, CatchAddr: ln.Addr().String(),
 		MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
+		Access: auth, Proxies: cfg.TrustedProxies,
 	})
 	o := server.Options{DB: st, Log: log, AdminPrefix: cfg.AdminPrefix, Admin: ui, Catch: catcher}
 	if !separate {
@@ -167,6 +209,48 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	}
 	log.Info("stopped")
 	return 0
+}
+
+// loopback reports whether a listener only takes connections from this
+// machine.
+func loopback(a net.Addr) bool {
+	ta, ok := a.(*net.TCPAddr)
+	return ok && ta.IP.IsLoopback()
+}
+
+// bootstrap creates the first admin from HOOKWITNESS_ADMIN_USER and
+// HOOKWITNESS_ADMIN_PASSWORD_FILE when the database has no users. It returns
+// the log line to write (message, then attributes) or nil when neither is
+// set; an incomplete or invalid setting is an error, which stops the start.
+func bootstrap(ctx context.Context, st *store.Store, auth *access.Authenticator, getenv func(string) string) ([]any, error) {
+	name, file := getenv("HOOKWITNESS_ADMIN_USER"), getenv("HOOKWITNESS_ADMIN_PASSWORD_FILE")
+	switch {
+	case name == "" && file == "":
+		return nil, nil
+	case name == "" || file == "":
+		return nil, errors.New("set both HOOKWITNESS_ADMIN_USER and HOOKWITNESS_ADMIN_PASSWORD_FILE, or neither")
+	}
+	n, err := access.CheckName(name)
+	if err != nil {
+		return nil, fmt.Errorf("HOOKWITNESS_ADMIN_USER: %w", err)
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("HOOKWITNESS_ADMIN_PASSWORD_FILE: %w", err)
+	}
+	pw := strings.TrimRight(string(b), "\r\n")
+	if err := access.CheckPassword(pw); err != nil {
+		return nil, fmt.Errorf("HOOKWITNESS_ADMIN_PASSWORD_FILE: %w", err)
+	}
+	if on, err := st.HasUsers(ctx); err != nil {
+		return nil, err
+	} else if on {
+		return []any{"admin bootstrap skipped: the database already has users (the password file is read only then)", "user", n}, nil
+	}
+	if _, err := st.AddUser(ctx, n, store.RoleAdmin, auth.HashPassword(pw)); err != nil {
+		return nil, err
+	}
+	return []any{"admin user created from HOOKWITNESS_ADMIN_USER: login is on", "user", n}, nil
 }
 
 // serveBoth runs the catch and the admin listener together: a stop signal
@@ -325,6 +409,7 @@ func mcpBridge(ctx context.Context, args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	server := fs.String("url", "http://127.0.0.1:8080", "the hookwitness server (its /admin/mcp is used), or the full MCP URL (e.g. http://127.0.0.1:8081/mcp for an admin at the root of its own address)")
+	tokenFile := fs.String("token-file", "", "a file holding a token (from your account page) for a server with login on")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -336,7 +421,17 @@ func mcpBridge(ctx context.Context, args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "hookwitness:", err)
 		return 2
 	}
-	if err := mcp.Bridge(ctx, endpoint, http.DefaultClient, bridgeIn, bridgeOut); err != nil {
+	client := http.DefaultClient
+	if *tokenFile != "" {
+		b, err := os.ReadFile(*tokenFile)
+		tok := strings.TrimSpace(string(b))
+		if err != nil || tok == "" || strings.ContainsAny(tok, "\r\n") {
+			fmt.Fprintf(stderr, "hookwitness: -token-file %s: want one line holding the token\n", *tokenFile)
+			return 2
+		}
+		client = mcp.WithToken(client, tok)
+	}
+	if err := mcp.Bridge(ctx, endpoint, client, bridgeIn, bridgeOut); err != nil {
 		fmt.Fprintln(stderr, "hookwitness mcp:", err)
 		return 1
 	}

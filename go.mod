@@ -8,6 +8,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/signintech/gopdf v0.38.2
 	golang.org/x/image v0.47.0
+	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
 	modernc.org/sqlite v1.60.1
 )

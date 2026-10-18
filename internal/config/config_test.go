@@ -78,6 +78,7 @@ func TestInvalid(t *testing.T) {
 		{[]string{"-retention", "0"}, "at least 1"},
 		{[]string{"-max-wait", "soon"}, "1s to 1h"},
 		{[]string{"-max-wait", "500ms"}, "1s to 1h"},
+		{[]string{"-trusted-proxies", "198.51.100.0/24,proxy.example.test"}, "invalid trusted proxies"},
 		{[]string{"-max-wait", "2h"}, "1s to 1h"},
 		{[]string{"-retention", "many"}, "at least 1"},
 		{[]string{"-admin-prefix", "admin"}, "leading"},
@@ -209,5 +210,15 @@ func TestAdminAddrInvalid(t *testing.T) {
 		if _, err := Parse(args, env(nil), io.Discard); err != nil {
 			t.Errorf("Parse(%v): %v", args, err)
 		}
+	}
+}
+
+func TestTrustedProxies(t *testing.T) {
+	c, err := Parse(nil, env(map[string]string{"HOOKWITNESS_TRUSTED_PROXIES": "198.51.100.0/24, 192.0.2.7"}), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.TrustedProxies) != 2 || c.TrustedProxies[1].String() != "192.0.2.7/32" {
+		t.Fatalf("trusted proxies %v", c.TrustedProxies)
 	}
 }
