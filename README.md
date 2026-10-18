@@ -89,6 +89,9 @@ login and tokens](docs/access.md)).
   Code.
 - **[Users and tokens](docs/access.md)**: login for a shared server, two
   roles, personal tokens for scripts, CI and MCP.
+- **[Replay](docs/replay.md)**: send a caught request byte for byte to your
+  own handler and keep its answer, to tell a verification bug from bytes
+  changed on the way.
 
 ## How it compares
 

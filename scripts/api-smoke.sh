@@ -30,6 +30,7 @@ case "${1:?usage: api-smoke.sh <base-url> | --binary <path> | --image <image>}" 
   PID=$! OWN=1
   HW=http://127.0.0.1:$PORT ;;
 --image)
+  INSIDE=http://127.0.0.1:8080 # the server's own address inside the container
   C=hw-api-smoke-$$
   docker run -d --name $C -p 127.0.0.1:$PORT:8080 "${2:?image}" >/dev/null
   OWN=1
@@ -117,7 +118,22 @@ echo "$code"; echo
 [ "$code" = 415 ] || fail "form post answered $code"
 ok "stale If-Match 412, form post 415"
 
-# 7. Login (only on a server of our own: it cannot be turned off again).
+# 7. Replay: the first request sent again to a path of this server (the
+# Unmatched register), byte for byte: its credentials arrive with it.
+call POST /requests/$R1/replays "{\"url\":\"${INSIDE:-$HW}/replayed/orders?from=smoke\"}"
+expect 201 "replay"
+[ "$(jq -r '.status, .line' <<<"$body" | paste -sd' ' -)" = "404 POST /replayed/orders?from=smoke HTTP/1.1" ] || fail "replay: $body"
+call GET "/unmatched/requests?limit=1"
+U=$(jq -r '.requests[0].id' <<<"$body")
+call GET /requests/$U
+[ "$(jq -r '.path + " " + .body_text' <<<"$body")" = '/replayed/orders {"order":42,"status":"paid"}' ] || fail "replayed request: $body"
+[ "$(jq -r '[.headers[] | select(.[0] | ascii_downcase == "authorization")] | length' <<<"$body")" = 1 ] || fail "replayed headers: $body"
+call POST /requests/$R1/replays '{"url":"http://169.254.169.254/latest/meta-data/"}'
+expect 422 "a metadata target"
+[ "$(jq -r .error.code <<<"$body")" = target_refused ] || fail "metadata target: $body"
+ok "replay: the same body and credentials arrived; a metadata address refused"
+
+# 8. Login (only on a server of our own: it cannot be turned off again).
 if [ -n "$OWN" ]; then
   call POST /users '{"name":"smoke-admin","role":"admin","password":"smoke-admin-password"}'
   expect 201 "the first admin"

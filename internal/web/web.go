@@ -30,6 +30,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/mcp"
+	"github.com/petroladkin/hookwitness/internal/replay"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/version"
@@ -72,6 +73,7 @@ type Handler struct {
 	limiter   *access.Limiter       // failed logins per client address
 	proxies   access.Proxies        // reverse proxies whose X-Forwarded-For names the client
 	assets    map[string]string     // asset path -> content hash for cache busting
+	replay    *replay.Service       // sends caught requests to targets
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -91,6 +93,9 @@ type Options struct {
 	// Access checks logins and tokens; nil leaves the admin open (tests).
 	Access  *access.Authenticator
 	Proxies access.Proxies // reverse proxies whose X-Forwarded-For names the client
+	// Replay sends caught requests to targets; nil: the default policy
+	// without a -max-inflight budget (tests).
+	Replay *replay.Service
 }
 
 // New returns the UI.
@@ -136,6 +141,8 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("POST "+p+"/e/{reg}/behaviour", h.editBehaviour)
 	mux.HandleFunc("GET "+p+"/r/{id}/body", h.downloadBody)
 	mux.HandleFunc("GET "+p+"/r/{id}/image", h.image)
+	mux.HandleFunc("POST "+p+"/r/{id}/replay", h.replayRequest)
+	mux.HandleFunc("GET "+p+"/replays/{id}/body", h.replayBody)
 	mux.HandleFunc("GET "+p+"/static/{file...}", h.static)
 	mux.HandleFunc("GET "+p+"/login", h.loginPage)
 	mux.HandleFunc("POST "+p+"/login", h.login)
@@ -156,7 +163,12 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	h.csrf = http.NewCrossOriginProtection()
 	h.mux = h.csrf.Handler(mux)
 
-	ao := api.Options{Prefix: prefix, Reserved: h.reserve, Catch: h.catch, MaxWait: h.maxWait, Stop: h.stop, Version: version.String(), Access: o.Access}
+	if o.Replay == nil {
+		o.Replay = replay.New(st, log, replay.Options{MaxWait: h.maxWait})
+	}
+	h.replay = o.Replay
+	ao := api.Options{Prefix: prefix, Reserved: h.reserve, Catch: h.catch, MaxWait: h.maxWait, Stop: h.stop, Version: version.String(),
+		Access: o.Access, Replay: o.Replay}
 	if o.Keys != nil {
 		ao.Keys, ao.Keyring = o.Keys, o.Keys // a nil *secret.Key must stay a nil interface
 	}
@@ -171,6 +183,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 // onShutdown function.
 func (h *Handler) StopStreams() {
 	h.stopOnce.Do(func() { close(h.stop) }) // first: waits (feeds, long-polls, MCP tools) end
+	h.replay.Stop()                         // replays in flight end, recorded as stopped
 	h.mcp.CloseSessions()                   // then the MCP sessions, which wait for their tools
 }
 
@@ -505,12 +518,24 @@ func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.showRegister(w, r, reg, ep, ex, export, draft, http.StatusOK)
+	var replayDialog *replayDialogView
+	if r.URL.Query().Has("replay") && ex != nil {
+		req, err := h.store.Request(ctx, ex.ID)
+		if err == nil {
+			replayDialog, err = h.replayDefaults(ctx, req, ex)
+		}
+		if err != nil {
+			h.fail(w, "replay", err)
+			return
+		}
+	}
+	h.showRegister(w, r, reg, ep, ex, export, draft, replayDialog, http.StatusOK)
 }
 
 // showRegister renders a register page, with an exhibit and the report
 // dialog when given.
-func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64, ep store.Endpoint, ex *exhibitView, export *exportView, draft *draftDialogView, status int) {
+func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64, ep store.Endpoint, ex *exhibitView, export *exportView,
+	draft *draftDialogView, replay *replayDialogView, status int) {
 	ctx := r.Context()
 	reqs, err := h.store.Requests(ctx, reg, 0, pageSize+1)
 	if err != nil {
@@ -553,6 +578,7 @@ func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64
 		Keep:     h.keep,
 		Export:   export,
 		Draft:    draft,
+		Replay:   replay,
 	}, ex))
 }
 
@@ -607,6 +633,7 @@ func (h *Handler) row(ctx context.Context, req store.Request, fresh bool) (rowVi
 		Fresh:    fresh,
 		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
 		Verdict:  req.Verdict,
+		Replays:  req.Replays,
 	}
 	if len(req.BodySHA256) > 0 {
 		v.Group = hex.EncodeToString(req.BodySHA256[:6])
@@ -692,6 +719,12 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		}
 	}
 	v.Images = h.images(req, v.Verdicts, &v.Body)
+	v.CanReplay = !req.TooLarge && int64(len(req.Body)) >= req.Size
+	if req.Replays > 0 {
+		if v.Replays, err = h.replays(ctx, req.ID); err != nil {
+			return exhibitView{}, err
+		}
+	}
 	return v, nil
 }
 

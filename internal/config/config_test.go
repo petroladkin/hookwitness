@@ -80,6 +80,8 @@ func TestInvalid(t *testing.T) {
 		{[]string{"-max-wait", "500ms"}, "1s to 1h"},
 		{[]string{"-trusted-proxies", "198.51.100.0/24,proxy.example.test"}, "invalid trusted proxies"},
 		{[]string{"-max-wait", "2h"}, "1s to 1h"},
+		{[]string{"-replay-allow", "none,localhost"}, "invalid replay allow list"},
+		{[]string{"-replay-allow", "198.51.100.0/40"}, "invalid replay allow list"},
 		{[]string{"-retention", "many"}, "at least 1"},
 		{[]string{"-admin-prefix", "admin"}, "leading"},
 		{[]string{"-admin-prefix", "/"}, "only on its own address (-admin-addr)"},
@@ -220,5 +222,20 @@ func TestTrustedProxies(t *testing.T) {
 	}
 	if len(c.TrustedProxies) != 2 || c.TrustedProxies[1].String() != "192.0.2.7/32" {
 		t.Fatalf("trusted proxies %v", c.TrustedProxies)
+	}
+}
+
+func TestReplayAllow(t *testing.T) {
+	c, err := Parse(nil, env(nil), io.Discard)
+	if err != nil || c.ReplayAllow.Off() || c.ReplayAllow.String() != "any target except link-local and cloud-metadata addresses" {
+		t.Fatalf("default: %v %v", c.ReplayAllow, err)
+	}
+	c, err = Parse(nil, env(map[string]string{"HOOKWITNESS_REPLAY_ALLOW": "localhost, 198.51.100.0/24"}), io.Discard)
+	if err != nil || c.ReplayAllow.String() != "only localhost, 198.51.100.0/24" {
+		t.Fatalf("env: %v %v", c.ReplayAllow, err)
+	}
+	c, err = Parse([]string{"-replay-allow", "none"}, env(map[string]string{"HOOKWITNESS_REPLAY_ALLOW": "localhost"}), io.Discard)
+	if err != nil || !c.ReplayAllow.Off() {
+		t.Fatalf("flag over env: %v %v", c.ReplayAllow, err)
 	}
 }

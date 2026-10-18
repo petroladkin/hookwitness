@@ -158,7 +158,7 @@ func TestToolList(t *testing.T) {
 	}
 	want := []string{"create_endpoint", "list_endpoints", "get_endpoint", "configure_endpoint", "set_secret", "wait_for_request",
 		"list_requests", "get_request", "expect", "reset_endpoint", "recheck", "delete_endpoint", "switch_endpoint",
-		"export_endpoint", "import_endpoints"}
+		"export_endpoint", "import_endpoints", "replay_request"}
 	if len(got) != len(want) {
 		t.Fatalf("%d tools, want %d", len(got), len(want))
 	}
@@ -177,6 +177,9 @@ func TestToolList(t *testing.T) {
 		if a := got[name].Annotations; a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint {
 			t.Errorf("%s is not marked destructive", name)
 		}
+	}
+	if a := got["replay_request"].Annotations; a.ReadOnlyHint || a.OpenWorldHint == nil || !*a.OpenWorldHint || a.DestructiveHint == nil || *a.DestructiveHint {
+		t.Errorf("replay_request is not marked open-world and not destructive: %+v", a)
 	}
 	for _, name := range []string{"create_endpoint", "configure_endpoint", "set_secret", "recheck", "switch_endpoint"} {
 		if a := got[name].Annotations; a.DestructiveHint == nil || *a.DestructiveHint {

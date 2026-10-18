@@ -65,6 +65,7 @@ type Request struct {
 	Outcome    string // what it did, as JSON (internal/emulate.Outcome)
 	Verdict    string // overall authorization verdict: pass, fail, n/v, or "" without checks
 	Verdicts   string // per check, as JSON (internal/auth.Verdict)
+	Replays    int    // replays kept of it
 }
 
 // Decide is called by AddRequest inside its transaction with the request's
@@ -532,7 +533,8 @@ func pairs(hs []Header) [][2]string {
 }
 
 const requestColumns = `id, endpoint_id, no, received_at, method, path, raw_query, proto, remote_addr,
-	headers, body_sha256, size, too_large, status, outcome, verdict, verdicts, ifnull(length(body), 0)`
+	headers, body_sha256, size, too_large, status, outcome, verdict, verdicts, ifnull(length(body), 0),
+	(SELECT COUNT(*) FROM replays WHERE replays.request_id = requests.id)`
 
 func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, error) {
 	var r Request
@@ -540,7 +542,7 @@ func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, er
 	var at int64
 	var headers string
 	dst := []any{&r.ID, &ep, &r.No, &at, &r.Method, &r.Path, &r.RawQuery, &r.Proto, &r.RemoteAddr,
-		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts, &r.Kept}
+		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts, &r.Kept, &r.Replays}
 	if withBody {
 		dst = append(dst, &r.Body)
 	}

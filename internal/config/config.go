@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/access"
+	"github.com/petroladkin/hookwitness/internal/send"
 )
 
 // Config is the resolved configuration of the server.
@@ -35,6 +36,9 @@ type Config struct {
 	// TrustedProxies are the reverse proxies whose X-Forwarded-For names the
 	// client (the login limit and the logs); none: the TCP peer.
 	TrustedProxies access.Proxies
+	// ReplayAllow is where caught requests may be replayed to: by default
+	// anywhere but link-local and cloud-metadata addresses.
+	ReplayAllow send.Policy
 }
 
 // Defaults.
@@ -64,7 +68,7 @@ type setting struct {
 // getenv. Usage and errors from the flag package go to out.
 func Parse(args []string, getenv func(string) string, out io.Writer) (Config, error) {
 	var c Config
-	var maxBody, maxInFlight, retention, adminHosts, maxWait, proxies string
+	var maxBody, maxInFlight, retention, adminHosts, maxWait, proxies, replayAllow string
 	settings := []setting{
 		{"addr", "HOOKWITNESS_ADDR", DefaultAddr, "listen address (host:port)", &c.Addr},
 		{"db", "HOOKWITNESS_DB", DefaultDBPath, "path to the sqlite database file", &c.DBPath},
@@ -79,6 +83,7 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		{"max-wait", "HOOKWITNESS_MAX_WAIT", DefaultMaxWait, "longest reply delay or timeout hold an endpoint may use, e.g. 30s or 5m", &maxWait},
 		{"import", "HOOKWITNESS_IMPORT", "", "a setup file (exported from hookwitness) applied at every start: its endpoints are created or their behaviour replaced; secrets keep the values they have", &c.Import},
 		{"trusted-proxies", "HOOKWITNESS_TRUSTED_PROXIES", "", "comma-separated addresses or CIDRs of reverse proxies whose X-Forwarded-For names the client (for the login limit); list only your own proxy", &proxies},
+		{"replay-allow", "HOOKWITNESS_REPLAY_ALLOW", "", "where caught requests may be replayed to: comma-separated host names, host:port, addresses or CIDRs, or none to turn replay off (default: anywhere but link-local and cloud-metadata addresses)", &replayAllow},
 	}
 
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -134,6 +139,9 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 	}
 	if c.TrustedProxies, err = access.ParseProxies(proxies); err != nil {
 		return Config{}, fmt.Errorf("invalid trusted proxies: %w", err)
+	}
+	if c.ReplayAllow, err = send.ParsePolicy(replayAllow); err != nil {
+		return Config{}, fmt.Errorf("invalid replay allow list: %w", err)
 	}
 	if err := c.validate(); err != nil {
 		return Config{}, err

@@ -42,8 +42,9 @@ type registerView struct {
 	Selected int64
 	Keep     int // retention: the register never holds more
 	Verdicts verdictsView
-	Export   *exportView      // the report dialog, when open
-	Draft    *draftDialogView // the schema draft dialog, when open
+	Export   *exportView       // the report dialog, when open
+	Draft    *draftDialogView  // the schema draft dialog, when open
+	Replay   *replayDialogView // the replay dialog, when open
 }
 
 // rowView is one line of the register.
@@ -61,6 +62,7 @@ type rowView struct {
 	Fresh    bool // arrived on the live feed
 	Outcome  emulate.Outcome
 	Verdict  string // overall authorization verdict, "" without checks
+	Replays  int    // replays kept of it
 }
 
 // exhibitView is one request in full.
@@ -88,6 +90,9 @@ type exhibitView struct {
 	Verdicts []auth.Verdict
 	BadPaths int // body tokens marked by schema problems
 	Images   []imageView
+	// CanReplay: the whole body is kept, so it can be sent as it arrived.
+	CanReplay bool
+	Replays   []replayView // newest first
 }
 
 // imageView is an image the request carries, under its body.

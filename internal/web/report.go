@@ -119,7 +119,7 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
 	var bad exportError
 	if errors.As(err, &bad) {
 		v.Error, v.Field = bad.msg, bad.field
-		h.showRegister(w, r, reg, ep, nil, v, nil, http.StatusUnprocessableEntity)
+		h.showRegister(w, r, reg, ep, nil, v, nil, nil, http.StatusUnprocessableEntity)
 		return
 	}
 	format, sel := rq.Format, rq.Selection

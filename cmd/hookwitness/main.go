@@ -24,6 +24,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/config"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/mcp"
+	"github.com/petroladkin/hookwitness/internal/replay"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/server"
 	"github.com/petroladkin/hookwitness/internal/setup"
@@ -175,7 +176,8 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	attrs = append(attrs, "db", cfg.DBPath, "schema", schema,
 		"ui", "http://"+adminLn.Addr().String()+cfg.AdminPrefix+"/",
 		"api", "http://"+adminLn.Addr().String()+api.Base(cfg.AdminPrefix),
-		"max_body", cfg.MaxBody, "max_inflight", cfg.MaxInFlight, "retention", cfg.Retention, "secret_key", keySource)
+		"max_body", cfg.MaxBody, "max_inflight", cfg.MaxInFlight, "retention", cfg.Retention, "secret_key", keySource,
+		"replay", cfg.ReplayAllow.String())
 	if len(users) > 0 {
 		attrs = append(attrs, "login", "on", "users", len(users))
 	} else {
@@ -199,10 +201,11 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	broker := live.New()
 	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, MaxInFlight: cfg.MaxInFlight,
 		Retention: cfg.Retention, MaxWait: cfg.MaxWait, Keys: keys}
+	replays := replay.New(st, log, replay.Options{Policy: cfg.ReplayAllow, MaxWait: cfg.MaxWait, Budget: catcher})
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, Separate: separate, PublicURL: cfg.PublicURL, CatchAddr: ln.Addr().String(),
 		MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
-		Access: auth, Proxies: cfg.TrustedProxies,
+		Access: auth, Proxies: cfg.TrustedProxies, Replay: replays,
 	})
 	o := server.Options{DB: st, Log: log, AdminPrefix: cfg.AdminPrefix, Admin: ui, Catch: catcher}
 	if !separate {
@@ -215,6 +218,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 			})
 	}
 	catcher.Wait() // timeouts and drops record their outcome before the store closes
+	replays.Wait() // so do replays
 	if err != nil {
 		log.Error("server stopped with an error", "err", err)
 		return 1

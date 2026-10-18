@@ -469,6 +469,38 @@ copy.endpoints[0].path = "/qa/payments/webhooks";
 const qa = (await api("POST", "/setup", copy)).json.endpoints[0].id;
 await shot("setup-unset", `${UI}/e/${qa}/behaviour?tab=secrets`, { maxHeight: 620 });
 
+// docs/replay.md: the reader's own handler (here on port 3000 when it is
+// free) refuses GitHub's deliveries: it checks the signature over the JSON
+// it parsed and wrote back, not over the bytes that arrived. A caught
+// delivery replayed to it, untouched, is refused too.
+if (!only.length || ["replay-dialog", "replay-answer"].some((n) => only.includes(n))) {
+  const { createServer: httpServer } = await import("node:http");
+  const handler = httpServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      const reserialized = JSON.stringify(JSON.parse(raw || "{}"), null, 2); // the bug
+      const ok = req.headers["x-hub-signature-256"] === "sha256=" + hmac("gh_test_secret", reserialized);
+      res.writeHead(ok ? 204 : 401, { "Content-Type": "application/json", "X-Request-Id": "req_7f3a" });
+      res.end(ok ? "" : '{"error":"signature mismatch"}');
+    });
+  });
+  const hport = await new Promise((ok) => {
+    handler.once("error", async () => { handler.removeAllListeners("error"); const p = await freePort(); handler.listen(p, "127.0.0.1", () => ok(p)); });
+    handler.listen(3000, "127.0.0.1", () => ok(3000));
+  });
+  const delivery = await byNo(gh, 1);
+  const target = `http://localhost:${hport}/webhooks/github`;
+  await shot("replay-dialog", `${UI}/e/${gh}/r/${delivery}?replay`, { selector: dialog, maxHeight: 1000, step: type("url", target) });
+  await api("POST", `/requests/${delivery}/replays`, { url: target });
+  // Wide, the exhibit scrolls on its own: bring its Replays to the top.
+  // Narrow, the page scrolls: shoot the section itself.
+  await shot("replay-answer", `${UI}/e/${gh}/r/${delivery}`, WIDTH < 821 ? { selector: "#replays", maxHeight: 1600 } : { maxHeight: 800,
+    step: `(() => { const x = document.getElementById("exhibit"), r = document.getElementById("replays");
+      if (x.scrollHeight > x.clientHeight) x.scrollTop = r.offsetTop - x.offsetTop - 12; else r.scrollIntoView(); })()` });
+  handler.close();
+}
+
 // docs/troubleshooting.md, docs/deployment.md: the UI opened by a name that
 // is not allowed.
 await shot("host-refused", `http://hooks.example.com:${port}/admin/`, { maxHeight: 80 });

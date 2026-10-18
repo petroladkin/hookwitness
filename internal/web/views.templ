@@ -399,7 +399,143 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 		if reg.Draft != nil {
 			@draftDialog(*reg.Draft)
 		}
+		if reg.Replay != nil {
+			@replayDialog(*reg.Replay)
+		}
 	}
+}
+
+// replayDialog sends the request on show again to a URL; the page waits for
+// the answer (up to the timeout) and then shows it under the request.
+templ replayDialog(v replayDialogView) {
+	<dialog class="modal" data-modal data-close={ v.Close } open aria-labelledby="dialog-title">
+		<form class="card" method="post" action={ templ.SafeURL(v.Action) } data-busy={ "Sending… (up to " + span(v.Timeout) + ")" }>
+			<div class="modal-head">
+				<h2 id="dialog-title">Replay</h2>
+				<a class="close" href={ templ.SafeURL(v.Close) } aria-label="Close">×</a>
+			</div>
+			if v.Error != "" {
+				<p class="error banner" role="alert">Not sent: { v.Error }</p>
+			}
+			if v.Blocked != "" {
+				<p class="error banner" role="alert">{ v.Blocked }</p>
+			}
+			<p class="help">
+				Sends this request again to your handler, byte for byte: the body unchanged and the { strconv.Itoa(v.Lines) } header
+				lines in the order and letter case they arrived. Its answer is kept under the request. If your handler refuses the
+				replay too, the bytes were not changed on the way: look at its verification.
+			</p>
+			<label>
+				Target URL
+				<input name="url" type="url" value={ v.URL } required spellcheck="false" autocomplete="off" autofocus aria-invalid?={ v.Field == "url" }/>
+			</label>
+			<fieldset class="masks">
+				<legend>What changes</legend>
+				<label class="check"><input type="checkbox" name="host" value="received" checked?={ v.KeepHost }/> Keep the received Host line</label>
+				<label class="check"><input type="checkbox" name="insecure_tls" value="true" checked?={ v.Insecure }/> Skip certificate verification</label>
+				<ul class="help">
+					<li>Host names the target unless kept; it stays in its place.</li>
+					<li>Skipping verification is for a local https handler with a self-signed certificate; the replay records it.</li>
+					if v.Proto != "" && v.Proto != "HTTP/1.1" {
+						<li>It came as { v.Proto } and goes as HTTP/1.1.</li>
+					}
+					if v.Chunked {
+						<li>It came chunked: the body goes as one chunk, without chunk extensions or trailers.</li>
+					}
+					<li>Redirects are not followed; the answer is awaited up to { span(v.Timeout) }.</li>
+					if v.Policy != "" {
+						<li>Targets on this server: { v.Policy }.</li>
+					} else {
+						<li>Link-local and cloud-metadata addresses are refused.</li>
+					}
+				</ul>
+			</fieldset>
+			<div class="acts">
+				<button class="btn solid" type="submit" disabled?={ v.Blocked != "" }>Send</button>
+				<a class="btn quiet" href={ templ.SafeURL(v.Close) }>Close</a>
+			</div>
+		</form>
+	</dialog>
+}
+
+// replays are the request's replays, newest first: the target, its answer
+// and what was sent.
+templ replays(x exhibitView) {
+	<section id="replays" aria-label="Replays">
+		<h2>Replays · { strconv.Itoa(len(x.Replays)) }</h2>
+		<ol class="replays">
+			for i, rp := range x.Replays {
+				<li id={ "replay-" + id(rp.ID) }>
+					<details class="replay" open?={ i == 0 }>
+						<summary>
+							<span class={ "rstamp", templ.KV("bad", !rp.good()) }>{ rp.stamp() }</span>
+							<span class="rurl">{ rp.URL }</span>
+							<span class="rmeta">
+								{ fullTime(rp.At) }
+								if rp.By != "" {
+									· { rp.By }
+								}
+								if rp.Status != 0 {
+									· { millisOf(rp.Duration) }
+								}
+							</span>
+						</summary>
+						if rp.Error != "" {
+							<p class="note">No complete answer: <code>{ rp.Error }</code></p>
+						}
+						for _, n := range rp.Notes {
+							<p class="note">{ n }.</p>
+						}
+						if rp.Insecure {
+							<p class="note">The target's certificate was not verified.</p>
+						}
+						if rp.Status != 0 {
+							<h3>Answer · { strconv.Itoa(len(rp.Headers)) } header lines · first byte after { millisOf(rp.TTFB) }</h3>
+							<div class="scroll">
+								<table class="kv">
+									<tbody>
+										for _, hd := range rp.Headers {
+											<tr><th>{ hd.Name }</th><td>{ hd.Value }</td></tr>
+										}
+									</tbody>
+								</table>
+							</div>
+							switch rp.Body.Kind {
+								case bodyEmpty:
+									<p class="note">No body.</p>
+								case bodyJSON, bodyText:
+									<pre class="body sent">{ rp.Body.Text }</pre>
+								case bodyBinary:
+									<p class="note">Binary, { size(rp.Size) }, kept as it arrived (never decompressed). The first bytes:</p>
+									<pre class="body hex">{ rp.Body.Hex }</pre>
+							}
+							if rp.Cut {
+								if rp.Size < 0 {
+									<p class="note">The answer ended before its end; what arrived is kept.</p>
+								} else {
+									<p class="note">Only the first 1 MiB of { size(rp.Size) } is kept.</p>
+								}
+							}
+							if rp.Body.Kind != bodyEmpty {
+								<p><a href={ templ.SafeURL(rp.Download) } download>Download the answer body</a></p>
+							}
+						}
+						<h3>Sent · { strconv.Itoa(len(rp.Sent)) } header lines</h3>
+						<pre class="body line">{ rp.Line }</pre>
+						<div class="scroll">
+							<table class="kv">
+								<tbody>
+									for _, hd := range rp.Sent {
+										<tr><th>{ hd.Name }</th><td>{ hd.Value }</td></tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					</details>
+				</li>
+			}
+		</ol>
+	</section>
 }
 
 templ reportDialog(v exportView) {
@@ -578,6 +714,9 @@ templ row(r rowView) {
 				if r.Delivery > 1 {
 					<span class="retry">retry { strconv.Itoa(r.Delivery - 1) }</span>
 				}
+				if r.Replays > 0 {
+					<span class="replayed" title={ plural(r.Replays, "replay", "replays") }>replayed { strconv.Itoa(r.Replays) }</span>
+				}
 				if t := r.tag(); t != "" {
 					<span class={ "tag", "mark-" + r.mark() }>{ t }</span>
 				}
@@ -620,6 +759,9 @@ templ exhibit(x exhibitView) {
 		<a class="btn" href={ templ.SafeURL(x.Self + "?report") }>Report</a>
 		if !x.Unmatch {
 			<a class="btn" href={ templ.SafeURL(x.Self + "?draft") }>Draft schema</a>
+		}
+		if x.CanReplay {
+			<a class="btn" href={ templ.SafeURL(x.Self + "?replay") }>Replay</a>
 		}
 	</div>
 	if len(x.Images) > 0 {
@@ -684,6 +826,9 @@ templ exhibit(x exhibitView) {
 	}
 	@verdicts(x)
 	@answer(x)
+	if len(x.Replays) > 0 {
+		@replays(x)
+	}
 	<h2>Headers · { strconv.Itoa(len(x.Headers)) }</h2>
 	<div class="scroll">
 		<table class="kv">

@@ -71,6 +71,12 @@ setup_github() {
   local id; id=$(hw_endpoint /hooks)
   hw_secret "$id" GH_SECRET key gh_test_secret && hw_behave "$id" '.checks = [{"kind":"github","secret":"GH_SECRET"}]'
 }
+# docs/replay.md: a second endpoint that checks the same GitHub signature,
+# standing in for the reader's handler.
+setup_handler() {
+  local id; id=$(hw_endpoint /handler)
+  hw_secret "$id" GH_SECRET key gh_test_secret && hw_behave "$id" '.checks = [{"kind":"github","secret":"GH_SECRET"}]'
+}
 setup_stripe() {
   local id; id=$(hw_endpoint /hooks)
   hw_secret "$id" STRIPE_SECRET key whsec_test_stripe && hw_behave "$id" '.checks = [{"kind":"stripe","secret":"STRIPE_SECRET"}]'

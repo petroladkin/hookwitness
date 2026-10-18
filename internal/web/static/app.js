@@ -147,6 +147,18 @@
     const msg = by || (e.target.dataset && e.target.dataset.confirm);
     if (msg && !window.confirm(msg)) e.preventDefault();
   });
+  // A form that waits on the server (a replay waits for its target's
+  // answer) says so on its button, which cannot be pressed twice.
+  document.addEventListener("submit", (e) => {
+    const f = e.target;
+    if (e.defaultPrevented || !f.dataset || !f.dataset.busy) return;
+    const b = e.submitter || f.querySelector("button[type=submit]");
+    if (!b) return;
+    setTimeout(() => {
+      b.disabled = true;
+      b.textContent = f.dataset.busy;
+    }, 0);
+  });
 
   // Editors are dialogs with their own URL: the page renders one open, here
   // it becomes modal; Escape goes back to the list it was opened from.

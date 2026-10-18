@@ -2020,6 +2020,225 @@
           }
         }
       }
+    },
+    "/requests/{id}/replays": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "post": {
+        "operationId": "replayRequest",
+        "summary": "Send a caught request again to a URL",
+        "description": "Sends the body's bytes unchanged and the header lines in the order and case they arrived (Host replaced by the target's unless host is received), over HTTP/1.1, without following redirects, and records the answer. The target failing (refused, timeout, reset, TLS) is still a replay, with error set. Targets are checked on the address dialled: link-local and cloud-metadata addresses are always refused, and -replay-allow can narrow them or turn replay off. At most 4 replays run at once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplayIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The replay, with the answer body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Replay"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not valid JSON or has unknown fields (`bad_json`, `unknown_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The body was not kept whole, so the request cannot be sent as it arrived (`body_not_kept`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A bad input (`invalid`: url, host, timeout_ms), or a target the policy refuses (`target_refused`, field url; the message names the rule).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Four replays are running, or the bytes held are at -max-inflight (`busy`; try again after Retry-After), or the server is stopping (`stopping`).",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "operationId": "listReplays",
+        "summary": "A request's replays, newest first",
+        "parameters": [
+          {
+            "name": "include",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "body"
+              ]
+            },
+            "description": "body: each replay carries its answer body."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The replays; answer bodies only with include=body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "include is not body (`invalid`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/replays/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getReplay",
+        "summary": "Read one replay with the answer body",
+        "responses": {
+          "200": {
+            "description": "The replay.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Replay"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such replay (`not_found`): it went with its request, or newer replays replaced it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/replays/{id}/body": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getReplayBody",
+        "summary": "The answer body exactly as the target sent it",
+        "description": "With the target's Content-Type, never decompressed, always as an attachment (nosniff, CSP sandbox). At most the first 1 MiB.",
+        "responses": {
+          "200": {
+            "description": "The body.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such replay (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2557,6 +2776,10 @@
           "body_base64": {
             "type": "string",
             "description": "With include=body: the body in base64 when it is not UTF-8."
+          },
+          "replays": {
+            "type": "integer",
+            "description": "How many replays of it are kept (GET /requests/{id}/replays); the newest 50."
           }
         },
         "required": [
@@ -2570,7 +2793,8 @@
           "verdict",
           "body_size",
           "body_kept",
-          "content_type"
+          "content_type",
+          "replays"
         ],
         "additionalProperties": false
       },
@@ -2831,6 +3055,10 @@
             "items": {
               "$ref": "#/components/schemas/RequestImage"
             }
+          },
+          "replays": {
+            "type": "integer",
+            "description": "How many replays of it are kept (GET /requests/{id}/replays); the newest 50."
           }
         },
         "required": [
@@ -2850,7 +3078,8 @@
           "headers",
           "outcome",
           "verdicts",
-          "images"
+          "images",
+          "replays"
         ],
         "additionalProperties": false
       },
@@ -3215,6 +3444,209 @@
         },
         "required": [
           "endpoints"
+        ],
+        "additionalProperties": false
+      },
+      "ReplayIn": {
+        "type": "object",
+        "description": "Where to send the request, and how.",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The target: http or https, with the path and query the request goes to. No user name or password."
+          },
+          "host": {
+            "type": "string",
+            "enum": [
+              "target",
+              "received"
+            ],
+            "default": "target",
+            "description": "The Host line: the URL's host and port (target), or as caught (received). It keeps its place either way."
+          },
+          "insecure_tls": {
+            "type": "boolean",
+            "default": false,
+            "description": "https: accept any certificate (self-signed handlers). Recorded with the replay."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 100,
+            "description": "The whole exchange; default 30000, at most -max-wait."
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "Replay": {
+        "type": "object",
+        "description": "A caught request sent again: what was sent where, and what the target answered. status 0 with error set: there was no (complete) answer.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "request_id": {
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "by": {
+            "type": "string",
+            "description": "Who replayed it; empty without login."
+          },
+          "url": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "enum": [
+              "target",
+              "received"
+            ]
+          },
+          "insecure_tls": {
+            "type": "boolean"
+          },
+          "timeout_ms": {
+            "type": "integer"
+          },
+          "line": {
+            "type": "string",
+            "description": "The request line sent: the method, the URL's path and query, HTTP/1.1."
+          },
+          "sent": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "The header lines written, in order: the caught ones, with Host as chosen."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Where the request sent differs from the one caught (HTTP/1.0 sent as 1.1, a chunked body as one chunk, a Host added)."
+          },
+          "proto": {
+            "type": "string",
+            "description": "The answer's protocol; empty without an answer."
+          },
+          "status": {
+            "type": "integer",
+            "description": "The answer's status; 0 without an answer. Redirects are not followed."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "The answer's header lines as received: order, case and repeats kept."
+          },
+          "body_size": {
+            "type": "integer",
+            "description": "The answer body's bytes; -1 when it was cut before its end (timeout or reset)."
+          },
+          "body_cut": {
+            "type": "boolean",
+            "description": "Only the first 1 MiB (or what arrived) is kept."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "description": "From the first byte written to the last byte read."
+          },
+          "ttfb_ms": {
+            "type": "integer",
+            "description": "From the first byte written to the first byte of the answer."
+          },
+          "error": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "dial",
+                  "tls",
+                  "timeout",
+                  "reset",
+                  "write",
+                  "answer"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          "body_text": {
+            "type": "string",
+            "description": "The answer body when it is UTF-8 text, as it arrived (never decompressed). In a list only with include=body."
+          },
+          "body_base64": {
+            "type": "string",
+            "description": "The answer body in base64 when it is not UTF-8."
+          }
+        },
+        "required": [
+          "id",
+          "request_id",
+          "created_at",
+          "by",
+          "url",
+          "host",
+          "insecure_tls",
+          "timeout_ms",
+          "line",
+          "sent",
+          "notes",
+          "proto",
+          "status",
+          "reason",
+          "headers",
+          "body_size",
+          "body_cut",
+          "duration_ms",
+          "ttfb_ms",
+          "error"
+        ],
+        "additionalProperties": false
+      },
+      "ReplayList": {
+        "type": "object",
+        "properties": {
+          "replays": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Replay"
+            }
+          }
+        },
+        "required": [
+          "replays"
         ],
         "additionalProperties": false
       }

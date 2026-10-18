@@ -401,6 +401,13 @@ func (h *Handler) release(n int64) {
 	h.heldMu.Unlock()
 }
 
+// Reserve and Release hold n bytes of MaxInFlight for a body read
+// elsewhere (a replay), so bodies held for any reason share one budget.
+func (h *Handler) Reserve(n int64) bool { return h.reserve(n) }
+
+// Release gives back what Reserve took.
+func (h *Handler) Release(n int64) { h.release(n) }
+
 func (h *Handler) heldNow() int64 {
 	h.heldMu.Lock()
 	defer h.heldMu.Unlock()
