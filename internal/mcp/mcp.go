@@ -14,6 +14,8 @@ import (
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/petroladkin/hookwitness/internal/access"
 )
 
 // NewServer is an MCP server whose tools call api (the REST API's handler,
@@ -33,8 +35,23 @@ func newServer(api http.Handler, base, host, version string, stop <-chan struct{
 		opts.InitializedHandler = func(_ context.Context, r *sdk.InitializedRequest) { onSession(r.Session) }
 	}
 	srv := sdk.NewServer(&sdk.Implementation{Name: "hookwitness", Title: "Hookwitness", Version: version}, opts)
+	srv.AddReceivingMiddleware(carryIdentity)
 	(&tools{c: &client{api: api, base: base, host: host}, stop: stop}).register(srv)
 	return srv
+}
+
+// carryIdentity puts the caller's identity, which internal/web handed to the
+// SDK as the request's TokenInfo, into the context of the method, so that
+// the tools' API calls act as that user.
+func carryIdentity(next sdk.MethodHandler) sdk.MethodHandler {
+	return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
+		if ex := req.GetExtra(); ex != nil && ex.TokenInfo != nil {
+			if id, ok := ex.TokenInfo.Extra[access.MCPExtra].(*access.Identity); ok {
+				ctx = access.With(ctx, id)
+			}
+		}
+		return next(ctx, method, req)
+	}
 }
 
 // Streamable serves MCP over Streamable HTTP and knows its open sessions, so
