@@ -48,8 +48,8 @@ type usersView struct {
 func (v usersView) lastAdmin(u store.User) bool { return u.Role == store.RoleAdmin && v.Admins == 1 }
 
 // bareNav is the masthead of the login page: nothing about the server.
-func (h *Handler) bareNav() navView {
-	return navView{Prefix: h.prefix, Asset: h.assetURL, Build: "", Bare: true, Current: -1}
+func (h *Handler) bareNav(r *http.Request) navView {
+	return navView{Prefix: h.prefix, Asset: h.assetURL, Build: "", Bare: true, Current: -1, Theme: theme(r)}
 }
 
 func (h *Handler) loginPage(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +62,7 @@ func (h *Handler) loginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, h.nextPage(r.URL.Query().Get("next")), http.StatusSeeOther)
 		return
 	}
-	h.render(w, r, http.StatusOK, loginPage(h.bareNav(), loginView{On: on, Next: r.URL.Query().Get("next")}))
+	h.render(w, r, http.StatusOK, loginPage(h.bareNav(r), loginView{On: on, Next: r.URL.Query().Get("next")}))
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +79,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	addr := access.ClientAddr(r, h.proxies)
 	name, next := r.PostFormValue("name"), r.PostFormValue("next")
 	again := func(status int, msg string) {
-		h.render(w, r, status, loginPage(h.bareNav(), loginView{On: true, Next: next, Name: name, Err: msg}))
+		h.render(w, r, status, loginPage(h.bareNav(r), loginView{On: true, Next: next, Name: name, Err: msg}))
 	}
 	if ok, wait := h.limiter.Allow(addr); !ok {
 		mins := int((wait + time.Minute - 1) / time.Minute)

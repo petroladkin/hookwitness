@@ -26,6 +26,8 @@ type navView struct {
 	User       string // who is logged in; "" with login off
 	Admin      bool   // the logged-in user may manage users
 	Bare       bool   // the login page: no endpoints, no addresses
+	Theme      string // this browser's choice: "light", "dark" or "" (auto)
+	Here       string // the page's own URL, where the theme switch comes back to
 }
 
 // registerView is one register: an endpoint's requests or the Unmatched ones.

@@ -378,6 +378,12 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 .nologin b{color:var(--alarm)}
 .who{font:600 12px/1 var(--f-data);color:var(--ink);text-decoration:none;border-bottom:1px solid var(--grid-major)}
 .status form{display:contents}
+/* the theme switch: three segments, the chosen one inked */
+.status form.theme{display:inline-flex;border:1px solid var(--grid-major)}
+.theme button{font:600 10px/1 var(--f-data);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:transparent;border:0;padding:7px 8px;cursor:pointer}
+.theme button+button{border-left:1px solid var(--grid-major)}
+.theme button:hover{color:var(--ink)}
+.theme button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
 .sub{font:600 11px/1 var(--f-data);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:32px 0 6px}
 .login .card{max-width:420px}
 .secret-once{font-family:var(--f-data);width:100%}
