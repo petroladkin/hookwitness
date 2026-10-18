@@ -225,7 +225,7 @@ templ usersPage(nav navView, v usersView) {
 										if v.lastAdmin(u) {
 											<span class="help" title="Make another user an admin first">the last admin</span>
 										} else {
-											<form method="post" action={ templ.SafeURL(nav.Prefix + "/user/" + u.Name + "/role") }>
+											<form method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/role") }>
 												if u.Role == store.RoleAdmin {
 													<input type="hidden" name="role" value="user"/>
 													<button class="btn quiet" type="submit">Make user</button>
@@ -237,7 +237,7 @@ templ usersPage(nav navView, v usersView) {
 										}
 										<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users?dialog=password&name=" + u.Name) }>Set password</a>
 										if !v.lastAdmin(u) {
-											<form method="post" action={ templ.SafeURL(nav.Prefix + "/user/" + u.Name + "/remove") } data-confirm={ "Remove " + u.Name + " with their " + strconv.Itoa(u.Tokens) + " tokens?" }>
+											<form method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/remove") } data-confirm={ "Remove " + u.Name + " with their " + strconv.Itoa(u.Tokens) + " tokens?" }>
 												<button class="btn quiet" type="submit">Remove</button>
 											</form>
 										}
@@ -284,7 +284,7 @@ templ usersPage(nav navView, v usersView) {
 			}
 			if v.Dialog == "password" {
 				<dialog class="modal" data-modal data-close={ nav.Prefix + "/users" } open aria-labelledby="dialog-title">
-					<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/user/" + v.Form + "/password") }>
+					<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + v.Form + "/password") }>
 						<div class="modal-head">
 							<h2 id="dialog-title">New password for { v.Form }</h2>
 							<a class="close" href={ templ.SafeURL(nav.Prefix + "/users") } aria-label="Close">×</a>

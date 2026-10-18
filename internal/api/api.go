@@ -114,8 +114,8 @@ func (h *Handler) routes() []route {
 		{"DELETE", "/me/tokens/{id}", h.revokeToken(ownID), needSession},
 		{"GET", "/users", h.listUsers, needAdmin},
 		{"POST", "/users", h.addUser, needAdmin},
-		{"PATCH", "/user/{name}", h.patchUser, needAdmin},
-		{"DELETE", "/user/{name}", h.removeUser, needAdmin},
+		{"PATCH", "/users/{name}", h.patchUser, needAdmin},
+		{"DELETE", "/users/{name}", h.removeUser, needAdmin},
 		{"GET", "/tokens", h.listTokens(everyone), needAdmin},
 		{"DELETE", "/tokens/{id}", h.revokeToken(everyone), needAdmin},
 	}

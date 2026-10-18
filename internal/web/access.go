@@ -131,8 +131,8 @@ func (h *Handler) gateUI(w http.ResponseWriter, r *http.Request, id *access.Iden
 		return false
 	}
 	p := r.URL.Path
-	// Users and everyone's tokens: /users, /user/<name>/…, /tokens/<id>/….
-	if p == h.prefix+"/users" || strings.HasPrefix(p, h.prefix+"/user/") || strings.HasPrefix(p, h.prefix+"/tokens/") {
+	// Users and everyone's tokens: /users, /users/<name>/…, /tokens/<id>/….
+	if p == h.prefix+"/users" || strings.HasPrefix(p, h.prefix+"/users/") || strings.HasPrefix(p, h.prefix+"/tokens/") {
 		if !id.Admin() || id.Via != access.ViaSession {
 			h.forbidden(w, r, "Only an admin can manage users.")
 			return false

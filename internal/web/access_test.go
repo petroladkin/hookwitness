@@ -261,8 +261,8 @@ func TestRouteMatrix(t *testing.T) {
 		if got := call(adminC, "wrong"); got != http.StatusUnauthorized {
 			t.Errorf("%s %s with a wrong token and a valid cookie: %d", method, p, got)
 		}
-		sessionOnly := strings.Contains(p, "/me/") || strings.Contains(p, "/users") || strings.Contains(p, "/user/") || strings.Contains(p, "/tokens")
-		adminOnly := strings.Contains(p, "/users") || strings.Contains(p, "/user/") || strings.Contains(p, "/api/v1/tokens")
+		sessionOnly := strings.Contains(p, "/me/") || strings.Contains(p, "/users") || strings.Contains(p, "/tokens")
+		adminOnly := strings.Contains(p, "/users") || strings.Contains(p, "/api/v1/tokens")
 		for _, c := range []struct {
 			who           string
 			cookie, token string
@@ -486,14 +486,17 @@ func TestUsersPage(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "the last admin") || !strings.Contains(rec.Body.String(), "Make admin") {
 		t.Fatal("users page: the last admin is not marked")
 	}
-	if rec := e.form("/admin/user/ann/remove", a, nil); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "last admin") {
+	if rec := e.form("/admin/users/ann/remove", a, nil); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "last admin") {
 		t.Fatalf("removing the last admin: %d", rec.Code)
 	}
-	if rec := e.form("/admin/user/ann/role", a, url.Values{"role": {"user"}}); rec.Code != http.StatusConflict {
+	if rec := e.form("/admin/users/ann/role", a, url.Values{"role": {"user"}}); rec.Code != http.StatusConflict {
 		t.Fatalf("demoting the last admin: %d", rec.Code)
 	}
+	if rec := e.form("/admin/user/ann/role", a, url.Values{"role": {"user"}}); rec.Code != http.StatusNotFound {
+		t.Fatalf("the singular path: %d", rec.Code)
+	}
 	// A reset by an admin ends that user's sessions; their tokens keep working.
-	if rec := e.form("/admin/user/bob/password", a, url.Values{"password": {"bob-new-password-1"}}); rec.Code != http.StatusSeeOther {
+	if rec := e.form("/admin/users/bob/password", a, url.Values{"password": {"bob-new-password-1"}}); rec.Code != http.StatusSeeOther {
 		t.Fatalf("reset: %d", rec.Code)
 	}
 	if rec := e.req("GET", "/admin/", b, "", nil); rec.Code != http.StatusSeeOther {
@@ -502,13 +505,13 @@ func TestUsersPage(t *testing.T) {
 	if rec := e.req("GET", "/admin/api/v1/endpoints", "", bt, nil); rec.Code != 200 {
 		t.Fatalf("bob's token after a reset: %d", rec.Code)
 	}
-	if rec := e.form("/admin/user/bob/role", a, url.Values{"role": {"admin"}}); rec.Code != http.StatusSeeOther {
+	if rec := e.form("/admin/users/bob/role", a, url.Values{"role": {"admin"}}); rec.Code != http.StatusSeeOther {
 		t.Fatalf("promote: %d", rec.Code)
 	}
 	if rec := e.req("GET", "/admin/api/v1/users", "", bt, nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("admin's token on user management: %d", rec.Code)
 	}
-	if rec := e.form("/admin/user/bob/remove", a, nil); rec.Code != http.StatusSeeOther {
+	if rec := e.form("/admin/users/bob/remove", a, nil); rec.Code != http.StatusSeeOther {
 		t.Fatalf("remove: %d", rec.Code)
 	}
 	if rec := e.req("GET", "/admin/api/v1/endpoints", "", bt, nil); rec.Code != 401 {

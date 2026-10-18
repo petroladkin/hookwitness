@@ -74,10 +74,14 @@ func TestUsersAPI(t *testing.T) {
 	if rec := e.call(ann, "POST", "/users", `{"name":"bob","password":"user-password-5678"}`); rec.Code != 201 || !strings.Contains(rec.Body.String(), `"role": "user"`) {
 		t.Fatalf("add bob: %d %s", rec.Code, rec.Body)
 	}
-	wantError(t, e.call(ann, "DELETE", "/user/ann", ""), 409, "last_admin", "")
-	wantError(t, e.call(ann, "PATCH", "/user/ann", `{"role":"user"}`), 409, "last_admin", "")
-	wantError(t, e.call(ann, "PATCH", "/user/nobody", `{"role":"user"}`), 404, "not_found", "")
-	wantError(t, e.call(ann, "PATCH", "/user/bob", `{"password":"short"}`), 422, "invalid", "password")
+	wantError(t, e.call(ann, "DELETE", "/users/ann", ""), 409, "last_admin", "")
+	wantError(t, e.call(ann, "PATCH", "/users/ann", `{"role":"user"}`), 409, "last_admin", "")
+	wantError(t, e.call(ann, "PATCH", "/users/nobody", `{"role":"user"}`), 404, "not_found", "")
+	wantError(t, e.call(ann, "PATCH", "/users/bob", `{"password":"short"}`), 422, "invalid", "password")
+	// The singular path of the first build is gone.
+	if rec := e.call(ann, "PATCH", "/user/bob", `{"role":"admin"}`); rec.Code != 404 {
+		t.Fatalf("PATCH /user/bob: %d", rec.Code)
+	}
 
 	bob := e.as(t, "bob", access.ViaSession)
 	wantError(t, e.call(bob, "GET", "/users", ""), 403, "forbidden", "")
@@ -122,10 +126,10 @@ func TestUsersAPI(t *testing.T) {
 	if _, err := e.auth.Login(context.Background(), "bob", "bob-new-password-1"); err != nil {
 		t.Fatalf("new password: %v", err)
 	}
-	if rec := e.call(ann, "PATCH", "/user/bob", `{"role":"admin"}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"role": "admin"`) {
+	if rec := e.call(ann, "PATCH", "/users/bob", `{"role":"admin"}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"role": "admin"`) {
 		t.Fatalf("promote: %d %s", rec.Code, rec.Body)
 	}
-	if rec := e.call(ann, "DELETE", "/user/ann", ""); rec.Code != 204 {
+	if rec := e.call(ann, "DELETE", "/users/ann", ""); rec.Code != 204 {
 		t.Fatalf("ann removes herself with another admin there: %d", rec.Code)
 	}
 	for _, line := range []string{`user added" name=bob role=user user=ann`, `token created" token=ci`, `password changed" user=bob`, `user removed" name=ann user=ann`} {
@@ -163,7 +167,7 @@ func TestAccessAnswersMatchTheirSchemas(t *testing.T) {
 		{e.call(ann, "GET", "/me/tokens", ""), "#/paths/~1me~1tokens/get/responses/200/content/application~1json/schema"},
 		{e.call(ann, "GET", "/tokens", ""), "#/paths/~1tokens/get/responses/200/content/application~1json/schema"},
 		{e.call(ann, "POST", "/users", `{"name":"bob","password":"user-password-5678"}`), "#/components/schemas/User"},
-		{e.call(ann, "DELETE", "/user/ann", ""), "#/components/schemas/Error"},
+		{e.call(ann, "DELETE", "/users/ann", ""), "#/components/schemas/Error"},
 	} {
 		sch, err := c.Compile(docURL + tc.schema)
 		if err != nil {

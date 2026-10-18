@@ -1122,9 +1122,9 @@ func usersPage(nav navView, v usersView) templ.Component {
 							return templ_7745c5c3_Err
 						}
 						var templ_7745c5c3_Var62 templ.SafeURL
-						templ_7745c5c3_Var62, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(nav.Prefix + "/user/" + u.Name + "/role"))
+						templ_7745c5c3_Var62, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/role"))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/access.templ`, Line: 228, Col: 95}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/access.templ`, Line: 228, Col: 96}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var62))
 						if templ_7745c5c3_Err != nil {
@@ -1173,9 +1173,9 @@ func usersPage(nav navView, v usersView) templ.Component {
 							return templ_7745c5c3_Err
 						}
 						var templ_7745c5c3_Var64 templ.SafeURL
-						templ_7745c5c3_Var64, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(nav.Prefix + "/user/" + u.Name + "/remove"))
+						templ_7745c5c3_Var64, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/remove"))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/access.templ`, Line: 240, Col: 97}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/access.templ`, Line: 240, Col: 98}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var64))
 						if templ_7745c5c3_Err != nil {
@@ -1188,7 +1188,7 @@ func usersPage(nav navView, v usersView) templ.Component {
 						var templ_7745c5c3_Var65 string
 						templ_7745c5c3_Var65, templ_7745c5c3_Err = templ.ResolveAttributeValue("Remove " + u.Name + " with their " + strconv.Itoa(u.Tokens) + " tokens?")
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/access.templ`, Line: 240, Col: 188}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/access.templ`, Line: 240, Col: 189}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var65)
 						if templ_7745c5c3_Err != nil {
@@ -1387,9 +1387,9 @@ func usersPage(nav navView, v usersView) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var75 templ.SafeURL
-				templ_7745c5c3_Var75, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(nav.Prefix + "/user/" + v.Form + "/password"))
+				templ_7745c5c3_Var75, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(nav.Prefix + "/users/" + v.Form + "/password"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/access.templ`, Line: 287, Col: 106}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/access.templ`, Line: 287, Col: 107}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var75))
 				if templ_7745c5c3_Err != nil {
