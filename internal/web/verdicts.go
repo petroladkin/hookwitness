@@ -81,7 +81,7 @@ func (h *Handler) recheck(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "re-check", err)
 		return
 	}
-	h.log.Info("verdicts re-checked", "path", ep.Path, "requests", n)
+	h.log.Info("verdicts re-checked", append([]any{"path", ep.Path, "requests", n}, who(r)...)...)
 	h.live.Publish(reg)
 	http.Redirect(w, r, h.regPath(reg)+"?rechecked="+strconv.Itoa(n), http.StatusSeeOther)
 }

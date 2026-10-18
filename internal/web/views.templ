@@ -32,6 +32,12 @@ templ layout(nav navView, pageTitle string) {
 		<body>
 			<div class="wrap">
 				@masthead(nav)
+				if nav.NoLogin && !nav.Bare {
+					<p class="nologin" role="note">
+						<b>No login.</b> Anyone who can open this page can read every request and change every endpoint.
+						<a href={ templ.SafeURL(nav.Prefix + "/users") }>Add a user</a> to turn login on.
+					</p>
+				}
 				{ children... }
 			</div>
 		</body>
@@ -41,28 +47,45 @@ templ layout(nav navView, pageTitle string) {
 templ masthead(nav navView) {
 	<header class="mast">
 		<a class="brand" href={ templ.SafeURL(nav.Prefix + "/") } title={ "Hookwitness " + nav.Build }>Hookwitness</a>
-		if len(nav.Endpoints) > 0 || nav.Unmatched > 0 {
-			<div class="endpoint">
-				<label for="register-select">Endpoint</label>
-				<select id="register-select" data-navigate>
-					if nav.Current < 0 {
-						<option value="" selected>Choose…</option>
-					}
-					for _, e := range nav.Endpoints {
-						<option value={ nav.registerURL(e.ID) } selected?={ nav.Current == e.ID }>{ e.Path }</option>
-					}
-					<option value={ nav.registerURL(store.Unmatched) } selected?={ nav.Current == store.Unmatched }>Unmatched · { strconv.Itoa(nav.Unmatched) }</option>
-				</select>
-			</div>
+		if nav.Bare {
+			<span></span>
+		} else {
+			@mastNav(nav)
 		}
-		<div class="status">
-			if nav.OnRegister {
-				<span class="rec" id="feed-state" data-state="connecting"><i aria-hidden="true"></i><span>Connecting</span></span>
-			}
-			<span class="addr">{ hostOf(nav.Catch) }</span>
-			<a class="btn" href={ templ.SafeURL(nav.Prefix + "/") }>Endpoints</a>
-		</div>
 	</header>
+}
+
+templ mastNav(nav navView) {
+	if len(nav.Endpoints) > 0 || nav.Unmatched > 0 {
+		<div class="endpoint">
+			<label for="register-select">Endpoint</label>
+			<select id="register-select" data-navigate>
+				if nav.Current < 0 {
+					<option value="" selected>Choose…</option>
+				}
+				for _, e := range nav.Endpoints {
+					<option value={ nav.registerURL(e.ID) } selected?={ nav.Current == e.ID }>{ e.Path }</option>
+				}
+				<option value={ nav.registerURL(store.Unmatched) } selected?={ nav.Current == store.Unmatched }>Unmatched · { strconv.Itoa(nav.Unmatched) }</option>
+			</select>
+		</div>
+	}
+	<div class="status">
+		if nav.OnRegister {
+			<span class="rec" id="feed-state" data-state="connecting"><i aria-hidden="true"></i><span>Connecting</span></span>
+		}
+		<span class="addr">{ hostOf(nav.Catch) }</span>
+		<a class="btn" href={ templ.SafeURL(nav.Prefix + "/") }>Endpoints</a>
+		if nav.Admin {
+			<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users") }>Users</a>
+		}
+		if nav.User != "" {
+			<a class="who" href={ templ.SafeURL(nav.Prefix + "/account") } title="Your password and tokens">{ nav.User }</a>
+			<form method="post" action={ templ.SafeURL(nav.Prefix + "/logout") }>
+				<button class="btn quiet" type="submit">Log out</button>
+			</form>
+		}
+	</div>
 }
 
 templ endpointsPage(nav navView, creating bool, formPath, formErr string) {

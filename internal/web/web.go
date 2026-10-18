@@ -24,6 +24,7 @@ import (
 
 	"github.com/a-h/templ"
 
+	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/api"
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/emulate"
@@ -62,9 +63,15 @@ type Handler struct {
 	keys    *secret.Key
 	mux     http.Handler
 	csrf    *http.CrossOriginProtection
-	api     *api.Handler      // the JSON API under prefix/api/v1
-	mcp     *mcp.Streamable   // MCP over Streamable HTTP at prefix/mcp, its tools on the API
-	assets  map[string]string // asset path -> content hash for cache busting
+	api     *api.Handler    // the JSON API under prefix/api/v1
+	mcp     *mcp.Streamable // MCP over Streamable HTTP at prefix/mcp, its tools on the API
+	// mcpAuthed is mcp for a request with an identity: the SDK gets it as
+	// the session's user.
+	mcpAuthed http.Handler
+	auth      *access.Authenticator // nil: login is off for good (tests)
+	limiter   *access.Limiter       // failed logins per client address
+	proxies   access.Proxies        // reverse proxies whose X-Forwarded-For names the client
+	assets    map[string]string     // asset path -> content hash for cache busting
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -81,12 +88,15 @@ type Options struct {
 	MaxWait   time.Duration // longest delay an endpoint may configure
 	Hosts     []string      // host names the UI answers to besides IP addresses and localhost
 	Keys      *secret.Key   // seals and hashes endpoint secrets; verifies on re-check
+	// Access checks logins and tokens; nil leaves the admin open (tests).
+	Access  *access.Authenticator
+	Proxies access.Proxies // reverse proxies whose X-Forwarded-For names the client
 }
 
 // New returns the UI.
 func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Handler {
 	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention, maxWait: o.MaxWait, keys: o.Keys,
-		hosts: map[string]bool{}, stop: make(chan struct{})}
+		hosts: map[string]bool{}, stop: make(chan struct{}), auth: o.Access, limiter: access.NewLimiter(nil), proxies: o.Proxies}
 	if h.maxWait == 0 {
 		h.maxWait = 5 * time.Minute
 	}
@@ -122,19 +132,33 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("GET "+p+"/r/{id}/body", h.downloadBody)
 	mux.HandleFunc("GET "+p+"/r/{id}/image", h.image)
 	mux.HandleFunc("GET "+p+"/static/{file...}", h.static)
+	mux.HandleFunc("GET "+p+"/login", h.loginPage)
+	mux.HandleFunc("POST "+p+"/login", h.login)
+	mux.HandleFunc("POST "+p+"/logout", h.logout)
+	mux.HandleFunc("GET "+p+"/account", h.accountPage)
+	mux.HandleFunc("POST "+p+"/account/password", h.changePassword)
+	mux.HandleFunc("POST "+p+"/account/tokens", h.createToken)
+	mux.HandleFunc("POST "+p+"/account/tokens/{id}/revoke", h.revokeOwnToken)
+	mux.HandleFunc("GET "+p+"/users", h.usersPage)
+	mux.HandleFunc("POST "+p+"/users", h.addUser)
+	mux.HandleFunc("POST "+p+"/user/{name}/role", h.setRole)
+	mux.HandleFunc("POST "+p+"/user/{name}/password", h.resetPassword)
+	mux.HandleFunc("POST "+p+"/user/{name}/remove", h.removeUser)
+	mux.HandleFunc("POST "+p+"/tokens/{id}/revoke", h.revokeAnyToken)
 
 	// Browsers send Sec-Fetch-Site / Origin; a form posted from another site
 	// (cross-site request forgery against a local server) is refused.
 	h.csrf = http.NewCrossOriginProtection()
 	h.mux = h.csrf.Handler(mux)
 
-	ao := api.Options{Prefix: prefix, Reserved: h.reserve, Catch: h.catch, MaxWait: h.maxWait, Stop: h.stop, Version: version.String()}
+	ao := api.Options{Prefix: prefix, Reserved: h.reserve, Catch: h.catch, MaxWait: h.maxWait, Stop: h.stop, Version: version.String(), Access: o.Access}
 	if o.Keys != nil {
 		ao.Keys, ao.Keyring = o.Keys, o.Keys // a nil *secret.Key must stay a nil interface
 	}
 	ao.Fonts, _ = fs.Sub(staticFS, "static")
 	h.api = api.New(st, broker, log, ao)
 	h.mcp = mcp.Handler(h.api, api.Base(prefix), version.String(), log, h.stop)
+	h.mcpAuthed = withMCPIdentity(h.mcp)
 	return h
 }
 
@@ -152,7 +176,12 @@ const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 's
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isMCP := r.URL.Path == h.prefix+"/mcp"
 	isAPI := isMCP || api.Is(h.prefix, r.URL.Path)
-	if !h.allowedHost(r.Host) {
+	id, ok := h.identify(w, r, isAPI)
+	if !ok {
+		return
+	}
+	byToken := id != nil && id.Via != access.ViaSession
+	if !byToken && !h.allowedHost(r.Host) {
 		// A page on another site can point its own host name at this server
 		// (DNS rebinding) and then read the UI as same-origin.
 		h.log.Warn("web: request for an unknown host name refused", "host", r.Host)
@@ -165,6 +194,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"Open it by IP address or localhost, or allow the name with -admin-hosts.", r.Host), http.StatusMisdirectedRequest)
 		return
 	}
+	if id != nil {
+		r = r.WithContext(access.With(r.Context(), id))
+	}
 	hd := w.Header()
 	hd.Set("Content-Security-Policy", csp)
 	hd.Set("X-Content-Type-Options", "nosniff")
@@ -174,11 +206,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			api.WriteError(w, http.StatusForbidden, "cross_origin", "a request from a page on another site is refused", "")
 			return
 		}
+		if !h.gateAPI(w, r, id, isMCP) {
+			return
+		}
 		if isMCP {
+			if id != nil {
+				h.mcpAuthed.ServeHTTP(w, r)
+				return
+			}
 			h.mcp.ServeHTTP(w, r)
 			return
 		}
 		h.api.ServeHTTP(w, r)
+		return
+	}
+	if !h.gateUI(w, r, id) {
 		return
 	}
 	h.mux.ServeHTTP(w, r)
@@ -242,7 +284,7 @@ func (h *Handler) nav(r *http.Request, current int64, onRegister bool) (navView,
 	if err != nil {
 		return navView{}, err
 	}
-	return navView{
+	v := navView{
 		Prefix:     h.prefix,
 		Catch:      h.catch.Base(r),
 		Endpoints:  eps,
@@ -251,7 +293,18 @@ func (h *Handler) nav(r *http.Request, current int64, onRegister bool) (navView,
 		OnRegister: onRegister,
 		Asset:      h.assetURL,
 		Build:      version.String(),
-	}, nil
+	}
+	if h.auth != nil {
+		on, err := h.uiLoginOn(r.Context())
+		if err != nil {
+			return navView{}, err
+		}
+		v.NoLogin = !on
+		if id := access.From(r.Context()); id != nil && id.Via == access.ViaSession {
+			v.User, v.Admin = id.Name, id.Admin()
+		}
+	}
+	return v, nil
 }
 
 func (h *Handler) endpointsPage(w http.ResponseWriter, r *http.Request) {
@@ -290,7 +343,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "create endpoint", err)
 		return
 	}
-	h.log.Info("endpoint created", "path", p)
+	h.log.Info("endpoint created", append([]any{"path", p}, who(r)...)...)
 	http.Redirect(w, r, h.regPath(ep.ID), http.StatusSeeOther)
 }
 
@@ -708,6 +761,8 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	}
 	tick := time.NewTicker(heartbeat)
 	defer tick.Stop()
+	check := time.NewTicker(sessionCheck)
+	defer check.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
@@ -721,6 +776,15 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 		case <-tick.C:
 			fmt.Fprint(w, ": keep-alive\n\n")
 			if rc.Flush() != nil {
+				return
+			}
+		case <-check.C:
+			// The login of this page ended (logout, expiry, a password or role
+			// change): the page reloads onto the login page. An open feed
+			// otherwise counts as activity, which the check records.
+			if h.sessionEnded(r) {
+				fmt.Fprint(w, "event: login\ndata: ended\n\n")
+				rc.Flush()
 				return
 			}
 		}

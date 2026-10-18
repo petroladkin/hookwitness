@@ -30,7 +30,13 @@
   }
 
   document.addEventListener("htmx:sseOpen", () => feed("live", "Recording"));
-  document.addEventListener("htmx:sseError", () => feed("lost", "Reconnecting"));
+  document.addEventListener("htmx:sseError", (e) => {
+    feed("lost", "Reconnecting");
+    // A feed the server refused (the login ended) is not retried by the
+    // browser: reloading lands on the login page.
+    const src = e.detail && e.detail.source;
+    if (src && src.readyState === EventSource.CLOSED) location.reload();
+  });
 
   // Each request appears once, whatever the feed resends; an "update"
   // replaces the row it names with its final outcome.
@@ -80,6 +86,8 @@
     const src = e.detail && e.detail.source;
     if (!src || src.hwCounts) return;
     src.hwCounts = true;
+    // The login of this page ended: reload onto the login page.
+    src.addEventListener("login", () => location.reload());
     src.addEventListener("counts", (m) => {
       let c;
       try { c = JSON.parse(m.data); } catch { return; }
@@ -121,6 +129,18 @@
   document.addEventListener("change", (e) => {
     const el = e.target;
     if (el.matches && el.matches("select[data-navigate]") && el.value) location.assign(el.value);
+  });
+  // Copy buttons: data-copy names the field whose value is copied (a token
+  // shown once); without a clipboard the field is selected for Ctrl-C.
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest("button[data-copy]");
+    if (!b) return;
+    const field = document.getElementById(b.dataset.copy);
+    if (!field) return;
+    field.select();
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(field.value).then(() => { b.textContent = "Copied"; }, () => {});
+    }
   });
   document.addEventListener("submit", (e) => {
     const by = e.submitter && e.submitter.dataset.confirm;
