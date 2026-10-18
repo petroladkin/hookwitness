@@ -39,8 +39,9 @@ type behaviourIn struct {
 // secretJSON describes a secret.
 type secretJSON struct {
 	Name        string   `json:"name"`
-	Kind        string   `json:"kind"` // key (signing key) or token (token or password)
-	Fingerprint string   `json:"fingerprint"`
+	Kind        string   `json:"kind"`               // key (signing key) or token (token or password)
+	Fingerprint string   `json:"fingerprint"`        // "" when not set
+	Set         bool     `json:"set"`                // false: imported from a setup file, its value not given yet
 	Standard    bool     `json:"standard,omitempty"` // a "whsec_" key, usable by standard checks
 	UsedBy      []string `json:"used_by"`
 }
@@ -50,7 +51,7 @@ func secretView(c emulate.Config, s emulate.Secret) secretJSON {
 	if used == nil {
 		used = []string{}
 	}
-	return secretJSON{Name: s.Name, Kind: s.Kind, Fingerprint: s.Fingerprint, Standard: s.Standard, UsedBy: used}
+	return secretJSON{Name: s.Name, Kind: s.Kind, Fingerprint: s.Fingerprint, Set: s.Set(), Standard: s.Standard, UsedBy: used}
 }
 
 func behaviourView(c emulate.Config) behaviourJSON {

@@ -1848,6 +1848,175 @@
           }
         }
       }
+    },
+    "/setup": {
+      "get": {
+        "operationId": "exportSetup",
+        "summary": "Export endpoints' setup",
+        "description": "The setup file of the endpoints named by `id` (repeat it for several), or of every endpoint. It names each secret and its kind, never a value, hash or fingerprint. Saved as is, it is the file `POST /setup` takes.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "An endpoint to export; absent: all of them."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The setup file; Content-Disposition names it `<path>.hookwitness.json`.",
+            "headers": {
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Setup"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`id` is not an endpoint id (`invalid`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No endpoint with that id (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "operationId": "importSetup",
+        "summary": "Import endpoints from a setup file",
+        "description": "Creates the file's endpoints, all of them or none. Their secrets are created without values (`set: false`). With `on_conflict=replace` an endpoint already at a path gets the file's behaviour; its requests, counter and on/off state stay, and each secret of the same name and kind keeps its value. Importing the same file again changes nothing.",
+        "parameters": [
+          {
+            "name": "on_conflict",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "fail",
+                "replace"
+              ],
+              "default": "fail"
+            },
+            "description": "What to do with a path that is already an endpoint."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Setup"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Imported; at least one endpoint was created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupResult"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Imported; existing endpoints replaced or unchanged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`on_conflict` is not `fail` or `replace` (`invalid`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A path is already an endpoint and `on_conflict` is not `replace` (`duplicate_path`); nothing was imported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The file is over 16 MiB (`too_large`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Not a setup file, a newer format, an unknown field, an invalid path or behaviour (`invalid_setup`); the message names the problem and nothing was imported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2233,7 +2402,11 @@
           },
           "fingerprint": {
             "type": "string",
-            "description": "A keyed fingerprint; never the value."
+            "description": "A keyed fingerprint; never the value. Empty while the secret is not set."
+          },
+          "set": {
+            "type": "boolean",
+            "description": "False for a secret imported from a setup file whose value has not been given yet: checks that use it give n/v \"secret NAME not set\" and never refuse. Set it on the secrets route."
           },
           "standard": {
             "type": "boolean",
@@ -2250,6 +2423,7 @@
           "name",
           "kind",
           "fingerprint",
+          "set",
           "used_by"
         ],
         "additionalProperties": false,
@@ -2901,6 +3075,143 @@
         },
         "required": [
           "login"
+        ],
+        "additionalProperties": false
+      },
+      "SetupSecret": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "key",
+              "token"
+            ],
+            "description": "key: a signing key; token: a token or password."
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "additionalProperties": false,
+        "description": "A secret the endpoint needs: its name and kind, never a value."
+      },
+      "SetupEndpoint": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "default": {
+            "$ref": "#/components/schemas/Reply"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            }
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            }
+          },
+          "vars": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Var"
+            }
+          },
+          "schemas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Schema"
+            }
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupSecret"
+            }
+          }
+        },
+        "required": [
+          "path",
+          "default"
+        ],
+        "additionalProperties": false,
+        "description": "One endpoint's setup: its path and behaviour. Requests, counters, the on/off state, ids and times are not part of it."
+      },
+      "Setup": {
+        "type": "object",
+        "properties": {
+          "hookwitness": {
+            "type": "integer",
+            "const": 1,
+            "description": "The format marker and version. A file of a newer format is refused."
+          },
+          "endpoints": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/SetupEndpoint"
+            }
+          }
+        },
+        "required": [
+          "hookwitness",
+          "endpoints"
+        ],
+        "additionalProperties": false,
+        "description": "A setup file: endpoints' behaviour, portable between instances. Unknown fields are refused."
+      },
+      "SetupResult": {
+        "type": "object",
+        "properties": {
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "result": {
+                  "type": "string",
+                  "enum": [
+                    "created",
+                    "replaced",
+                    "unchanged"
+                  ]
+                },
+                "secrets_not_set": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Secrets of the endpoint without a value: set them on the secrets route."
+                }
+              },
+              "required": [
+                "id",
+                "path",
+                "result",
+                "secrets_not_set"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "endpoints"
         ],
         "additionalProperties": false
       }
