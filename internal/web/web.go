@@ -145,9 +145,9 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("POST "+p+"/account/tokens/{id}/revoke", h.revokeOwnToken)
 	mux.HandleFunc("GET "+p+"/users", h.usersPage)
 	mux.HandleFunc("POST "+p+"/users", h.addUser)
-	mux.HandleFunc("POST "+p+"/user/{name}/role", h.setRole)
-	mux.HandleFunc("POST "+p+"/user/{name}/password", h.resetPassword)
-	mux.HandleFunc("POST "+p+"/user/{name}/remove", h.removeUser)
+	mux.HandleFunc("POST "+p+"/users/{name}/role", h.setRole)
+	mux.HandleFunc("POST "+p+"/users/{name}/password", h.resetPassword)
+	mux.HandleFunc("POST "+p+"/users/{name}/remove", h.removeUser)
 	mux.HandleFunc("POST "+p+"/tokens/{id}/revoke", h.revokeAnyToken)
 
 	// Browsers send Sec-Fetch-Site / Origin; a form posted from another site

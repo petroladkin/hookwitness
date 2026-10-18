@@ -425,8 +425,8 @@ admin.
 | `DELETE /me/tokens/{id}` | revokes one of yours: refused from its next request. `204` |
 | `GET /users` | users with `name`, `role`, `created_at`, `tokens` (admins) |
 | `POST /users` `{"name","role","password"}` | adds a user (`role` `user` by default). `201`; `409 exists`; `422` naming the field |
-| `PATCH /user/{name}` `{"role"?, "password"?}` | changes a role or sets a password; either ends that user's logins. `409 last_admin` for the last admin |
-| `DELETE /user/{name}` | removes a user with their tokens. `204`; `409 last_admin` |
+| `PATCH /users/{name}` `{"role"?, "password"?}` | changes a role or sets a password; either ends that user's logins. `409 last_admin` for the last admin |
+| `DELETE /users/{name}` | removes a user with their tokens. `204`; `409 last_admin` |
 | `GET /tokens`, `DELETE /tokens/{id}` | everyone's tokens, with their `owner`; revoke any (admins) |
 
 ### OpenAPI

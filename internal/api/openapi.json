@@ -1638,7 +1638,7 @@
         }
       }
     },
-    "/user/{name}": {
+    "/users/{name}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/user"
