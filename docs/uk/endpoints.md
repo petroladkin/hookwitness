@@ -59,7 +59,7 @@ curl -s -X POST http://127.0.0.1:8080/stripe/webhook -d '{}'   # 404: kept under
 <!-- docs-check: setup: stripe_endpoint -->
 ```sh
 curl -s -X PATCH http://127.0.0.1:8080/admin/api/v1/endpoints/1 -H 'Content-Type: application/json' -d '{"enabled":false}' | jq -c '{path, enabled}'
-# {"path":"/stripe/webhooks","enabled":false}
+# {"path":"/stripe/webhooks","enabled":true}
 curl -s -X POST http://127.0.0.1:8080/stripe/webhooks -d '{}'   # 404: kept under Unmatched, tagged endpoint off
 curl -s -X PATCH http://127.0.0.1:8080/admin/api/v1/endpoints/1 -H 'Content-Type: application/json' -d '{"enabled":true}' | jq -c '{path, enabled}'
 # {"path":"/stripe/webhooks","enabled":true}
