@@ -145,7 +145,7 @@ func TestSetupNoSecrets(t *testing.T) {
 		}
 	}
 	var drawn strings.Builder
-	pdfTextHook = func(s string) { drawn.WriteString(s + "\n") }
+	pdfTextHook = func(_, _, _ float64, s string) { drawn.WriteString(s + "\n") }
 	defer func() { pdfTextHook = nil }()
 	pdf := render(t, PDF, setupOptions(t), rs)
 	text := drawn.String()

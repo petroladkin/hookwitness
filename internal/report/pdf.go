@@ -112,9 +112,10 @@ func (p *pdfWriter) font(family string, bold bool, size float64, c rgb) {
 	p.pdf.SetTextColor(c[0], c[1], c[2])
 }
 
-// pdfTextHook, when set (by tests), gets every string the PDF draws: the
-// text a reader sees, which the compressed glyph streams do not show.
-var pdfTextHook func(string)
+// pdfTextHook, when set (by tests), gets every string the PDF draws, with
+// its place and width: the text a reader sees, which the compressed glyph
+// streams do not show.
+var pdfTextHook func(x, y, w float64, s string)
 
 // text draws s with its top at y.
 func (p *pdfWriter) text(x, y float64, s string) {
@@ -122,7 +123,7 @@ func (p *pdfWriter) text(x, y float64, s string) {
 		return
 	}
 	if pdfTextHook != nil {
-		pdfTextHook(s)
+		pdfTextHook(x, y, p.width(s), s)
 	}
 	p.pdf.SetXY(x, y)
 	p.keep(p.pdf.Cell(nil, s))
@@ -178,14 +179,37 @@ func (p *pdfWriter) newPage() {
 	p.stroke(cInk, 0.8)
 	p.pdf.Line(margin, margin+12, pageW-margin, margin+12)
 	p.font(fMono, false, 7.5, cMuted)
+	// The page count is filled in at the end, into room for six digits.
+	const countW = 30
 	label := "page " + strconv.Itoa(p.pages) + " of "
-	p.text(pageW-margin-60-p.width(label), pageH-margin-8, label)
+	p.text(pageW-margin-countW-p.width(label), pageH-margin-8, label)
 	// A placeholder is written like Text, from the baseline, not the top.
-	p.pdf.SetXY(pageW-margin-60, pageH-margin-8+pdfAscent*7.5)
-	p.keep(p.pdf.PlaceHolderText("pages", 60))
+	p.pdf.SetXY(pageW-margin-countW, pageH-margin-8+pdfAscent*7.5)
+	p.keep(p.pdf.PlaceHolderText("pages", countW))
+	// The footer names the build; the running header already says it is
+	// Hookwitness's. A version too long for the room left of the page
+	// number (a local build's describe string) is cut with an ellipsis; the
+	// summary on the first page has it whole.
 	p.font(fMono, false, 7.5, cMuted)
-	p.text(margin, pageH-margin-8, "Generated "+stamp(p.h.Generated)+" by Hookwitness "+p.h.Version)
+	room := pageW - margin - countW - p.width(label) - 8 - margin
+	p.text(margin, pageH-margin-8, p.fit("Generated "+stamp(p.h.Generated)+" · "+p.h.Version, room))
 	p.y = bodyTop
+}
+
+// fit shortens s with an ellipsis until it is at most w wide in the
+// current font.
+func (p *pdfWriter) fit(s string, w float64) string {
+	if p.width(s) <= w {
+		return s
+	}
+	r := []rune(s)
+	for len(r) > 1 {
+		r = r[:len(r)-1]
+		if t := string(r) + "…"; p.width(t) <= w {
+			return t
+		}
+	}
+	return "…"
 }
 
 // place draws b, on a new page when it does not fit.
