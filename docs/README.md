@@ -26,6 +26,8 @@ by task: what to click and what happens. [Українською](uk/README.md).
     scripts and MCP, a lost password.
 11. [Sharing an endpoint's setup](sharing.md): export to a file, import it
     on another instance, secrets without values, endpoints at start.
+12. [Replaying a request to your handler](replay.md): send a caught request
+    byte for byte to your own handler and keep its answer; which targets.
 
 Reference: the [REST API](api.md) (English only), and its OpenAPI 3.1
 description served at `/admin/api/v1/openapi.json`.

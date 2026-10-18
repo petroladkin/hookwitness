@@ -108,6 +108,14 @@ no secret values: each name in `secrets_not_set` is a check that gives `n/v`
 until you PUT that secret's test value. `GET "$API/setup?id=$ID"` (MCP:
 `export_endpoint`) saves your own setup to hand back with the results.
 
+Testing the receiving side instead (a handler that refuses real deliveries)?
+Catch a real delivery, then send it byte for byte to the handler:
+`curl -s -X POST "$API/requests/<id>/replays" -H 'Content-Type: application/json' -d '{"url":"http://localhost:3000/webhooks"}'`
+(MCP: `replay_request`). The answer comes back with `status`, `headers` and
+`body_text`. If the handler refuses the untouched original too, the bug is in
+its verification (e.g. hashing parsed JSON instead of the raw body), not in
+what arrived.
+
 Fault scripting (same PUT, add `rules`): `{"when":{"kind":"first","n":2},"do":"reply","reply":{"status":503}}`
 fails the first two deliveries (retries); `"do":"timeout"` hangs; `"do":"drop"`
 resets the connection; `{"kind":"every","n":3}`, `{"kind":"random","percent":10}`.

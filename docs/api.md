@@ -292,7 +292,7 @@ A list item:
 
 ```json
 {"id":1,"endpoint_id":1,"no":1,"received_at":"2026-10-12T17:28:07.433Z","method":"POST","path":"/orders/events",
- "query":"","status":200,"verdict":"pass","body_size":28,"body_kept":true,"content_type":"application/json"}
+ "query":"","status":200,"verdict":"pass","body_size":28,"body_kept":true,"content_type":"application/json","replays":0}
 ```
 
 - `status` is what hookwitness answered (`0` while a timeout still holds it).
@@ -385,6 +385,36 @@ D=$(curl -s -X POST $API/endpoints/$ID/schema-draft -H 'Content-Type: applicatio
 printf '%s\n' "$D" | jq -r .text > OrderShipped.json     # review and edit
 printf '%s\n' "$D" | jq -c '{name, exists}'   # the name is suggested from the path
 # {"name":"Events","exists":false}
+```
+
+### Replays
+
+A caught request sent again to a URL, byte for byte, and what that target
+answered ([Replaying a request](replay.md)).
+
+| Route | Does |
+|---|---|
+| `POST /requests/{id}/replays` `{"url": …}` | send it to `url` and wait for the answer (or the error). `201` with the replay. Optional: `"host": "received"` sends the caught `Host` line (default `"target"`: the URL's host and port), `"insecure_tls": true` accepts any https certificate, `"timeout_ms"` (default 30000, at most `-max-wait`). A target that refuses, times out or resets is still a replay, with `status` 0 and `error` set |
+| `GET /requests/{id}/replays` | its replays, newest first (the newest 50 are kept); `include=body` adds the answers' bodies |
+| `GET /replays/{id}` | one replay with its answer body |
+| `GET /replays/{id}/body` | the answer body as the target sent it (never decompressed, at most 1 MiB), with its `Content-Type`, always as a download |
+
+Refusals: `409 body_not_kept` when the body was not kept whole (over the
+limit, or cut in Unmatched); `422 invalid` (field `url`, `host` or
+`timeout_ms`): not http or https, a user name or password in the URL, a
+timeout out of range; `422 target_refused` (field `url`): a link-local or
+cloud-metadata address, also through a name resolving to one, or a target
+outside `-replay-allow`, with the rule in the message; `503 busy` when 4
+replays are running or `-max-inflight` is spent (`Retry-After`). A request
+carries `"replays"`: how many it has.
+
+```json
+{"id":3,"request_id":12,"created_at":"2026-10-19T09:14:02.118Z","by":"ann","url":"http://localhost:3000/webhooks/github",
+ "host":"target","insecure_tls":false,"timeout_ms":30000,"line":"POST /webhooks/github HTTP/1.1",
+ "sent":[["Host","localhost:3000"],["X-GitHub-Event","pull_request"],["X-Hub-Signature-256","sha256=5c1f…"],["Content-Length","73"]],
+ "notes":[],"proto":"HTTP/1.1","status":401,"reason":"Unauthorized",
+ "headers":[["Content-Type","application/json"],["Content-Length","30"]],"body_size":30,"body_cut":false,
+ "duration_ms":4,"ttfb_ms":3,"error":null,"body_text":"{\"error\":\"signature mismatch\"}"}
 ```
 
 ### Reports
@@ -525,6 +555,25 @@ curl -s -o /dev/null -w '%{http_code}\n' -d "$BODY" -H "X-Hub-Signature-256: sha
 
 The same pattern works for `stripe`, `standard` (a `whsec_` key), `hmac` and
 `bearer`; see the table under [Behaviour](#behaviour).
+
+### Replay a request to your handler
+
+Your handler refuses a provider's delivery. Send the caught original to it
+unchanged and read its answer: if it refuses that too, its verification is
+wrong, not the bytes. Here a second endpoint that checks the same GitHub
+signature stands in for the handler:
+
+<!-- docs-check: setup: api handler -->
+```sh
+BODY='{"action":"opened"}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac gh_test_secret | awk '{print $2}')
+curl -s -o /dev/null -d "$BODY" -H "X-Hub-Signature-256: sha256=$SIG" $URL   # 200
+REQ=$(curl -s "$API/endpoints/$ID/requests?limit=1" | jq '.requests[0].id')
+HANDLER=${URL%/orders/events}/handler   # yours: http://localhost:3000/webhooks/github
+curl -s -X POST $API/requests/$REQ/replays -H 'Content-Type: application/json' \
+  -d "{\"url\":\"$HANDLER\"}" | jq -c '{status, error}'
+# {"status":200,"error":null}
+```
 
 ## Testing a sender in Docker
 

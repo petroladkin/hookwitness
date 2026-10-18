@@ -71,7 +71,13 @@ SameSite=Lax, idle 24 h, absolute 7 days), personal tokens
 token (`HOOKWITNESS_API_TOKEN_FILE`, closes the API and MCP even without
 users), two roles (user, admin), a login limit per client address
 (`-trusted-proxies`); token and user management needs a session; the
-catcher replaces the session cookie's value in recorded `Cookie` headers. Setup files: an endpoint's setup (path,
+catcher replaces the session cookie's value in recorded `Cookie` headers.
+Replay: a caught request whose body was kept whole is sent again, byte for
+byte (Host replaced in place unless kept), to a URL from the UI, the API
+(`POST <prefix>/api/v1/requests/{id}/replays`) or MCP (`replay_request`);
+the target's answer is kept with the request (newest 50); link-local and
+cloud-metadata addresses are refused on the address dialled, and
+`-replay-allow` narrows the targets or turns replay off. Setup files: an endpoint's setup (path,
 behaviour, secret names and kinds, never values; `"hookwitness": 1`,
 unknown fields refused) exports from the Behaviour page, Export all, `GET
 <prefix>/api/v1/setup` and MCP `export_endpoint`, and imports (all or
@@ -192,6 +198,16 @@ that makes it false.
   tracked and closed on shutdown (`Streamable.CloseSessions`, called by
   `StopStreams`); results are a summary line and compact JSON,
   bodies cut at 16 KiB; `Bridge` pipes stdio to Streamable HTTP.
+- `internal/send` — one HTTP/1.1 exchange written and read by hand (header
+  lines in order and case, the body as is, the answer never decompressed,
+  no redirects), and the target `Policy` checked on the dialled address
+  (the dialer's Control hook): link-local and metadata addresses always
+  refused, `-replay-allow` parsed here.
+- `internal/replay` — replays of caught requests: refuses bodies not kept
+  whole, four at once, bodies held against `-max-inflight` (the catcher's
+  `Reserve`/`Release`), the timeout, the record (`store` `replays`, newest
+  50 per request), logs naming only the target's origin; `Stop`/`Wait` at
+  shutdown.
 - `internal/web` — the UI (and its report dialog and download, `report.go`): templ components (`views.templ`, generated
   `views_templ.go` is committed), handlers, SSE feed, embedded `static/`
   (our `app.css`, `app.js`; vendored htmx, htmx-ext-sse and fonts under
