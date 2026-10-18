@@ -94,9 +94,10 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	// that was received in full is still evidence and must be kept.
 	ctx := context.WithoutCancel(r.Context())
 
-	endpointID, cfgText, err := h.Store.EndpointByPath(ctx, p)
+	endpointID, cfgText, on, err := h.Store.EndpointByPath(ctx, p)
+	off := err == nil && !on // answered as a path without an endpoint
 	switch {
-	case errors.Is(err, store.ErrNotFound):
+	case errors.Is(err, store.ErrNotFound) || off:
 		endpointID = store.Unmatched
 	case err != nil:
 		h.Log.Error("catch: endpoint lookup failed", "path", p, "err", err)
@@ -129,13 +130,14 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	}
 
 	busy := read == bodyBusy
-	plan := h.plan(req, cfgText, busy)
+	plan := h.plan(req, cfgText, busy, off)
 	err = h.Store.AddRequest(ctx, req, h.Retention, plan.decide)
-	if errors.Is(err, store.ErrNotFound) {
-		// The endpoint was deleted after the lookup: the path is unknown now.
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrOff) {
+		// The endpoint was deleted or turned off after the lookup.
+		off = errors.Is(err, store.ErrOff)
 		req.EndpointID = store.Unmatched
 		req.Verdict, req.Verdicts = "", "" // the endpoint's checks no longer apply
-		plan = h.plan(req, "", busy)
+		plan = h.plan(req, "", busy, off)
 		err = h.Store.AddRequest(ctx, req, h.Retention, nil)
 	}
 	if err != nil {
@@ -144,7 +146,10 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 		return
 	}
 	h.Live.Publish(req.EndpointID)
-	if req.EndpointID == store.Unmatched {
+	switch {
+	case off:
+		h.Log.Info("unmatched request: endpoint off", "method", r.Method, "path", p, "remote", r.RemoteAddr, "no", req.No)
+	case req.EndpointID == store.Unmatched:
 		h.Log.Info("unmatched request", "method", r.Method, "path", p, "remote", r.RemoteAddr, "no", req.No)
 	}
 
@@ -172,7 +177,8 @@ type plan struct {
 
 // plan works out the outcome for everything but the rules, which decide
 // inside the store's transaction (plan.decide), where the counter is exact.
-func (h *Handler) plan(req *store.Request, cfgText string, busy bool) *plan {
+// off: the path is an endpoint's that is off (req goes to Unmatched).
+func (h *Handler) plan(req *store.Request, cfgText string, busy, off bool) *plan {
 	pl := &plan{}
 	if busy && req.EndpointID == store.Unmatched {
 		pl.out = busyOutcome()
@@ -182,6 +188,9 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy bool) *plan {
 	}
 	if req.EndpointID == store.Unmatched {
 		pl.out = emulate.Outcome{Source: emulate.FromUnmatched, Action: emulate.ActReply, Status: http.StatusNotFound}
+		if off {
+			pl.out.Source = emulate.FromOff
+		}
 		req.Status, req.Outcome = pl.out.Status, pl.out.String()
 		pl.closing = req.TooLarge
 		return pl
