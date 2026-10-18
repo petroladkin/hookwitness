@@ -51,7 +51,11 @@ task-shaped tools over the REST API (`internal/mcp`), and `hookwitness mcp`
 bridges stdio clients to it. `hookwitness
 version`, reports, the UI and `/healthz` name the build as `<version>
 (<commit>)` (the image from `dev` is `edge`); `hookwitness health` probes
-`/healthz` (the container's health check). A container image (distroless, non-root, data
+`/healthz` (the container's health check). The admin (UI, REST API, MCP)
+lives under the prefix on the catch listener, or on its own address
+(`-admin-addr`, prefix `/` allowed there), where the catch listener keeps
+only endpoints and `/healthz`; catch URLs come from `-public-url` or are
+derived (`api.CatchURL`). A container image (distroless, non-root, data
 in the `/data` volume) is built, smoke-tested and published to GHCR by CI.
 Released: 0.1.0 (`CHANGELOG.md`); the documentation tells users to run the
 image `:0.1` (`TestDocsImageTag`), and `main` holds the tagged releases.
@@ -63,7 +67,8 @@ that makes it false.
 - `cmd/hookwitness` — the command: subcommands `serve`, `health`, `mcp` (the
   stdio bridge), `version`; signal
   handling; logger setup; wiring of the parts below.
-- `internal/config` — `serve` settings from flags and `HOOKWITNESS_*` env.
+- `internal/config` — `serve` settings from flags and `HOOKWITNESS_*` env
+  (the admin's own address and the public URL validated with the rest).
 - `internal/store` — sqlite (modernc.org/sqlite, no cgo): pragmas, embedded
   migrations in `internal/store/migrations/NNNN_name.sql`, applied in order and
   recorded in `schema_migrations`; a newer database schema is refused.
@@ -72,8 +77,10 @@ that makes it false.
 - `internal/wire` — follows the raw HTTP/1.x stream of each connection to keep
   header lines in received order, case and repetition (net/http's map loses
   them). The root handler must `wire.Take` every request.
-- `internal/server` — the root router on the raw path (`/healthz`, admin
-  prefix, everything else caught; no ServeMux cleaning) and graceful shutdown.
+- `internal/server` — the root routers on the raw path (`/healthz`, admin
+  prefix, everything else caught; no ServeMux cleaning): `New` for one
+  listener, `CatchRoot` and `AdminRoot` when the admin has its own; graceful
+  shutdown (`cmd/hookwitness` runs both listeners together).
 - `internal/emulate` — pure decision logic for an endpoint's answer: config
   (JSON in `endpoints.config`), validation, required-header and
   authorization checks (`checks.go`: kinds, secrets list, `Verify`), rule

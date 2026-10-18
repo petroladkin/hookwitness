@@ -33,7 +33,7 @@ func (h *Handler) patchEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := strings.TrimSpace(*in.Path)
-	if msg := catch.CheckPath(h.o.Prefix, p); msg != "" {
+	if msg := catch.CheckPath(h.o.Reserved, p); msg != "" {
 		WriteError(w, http.StatusUnprocessableEntity, "invalid", msg, "path")
 		return
 	}
@@ -58,7 +58,7 @@ func (h *Handler) writeEndpoint(w http.ResponseWriter, r *http.Request, id int64
 		h.fail(w, "endpoint", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, endpointView(r, ep))
+	writeJSON(w, http.StatusOK, h.endpointView(r, ep))
 }
 
 // deleteEndpoint removes an endpoint and its requests.

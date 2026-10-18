@@ -76,3 +76,19 @@ func TestListAndFindEndpoints(t *testing.T) {
 	wantError(t, e.do("GET", "/endpoints/0", ""), http.StatusNotFound, "not_found", "")
 	wantError(t, e.do("GET", "/endpoints/abc", ""), http.StatusNotFound, "not_found", "")
 }
+
+// With a public URL, an endpoint's url is built on it; with the admin on its
+// own listener, a path under the admin prefix is an ordinary endpoint path.
+func TestEndpointURLAndPathsOfASeparateAdmin(t *testing.T) {
+	e := newEnv(t)
+	e.h.o.Catch = CatchURL{Public: "https://hooks.example.com/in", Addr: "127.0.0.1:8080", Separate: true}
+	e.h.o.Reserved = ""
+	rec := e.do("POST", "/endpoints", `{"path":"/admin/stripe"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	if ep := decodeAs[endpointJSON](t, rec); ep.URL != "https://hooks.example.com/in/admin/stripe" {
+		t.Fatalf("url %q", ep.URL)
+	}
+	wantError(t, e.do("POST", "/endpoints", `{"path":"/healthz"}`), http.StatusUnprocessableEntity, "invalid", "path")
+}

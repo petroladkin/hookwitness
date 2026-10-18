@@ -68,7 +68,7 @@ func newEnv(t *testing.T) env {
 	stop := make(chan struct{})
 	stopOnce := sync.OnceFunc(func() { close(stop) })
 	t.Cleanup(stopOnce)
-	a := api.New(st, lv, log, api.Options{Prefix: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: stop, Version: "v0.0.0-test"})
+	a := api.New(st, lv, log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: stop, Version: "v0.0.0-test"})
 	catcher := &catch.Handler{Store: st, Live: lv, Log: log, MaxBody: 1 << 20, Retention: 1000, Keys: keys}
 
 	polls, inPoll := &atomic.Int64{}, &atomic.Int64{}

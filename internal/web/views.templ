@@ -59,7 +59,7 @@ templ masthead(nav navView) {
 			if nav.OnRegister {
 				<span class="rec" id="feed-state" data-state="connecting"><i aria-hidden="true"></i><span>Connecting</span></span>
 			}
-			<span class="addr">{ nav.Host }</span>
+			<span class="addr">{ hostOf(nav.Catch) }</span>
 			<a class="btn" href={ templ.SafeURL(nav.Prefix + "/") }>Endpoints</a>
 		</div>
 	</header>
@@ -94,7 +94,7 @@ templ endpointsPage(nav navView, creating bool, formPath, formErr string) {
 							for _, e := range nav.Endpoints {
 								<tr>
 									<td><a href={ templ.SafeURL(nav.registerURL(e.ID)) }>{ e.Path }</a></td>
-									<td class="url">http://{ nav.Host }{ e.Path }</td>
+									<td class="url">{ nav.Catch }{ e.Path }</td>
 									<td class="num">{ strconv.Itoa(e.Count) }</td>
 									<td class="when">{ lastSeen(e.LastAt) }</td>
 									<td class="acts">
@@ -346,7 +346,7 @@ templ noExhibit(nav navView, reg registerView) {
 			<p>Requests to paths that no endpoint has land here, answered 404, so a typo in a sender’s URL shows up at once.</p>
 		} else if len(reg.Rows) == 0 {
 			<p>Point a sender at this endpoint, or send a test request:</p>
-			<pre class="try">{ tryCommand(nav.Host, reg.Path) }</pre>
+			<pre class="try">{ tryCommand(nav.Catch, reg.Path) }</pre>
 			<p>It appears in the register on the left as it arrives.</p>
 		} else {
 			<p>Choose a request in the register to see it in full.</p>

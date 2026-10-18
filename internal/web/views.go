@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
@@ -14,7 +15,7 @@ import (
 // navView is what the masthead of every page needs.
 type navView struct {
 	Prefix     string
-	Host       string // as the browser addressed us: the catch URLs' host
+	Catch      string // the catch URLs' base, e.g. http://127.0.0.1:8080 (api.CatchURL)
 	Endpoints  []store.Endpoint
 	Unmatched  int   // requests in the Unmatched register
 	Current    int64 // register shown; -1 for none
@@ -142,8 +143,8 @@ func title(reg registerView) string {
 }
 
 // tryCommand is a curl line that sends a test request to an endpoint.
-func tryCommand(host, path string) string {
-	return "curl -X POST http://" + host + path + " \\\n" +
+func tryCommand(base, path string) string {
+	return "curl -X POST " + base + path + " \\\n" +
 		"  -H 'Content-Type: application/json' \\\n" +
 		`  -d '{"hello":"world"}'`
 }
@@ -184,3 +185,7 @@ func (r rowView) tag() string {
 	}
 	return ""
 }
+
+// hostOf is a catch base without its "http://" scheme, for the header's
+// address; an https base keeps its scheme so it is not mistaken for http.
+func hostOf(base string) string { return strings.TrimPrefix(base, "http://") }

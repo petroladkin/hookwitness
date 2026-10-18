@@ -118,28 +118,48 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 		log.Error("cannot listen", "addr", cfg.Addr, "err", err)
 		return 1
 	}
+	separate := cfg.AdminAddr != ""
+	adminLn := ln
+	if separate {
+		if adminLn, err = net.Listen("tcp", cfg.AdminAddr); err != nil {
+			ln.Close()
+			log.Error("cannot listen for the admin", "admin_addr", cfg.AdminAddr, "err", err)
+			return 1
+		}
+	} else {
+		warnShadowedEndpoints(ctx, st, cfg.AdminPrefix, log)
+	}
 	schema, _ := st.SchemaVersion(ctx)
-	log.Info("hookwitness started",
-		"version", version.Version, "commit", version.Commit,
-		"addr", ln.Addr().String(), "db", cfg.DBPath, "schema", schema,
-		"ui", "http://"+ln.Addr().String()+cfg.AdminPrefix+"/",
-		"api", "http://"+ln.Addr().String()+api.Base(cfg.AdminPrefix),
+	attrs := []any{"version", version.Version, "commit", version.Commit, "addr", ln.Addr().String()}
+	if separate {
+		attrs = append(attrs, "admin_addr", adminLn.Addr().String())
+	}
+	if cfg.PublicURL != "" {
+		attrs = append(attrs, "public_url", cfg.PublicURL)
+	}
+	attrs = append(attrs, "db", cfg.DBPath, "schema", schema,
+		"ui", "http://"+adminLn.Addr().String()+cfg.AdminPrefix+"/",
+		"api", "http://"+adminLn.Addr().String()+api.Base(cfg.AdminPrefix),
 		"max_body", cfg.MaxBody, "max_inflight", cfg.MaxInFlight, "retention", cfg.Retention, "secret_key", keySource)
+	log.Info("hookwitness started", attrs...)
 
 	broker := live.New()
 	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, MaxInFlight: cfg.MaxInFlight,
 		Retention: cfg.Retention, MaxWait: cfg.MaxWait, Keys: keys}
 	ui := web.New(st, broker, log, web.Options{
-		Prefix: cfg.AdminPrefix, MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
+		Prefix: cfg.AdminPrefix, Separate: separate, PublicURL: cfg.PublicURL, CatchAddr: ln.Addr().String(),
+		MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
 	})
-	root := server.New(server.Options{
-		DB:          st,
-		Log:         log,
-		AdminPrefix: cfg.AdminPrefix,
-		Admin:       ui,
-		Catch:       catcher,
-	})
-	err = server.Serve(ctx, ln, root, log, ui.StopStreams, catcher.Stop)
+	o := server.Options{DB: st, Log: log, AdminPrefix: cfg.AdminPrefix, Admin: ui, Catch: catcher}
+	if !separate {
+		err = server.Serve(ctx, ln, server.New(o), log, ui.StopStreams, catcher.Stop)
+	} else {
+		err = serveBoth(ctx, log,
+			func(ctx context.Context) error { return server.Serve(ctx, ln, server.CatchRoot(o), log, catcher.Stop) },
+			func(ctx context.Context) error {
+				return server.Serve(ctx, adminLn, server.AdminRoot(o), log, ui.StopStreams)
+			})
+	}
 	catcher.Wait() // timeouts and drops record their outcome before the store closes
 	if err != nil {
 		log.Error("server stopped with an error", "err", err)
@@ -147,6 +167,51 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	}
 	log.Info("stopped")
 	return 0
+}
+
+// serveBoth runs the catch and the admin listener together: a stop signal
+// stops both, and either one failing stops the other. It returns the first
+// error.
+func serveBoth(ctx context.Context, log *slog.Logger, servers ...func(context.Context) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errc := make(chan error, len(servers))
+	for _, s := range servers {
+		go func() {
+			err := s(ctx)
+			if err != nil {
+				cancel()
+			}
+			errc <- err
+		}()
+	}
+	var first error
+	for range servers {
+		if err := <-errc; err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// warnShadowedEndpoints names the endpoints whose paths the admin prefix
+// covers: made while the admin had its own address, they are not caught
+// while the admin shares the listener (their data stays).
+func warnShadowedEndpoints(ctx context.Context, st *store.Store, prefix string, log *slog.Logger) {
+	eps, err := st.Endpoints(ctx)
+	if err != nil {
+		return
+	}
+	var shadowed []string
+	for _, e := range eps {
+		if e.Path == prefix || strings.HasPrefix(e.Path, prefix+"/") {
+			shadowed = append(shadowed, e.Path)
+		}
+	}
+	if len(shadowed) > 0 {
+		log.Warn("endpoints under the admin prefix are shadowed by the admin and catch nothing; give the admin its own address (-admin-addr) or change their paths",
+			"admin_prefix", prefix, "paths", strings.Join(shadowed, ","))
+	}
 }
 
 // health asks a running server's /healthz and exits 0 when it answers 200:
@@ -259,7 +324,7 @@ var (
 func mcpBridge(ctx context.Context, args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	server := fs.String("url", "http://127.0.0.1:8080", "the hookwitness server (its /admin/mcp is used), or the full MCP URL")
+	server := fs.String("url", "http://127.0.0.1:8080", "the hookwitness server (its /admin/mcp is used), or the full MCP URL (e.g. http://127.0.0.1:8081/mcp for an admin at the root of its own address)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
