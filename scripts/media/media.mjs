@@ -325,6 +325,8 @@ if (!only.length || only.includes("strip")) {
   await at(72); await send("/payments/webhooks", b, auth);         // the same body again
   await at(73);
   await shot("strip", `${UI}/e/${pay}`, { selector: "section.strip", pad: 0, step: "new Promise((r) => setTimeout(r, 300))" });
+  // docs/sharing.md starts its own /payments/webhooks from nothing.
+  await api("DELETE", `/endpoints/${pay}`);
 }
 
 // README.md, the demo: a GIF of one real run. Webhooks arrive live, every
