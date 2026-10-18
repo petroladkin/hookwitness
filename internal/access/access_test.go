@@ -281,7 +281,8 @@ func TestAuthenticator(t *testing.T) {
 	if err != nil || id.Name != "ann" || id.Via != ViaSession || id.SessionID != rowID || !id.Admin() {
 		t.Fatalf("session: %+v, %v", id, err)
 	}
-	if _, err := a.Session(ctx, sid[:42]+"A"); !errors.Is(err, ErrNoSession) {
+	other := map[bool]string{true: "B", false: "A"}[sid[0] == 'A'] + sid[1:]
+	if _, err := a.Session(ctx, other); !errors.Is(err, ErrNoSession) {
 		t.Fatalf("another id: %v", err)
 	}
 	// Activity keeps it; a day without ends it.
