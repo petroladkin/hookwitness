@@ -214,11 +214,10 @@ const htmlSource = `{{define "head" -}}
 {{range .Vars}}<tr><th scope="row"><code>{{.Name}}</code></th><td><code>{{.Value}}</code></td></tr>
 {{else}}<tr><td class="none">None.</td></tr>
 {{end}}</table>
-<table class="secrets">
+<table class="kv">
 <caption>Secrets · named, never shown</caption>
-{{if .Secrets}}<tr><th scope="col">Name</th><th scope="col">Kind</th><th scope="col">State</th><th scope="col">Used by</th></tr>
-{{range .Secrets}}<tr><th scope="row">{{.Name}}</th><td>{{.Kind}}</td><td class="{{if eq .State "not set"}}hot{{end}}">{{.State}}</td><td>{{.Use}}</td></tr>
-{{end}}{{else}}<tr><td class="none">None.</td></tr>
+{{range .Secrets}}<tr><th scope="row">{{.Name}}</th><td>{{.Kind}} · <span class="{{if eq .State "not set"}}hot{{end}}">{{.State}}</span> · {{if eq .Use "not used"}}not used{{else}}used by {{.Use}}{{end}}</td></tr>
+{{else}}<tr><td class="none">None.</td></tr>
 {{end}}</table>
 </section>
 {{end}}<h2 class="requests-title">Requests</h2>
@@ -394,8 +393,7 @@ const setupCSS = `.setup .intro{margin:0 0 12px;color:var(--muted);font-size:13p
 .kv3{table-layout:fixed}
 .kv3 .n{width:2.5em;font:600 13px var(--f-data);color:var(--ink)}
 .kv3 th{width:30%;font-weight:400}
-.kv3 td,.kv3 th,.secrets td,.secrets th{overflow-wrap:anywhere}
-.secrets th[scope=col]{font-weight:400;color:var(--muted)}
+.kv3 td,.kv3 th{overflow-wrap:anywhere}
 .reply{margin:0 0 16px;padding-left:10px;border-left:3px solid var(--ink-soft)}
 .reply h3{margin-top:0}
 .reply table{margin:0 0 6px}

@@ -100,9 +100,10 @@ func setupIntro(h *Head) string {
 	return "The endpoint's setup when this report was generated, " + stamp(h.Generated) + "."
 }
 
-// ReplyTitle names a rule's reply: "Rule 1 · every 3rd → 503".
+// ReplyTitle names a rule's reply: "Rule 1 · every 3rd · 503" (no arrow: the
+// PDF's caption font has none).
 func (r SetupRule) ReplyTitle() string {
-	return "Rule " + strconv.Itoa(r.No) + " · " + r.When + " → " + strconv.Itoa(r.Reply.Status)
+	return "Rule " + strconv.Itoa(r.No) + " · " + r.When + " · " + strconv.Itoa(r.Reply.Status)
 }
 
 // BodyLine says what a reply's body is when it is not a template shown.

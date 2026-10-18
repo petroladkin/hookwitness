@@ -110,8 +110,7 @@ pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var
 .kv3{table-layout:fixed}
 .kv3 .n{width:2.5em;font:600 13px var(--f-data);color:var(--ink)}
 .kv3 th{width:30%;font-weight:400}
-.kv3 td,.kv3 th,.secrets td,.secrets th{overflow-wrap:anywhere}
-.secrets th[scope=col]{font-weight:400;color:var(--muted)}
+.kv3 td,.kv3 th{overflow-wrap:anywhere}
 .reply{margin:0 0 16px;padding-left:10px;border-left:3px solid var(--ink-soft)}
 .reply h3{margin-top:0}
 .reply table{margin:0 0 6px}
@@ -212,7 +211,7 @@ pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var
 <tr><td class="n">4</td><th scope="row">every 7th</th><td>202</td></tr>
 </table>
 <div class="reply">
-<h3>Rule 1 · every 3rd → 503</h3>
+<h3>Rule 1 · every 3rd · 503</h3>
 <table class="kv">
 <tr><th scope="row">Status</th><td>503</td></tr>
 <tr><th scope="row">Delay</th><td>2.0 s &#43; up to 500 ms at random</td></tr>
@@ -222,7 +221,7 @@ pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var
 <pre class="body">busy | try `later`</pre>
 </div>
 <div class="reply">
-<h3>Rule 4 · every 7th → 202</h3>
+<h3>Rule 4 · every 7th · 202</h3>
 <table class="kv">
 <tr><th scope="row">Status</th><td>202</td></tr>
 <tr><th scope="row">Delay</th><td>none</td></tr>
@@ -244,12 +243,11 @@ pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var
 <caption>Variables</caption>
 <tr><th scope="row"><code>shop</code></th><td><code>test-shop</code></td></tr>
 </table>
-<table class="secrets">
+<table class="kv">
 <caption>Secrets · named, never shown</caption>
-<tr><th scope="col">Name</th><th scope="col">Kind</th><th scope="col">State</th><th scope="col">Used by</th></tr>
-<tr><th scope="row">GITHUB_KEY</th><td>signing key</td><td class="">set</td><td>check 2 (GitHub signature)</td></tr>
-<tr><th scope="row">API_TOKEN</th><td>token or password</td><td class="hot">not set</td><td>check 3 (Bearer token)</td></tr>
-<tr><th scope="row">SPARE_TOKEN</th><td>token or password</td><td class="">set</td><td>not used</td></tr>
+<tr><th scope="row">GITHUB_KEY</th><td>signing key · <span class="">set</span> · used by check 2 (GitHub signature)</td></tr>
+<tr><th scope="row">API_TOKEN</th><td>token or password · <span class="hot">not set</span> · used by check 3 (Bearer token)</td></tr>
+<tr><th scope="row">SPARE_TOKEN</th><td>token or password · <span class="">set</span> · not used</td></tr>
 </table>
 </section>
 <h2 class="requests-title">Requests</h2>

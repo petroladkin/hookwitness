@@ -58,7 +58,7 @@ The endpoint's setup when this report was generated, 2026-10-12T09:30:00.000Z.
 | 3 | 10% | drop the connection |
 | 4 | every 7th | 202 |
 
-*Rule 1 · every 3rd → 503*
+*Rule 1 · every 3rd · 503*
 
 | | |
 |---|---|
@@ -72,7 +72,7 @@ Body (a template)
 busy | try `later`
 ```
 
-*Rule 4 · every 7th → 202*
+*Rule 4 · every 7th · 202*
 
 | | |
 |---|---|

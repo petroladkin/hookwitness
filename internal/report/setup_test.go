@@ -93,8 +93,8 @@ func TestSetupSection(t *testing.T) {
 	in("**Schemas**", "| order | check 4 (JSON Schema by /type) |", "| event | check 4", "| draft | not used |")
 	in("**Rules**",
 		"| 1 | every 3rd | 503 after 2.0 s+ |", "| 2 | first 1 | time out |", "| 3 | 10% | drop the connection |", "| 4 | every 7th | 202 |",
-		"Rule 1 · every 3rd → 503", "| Delay | 2.0 s + up to 500 ms at random |", "| `Retry-After` | `2` |", "busy | try `later`",
-		"Rule 4 · every 7th → 202", "4 B given as exact bytes")
+		"Rule 1 · every 3rd · 503", "| Delay | 2.0 s + up to 500 ms at random |", "| `Retry-After` | `2` |", "busy | try `later`",
+		"Rule 4 · every 7th · 202", "4 B given as exact bytes")
 	in("**Default reply**", "| Status | 200 |", "| Delay | none |", "| `Content-Type` | `application/json` |", `{"ok":true,"shop":"{{.Var "shop"}}"}`)
 	in("**Variables**", "| `shop` | `test-shop` |")
 	in("**Secrets**",

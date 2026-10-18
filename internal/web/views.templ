@@ -430,10 +430,11 @@ templ reportDialog(v exportView) {
 				</select>
 			</label>
 			if v.HasSetup {
-				<label class="check setup-switch">
-					<input type="checkbox" name="setup" value="true" checked?={ v.Setup } aria-invalid?={ v.Field == "setup" }/>
-					<span>Add the endpoint's setup: checks, schemas, rules, replies, variables and secret names (never their values), as they are now</span>
-				</label>
+				<fieldset class="masks">
+					<legend>Setup</legend>
+					<p class="help">The endpoint's checks, schemas, rules, replies, variables and secret names (never their values), as they are now.</p>
+					<label class="check"><input type="checkbox" name="setup" value="true" checked?={ v.Setup }/> Add the endpoint's setup</label>
+				</fieldset>
 			}
 			<div class="grid2 even for-range">
 				<label>From, UTC <input type="datetime-local" name="from" step="0.001" value={ v.From } aria-invalid?={ v.Field == "from" }/></label>
