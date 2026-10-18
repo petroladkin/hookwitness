@@ -105,7 +105,7 @@ templ mastNav(nav navView) {
 	</div>
 }
 
-templ endpointsPage(nav navView, creating bool, formPath, formErr string) {
+templ endpointsPage(nav navView, d endpointsDialog) {
 	@layout(nav, "Endpoints") {
 		<main class="sheet">
 			<h1 class="title">Endpoints</h1>
@@ -120,8 +120,20 @@ templ endpointsPage(nav navView, creating bool, formPath, formErr string) {
 						· { strconv.Itoa(nav.Unmatched) } kept
 					</p>
 				</div>
+				if len(nav.Endpoints) > 0 {
+					<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/setup") } download>Export all</a>
+				}
+				<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/?edit=import") }>Import</a>
 				<a class="btn solid" href={ templ.SafeURL(nav.Prefix + "/?edit=new") }>New endpoint</a>
 			</div>
+			if len(d.Imported) > 0 {
+				<p class="saved banner" role="status">
+					Imported: { strings.Join(d.Imported, ", ") }.
+					if d.Unset > 0 {
+						{ plural(d.Unset, "secret has no value yet: the checks that use it give n/v until you set it", "secrets have no value yet: the checks that use them give n/v until you set them") } on the endpoint's Behaviour → Secrets.
+					}
+				</p>
+			}
 			if len(nav.Endpoints) == 0 {
 				<p class="empty">No endpoints yet. Create one with New endpoint, then send it a request.</p>
 			} else {
@@ -133,7 +145,12 @@ templ endpointsPage(nav navView, creating bool, formPath, formErr string) {
 						<tbody>
 							for _, e := range nav.Endpoints {
 								<tr class={ templ.KV("off", !e.Enabled) }>
-									<td><a href={ templ.SafeURL(nav.registerURL(e.ID)) }>{ e.Path }</a></td>
+									<td>
+										<a href={ templ.SafeURL(nav.registerURL(e.ID)) }>{ e.Path }</a>
+										if n := unsetSecrets(e.Config); n > 0 {
+											<a class="unset" href={ templ.SafeURL(nav.registerURL(e.ID) + "/behaviour?tab=secrets") }>{ plural(n, "secret", "secrets") } not set</a>
+										}
+									</td>
 									<td class="url">{ nav.Catch }{ e.Path }</td>
 									<td class="num">{ strconv.Itoa(e.Count) }</td>
 									<td class="when">{ lastSeen(e.LastAt) }</td>
@@ -151,27 +168,30 @@ templ endpointsPage(nav navView, creating bool, formPath, formErr string) {
 					</table>
 				</div>
 			}
-			if creating {
+			if d.Import != nil {
+				@importDialog(nav, *d.Import)
+			}
+			if d.Creating {
 				<dialog class="modal" data-modal data-close={ nav.Prefix + "/" } open aria-labelledby="dialog-title">
 					<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/endpoints") }>
 						<div class="modal-head">
 							<h2 id="dialog-title">New endpoint</h2>
 							<a class="close" href={ templ.SafeURL(nav.Prefix + "/") } aria-label="Close">×</a>
 						</div>
-						if formErr != "" {
-							<p class="error banner" role="alert">Not created: { formErr }</p>
+						if d.FormErr != "" {
+							<p class="error banner" role="alert">Not created: { d.FormErr }</p>
 						}
 						<label for="path">Path</label>
 						<input
 							id="path"
 							name="path"
-							value={ formPath }
+							value={ d.FormPath }
 							placeholder="/stripe/webhooks"
 							autocomplete="off"
 							spellcheck="false"
 							autofocus
 							aria-describedby="path-help"
-							if formErr != "" {
+							if d.FormErr != "" {
 								aria-invalid="true"
 							}
 						/>
@@ -189,6 +209,62 @@ templ endpointsPage(nav navView, creating bool, formPath, formErr string) {
 			<p class="build">Hookwitness { nav.Build }</p>
 		</main>
 	}
+}
+
+// importDialog imports a setup file in two steps: pick (or paste) it, then
+// review where each endpoint goes and give secret values if wanted.
+templ importDialog(nav navView, v importView) {
+	<dialog class="modal" data-modal data-close={ nav.Prefix + "/" } open aria-labelledby="dialog-title">
+		<form class="card import" method="post" action={ templ.SafeURL(nav.Prefix + "/import") } enctype="multipart/form-data">
+			<div class="modal-head">
+				<h2 id="dialog-title">Import endpoints</h2>
+				<a class="close" href={ templ.SafeURL(nav.Prefix + "/") } aria-label="Close">×</a>
+			</div>
+			if v.Error != "" {
+				<p class="error banner" role="alert">Not imported: { v.Error }</p>
+			}
+			if !v.Review {
+				<label>Setup file <input type="file" name="file" accept=".json,application/json" autofocus/></label>
+				<label for="setup-text">Or paste it</label>
+				<textarea id="setup-text" name="text" rows="10" spellcheck="false" placeholder="{&#34;hookwitness&#34;: 1, &#34;endpoints&#34;: [...]}">{ v.Text }</textarea>
+				<p class="help">A <code>.hookwitness.json</code> file exported from an endpoint's Behaviour page or with Export all. It holds the behaviour and the names of the secrets, never their values.</p>
+				<div class="acts">
+					<button class="btn solid" type="submit" name="op" value="review">Review</button>
+					<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/") }>Cancel</a>
+				</div>
+			} else {
+				<textarea name="text" hidden>{ v.Text }</textarea>
+				<p class="help">Nothing is imported until you press Import; then all of these or none.</p>
+				for _, it := range v.Items {
+					<fieldset class="masks import-item">
+						<legend>{ it.Path } · { it.Summary }</legend>
+						<label>Path <input name={ "path_" + strconv.Itoa(it.I) } value={ it.Target } required spellcheck="false" autocomplete="off"/></label>
+						if it.Taken {
+							<label class="check"><input type="checkbox" name={ "replace_" + strconv.Itoa(it.I) } checked?={ it.Replace }/> { it.Target } is already an endpoint: replace its behaviour (its requests, counter and on/off state stay)</label>
+						}
+						for _, s := range it.Secrets {
+							<label>
+								{ s.Name } · { secretKindTitle(s.Kind) }
+								<input type="password" name={ "secret_" + strconv.Itoa(it.I) + "_" + s.Name } value="" autocomplete="new-password" spellcheck="false" placeholder="value (optional)"/>
+							</label>
+						}
+						if len(it.Secrets) > 0 {
+							<p class="help">
+								A secret left empty is not set: its checks give n/v until you set it.
+								if it.Taken {
+									A replaced endpoint keeps the value it has for a secret of the same name and kind.
+								}
+							</p>
+						}
+					</fieldset>
+				}
+				<div class="acts">
+					<button class="btn solid" type="submit" name="op" value="import">Import</button>
+					<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/?edit=import") }>Choose another file</a>
+				</div>
+			}
+		</form>
+	</dialog>
 }
 
 // switchForm turns an endpoint off or on; the switch shows its state.
@@ -255,6 +331,12 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 						Off: requests to this path are answered 404 and kept under
 						<a href={ templ.SafeURL(nav.registerURL(store.Unmatched)) }>Unmatched</a>. Its behaviour, secrets,
 						requests and counter stay as they are; turn it on to catch here again.
+					</p>
+				}
+				if reg.Unset > 0 {
+					<p class="banner off-note" role="status">
+						{ plural(reg.Unset, "secret of this endpoint has no value yet, so the checks that use it give n/v:", "secrets of this endpoint have no value yet, so the checks that use them give n/v:") }
+						<a href={ templ.SafeURL(reg.Base + "/behaviour?tab=secrets") }>set { pick(reg.Unset == 1, "it", "them") } on the Secrets tab</a>.
 					</p>
 				}
 				if reg.Verdicts.On {
@@ -742,7 +824,10 @@ templ behaviourPage(nav navView, b behaviourView) {
 	@layout(nav, "Behaviour · "+b.Path) {
 		<main class="sheet behaviour">
 			<p class="crumb"><a href={ templ.SafeURL(b.Base) }>{ b.Path }</a></p>
-			<h1 class="title">Behaviour</h1>
+			<div class="title-row">
+				<h1 class="title">Behaviour</h1>
+				<a class="btn quiet" href={ templ.SafeURL(b.Base + "/setup") } download>Export setup</a>
+			</div>
 			<p class="lede">
 				How this endpoint answers. Checks run first and can refuse a request; then the first rule whose
 				condition holds decides; otherwise the default reply. Changes apply to the next request.
@@ -862,7 +947,12 @@ templ checkList(b behaviourView) {
 				<li id={ "check-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "check-"+strconv.Itoa(i)) }>
 					<span class="no">{ strconv.Itoa(i + 1) }</span>
 					if ch.GivesVerdict() {
-						<span class="what"><b>{ ch.Label() }</b> · { checkSummary(ch) }</span>
+						<span class="what">
+							<b>{ ch.Label() }</b> · { checkSummary(ch) }
+							if sc, ok := b.Config.SecretByName(ch.Secret); ok && ch.Kind != emulate.KindSchema && !sc.Set() {
+								· <a class="unset" href={ templ.SafeURL(b.Base + "/behaviour?tab=secrets") }>{ ch.Secret } not set: n/v</a>
+							}
+						</span>
 					} else {
 						<span class="what"><b>{ ch.Header }</b> { checkSummary(ch) }</span>
 					}
@@ -898,7 +988,12 @@ templ secretList(b behaviourView) {
 				<li id={ "secret-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "secret-"+strconv.Itoa(i)) }>
 					<span class="no">{ strconv.Itoa(i + 1) }</span>
 					<span class="what">
-						<b>{ sc.Name }</b> · { secretKindTitle(sc.Kind) } · fingerprint <code>{ sc.Fingerprint }</code> · 
+						<b>{ sc.Name }</b> · { secretKindTitle(sc.Kind) } ·
+						if sc.Set() {
+							fingerprint <code>{ sc.Fingerprint }</code> · 
+						} else {
+							<b class="unset">not set</b> · 
+						}
 						if len(b.Config.SecretUsers(sc.Name)) == 0 {
 							not used: <a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=check-new&secret=" + sc.Name) }>add a check</a>
 						} else {
@@ -908,7 +1003,11 @@ templ secretList(b behaviourView) {
 					<form class="acts" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
 						<input type="hidden" name="i" value={ strconv.Itoa(i) }/>
 						<input type="hidden" name="v" value={ b.Version }/>
-						<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=secrets&edit=secret-" + strconv.Itoa(i)) }>Replace</a>
+						if sc.Set() {
+							<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=secrets&edit=secret-" + strconv.Itoa(i)) }>Replace</a>
+						} else {
+							<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=secrets&edit=secret-" + strconv.Itoa(i)) }>Set value</a>
+						}
 						<button class="btn quiet" type="submit" name="op" value="secret-del" data-confirm={ "Delete secret " + sc.Name + "?" }>Delete</button>
 					</form>
 				</li>
@@ -1188,7 +1287,11 @@ templ secretFields(e *editor) {
 			</label>
 		</div>
 	} else {
-		<p class="note"><b>{ e.Secret.Name }</b> · { secretKindTitle(e.Secret.Kind) } · now <code>{ e.Secret.Fingerprint }</code>. The new value replaces it; the checks that use it keep working with the new one.</p>
+		if e.Secret.Set() {
+			<p class="note"><b>{ e.Secret.Name }</b> · { secretKindTitle(e.Secret.Kind) } · now <code>{ e.Secret.Fingerprint }</code>. The new value replaces it; the checks that use it keep working with the new one.</p>
+		} else {
+			<p class="note"><b>{ e.Secret.Name }</b> · { secretKindTitle(e.Secret.Kind) } · not set. Until it has a value, the checks that use it give n/v and refuse nothing.</p>
+		}
 	}
 	<label>Value <input type="password" name="value" value="" required autocomplete="new-password" spellcheck="false"/></label>
 	<p class="help">Stored sealed (signing keys) or as a salted hash (tokens and passwords) and never shown again. Use test and staging secrets only: whoever can open this page can use them to sign requests.</p>

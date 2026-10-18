@@ -103,6 +103,8 @@ func (h *Handler) routes() []route {
 		{"GET", "/requests/{id}", h.getRequest, needAny},
 		{"GET", "/requests/{id}/body", h.rawBody, needAny},
 		{"GET", "/requests/{id}/image", h.getImage, needAny},
+		{"GET", "/setup", h.exportSetup, needAny},
+		{"POST", "/setup", h.importSetup, needAny},
 		{"GET", "/unmatched/requests", h.listUnmatched, needAny},
 		{"GET", "/unmatched/report", h.unmatchedReport, needAny},
 		{"GET", "/me", h.me, needAny},

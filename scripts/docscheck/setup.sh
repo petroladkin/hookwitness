@@ -150,3 +150,37 @@ setup_raw_bytes() {
   local id; id=$(hw_endpoint /legacy/hook)
   hw_behave "$id" '.default = {"status":200,"body_base64":"//5vaw=="}'
 }
+
+# --- sharing a setup ---------------------------------------------------------
+
+# setup_payments: the developer's /payments/webhooks: an enforced Stripe
+# check over STRIPE_SECRET, and the first two deliveries answered 503.
+setup_payments() {
+  local id; id=$(hw_endpoint /payments/webhooks)
+  hw_secret "$id" STRIPE_SECRET key whsec_test_stripe &&
+    hw_behave "$id" '.rules = [{"when":{"kind":"first","n":2},"do":"reply","reply":{"status":503,"headers":[{"name":"Retry-After","value":"2"}]}}]
+      | .checks = [{"kind":"stripe","secret":"STRIPE_SECRET","enforce":true}]'
+}
+# setup_payments_file: that endpoint's setup file, as exported, in the
+# current directory (the QA engineer received it with the ticket).
+setup_payments_file() {
+  cat > payments-webhooks.hookwitness.json <<'JSON'
+{
+  "hookwitness": 1,
+  "endpoints": [
+    {
+      "path": "/payments/webhooks",
+      "default": {"status": 200},
+      "rules": [
+        {"when": {"kind": "first", "n": 2}, "do": "reply",
+         "reply": {"status": 503, "headers": [{"name": "Retry-After", "value": "2"}]}}
+      ],
+      "checks": [{"kind": "stripe", "enforce": true, "secret": "STRIPE_SECRET"}],
+      "vars": [],
+      "schemas": [],
+      "secrets": [{"name": "STRIPE_SECRET", "kind": "key"}]
+    }
+  ]
+}
+JSON
+}

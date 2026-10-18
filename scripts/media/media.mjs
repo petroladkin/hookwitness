@@ -452,6 +452,23 @@ if (!only.length || only.includes("social")) {
   await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false });
 }
 
+// docs/sharing.md: the developer's /payments/webhooks (an enforced Stripe
+// check over STRIPE_SECRET, the first two deliveries answered 503), its
+// file reviewed for import where the path is taken, and the file imported
+// under another path, its secret not set.
+const payments = (await api("POST", "/endpoints", { path: "/payments/webhooks" })).json.id;
+await api("PUT", `/endpoints/${payments}/secrets/STRIPE_SECRET`, { kind: "key", value: "whsec_test_stripe" });
+await behave(payments, {
+  rules: [{ when: { kind: "first", n: 2 }, do: "reply", reply: { status: 503, headers: [{ name: "Retry-After", value: "2" }] } }],
+  checks: [{ kind: "stripe", secret: "STRIPE_SECRET", enforce: true }] });
+const setupFile = await (await fetch(`${API}/setup?id=${payments}`)).text();
+await shot("setup-import", `${UI}/?edit=import`, { selector: dialog, maxHeight: 1200, step: steps(
+  type("text", setupFile), "document.querySelector('dialog[open] button[value=review]').click()") });
+const copy = JSON.parse(setupFile);
+copy.endpoints[0].path = "/qa/payments/webhooks";
+const qa = (await api("POST", "/setup", copy)).json.endpoints[0].id;
+await shot("setup-unset", `${UI}/e/${qa}/behaviour?tab=secrets`, { maxHeight: 620 });
+
 // docs/troubleshooting.md, docs/deployment.md: the UI opened by a name that
 // is not allowed.
 await shot("host-refused", `http://hooks.example.com:${port}/admin/`, { maxHeight: 80 });

@@ -100,6 +100,13 @@ what the sender put in the image.
 normal reply and only its `verdict` says `fail` — use that first to observe a
 sender without breaking it.
 
+Given a setup file (`*.hookwitness.json`, e.g. from a teammate or a ticket)?
+Skip the PUTs: `curl -s -X POST "$API/setup?on_conflict=replace" -H 'Content-Type: application/json' --data-binary @file.hookwitness.json`
+creates (or updates) its endpoints at once (MCP: `import_endpoints`). It holds
+no secret values: each name in `secrets_not_set` is a check that gives `n/v`
+until you PUT that secret's test value. `GET "$API/setup?id=$ID"` (MCP:
+`export_endpoint`) saves your own setup to hand back with the results.
+
 Fault scripting (same PUT, add `rules`): `{"when":{"kind":"first","n":2},"do":"reply","reply":{"status":503}}`
 fails the first two deliveries (retries); `"do":"timeout"` hangs; `"do":"drop"`
 resets the connection; `{"kind":"every","n":3}`, `{"kind":"random","percent":10}`.

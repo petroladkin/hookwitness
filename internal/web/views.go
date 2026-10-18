@@ -33,6 +33,7 @@ type registerView struct {
 	ID       int64
 	Path     string // empty for Unmatched
 	Enabled  bool   // the endpoint is on (always true for Unmatched)
+	Unset    int    // its secrets without a value (imported from a setup file)
 	Count    int
 	Rows     []rowView
 	More     bool  // older requests exist beyond Rows

@@ -26,6 +26,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/mcp"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/server"
+	"github.com/petroladkin/hookwitness/internal/setup"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/version"
 	"github.com/petroladkin/hookwitness/internal/web"
@@ -37,6 +38,7 @@ Commands:
   serve     start the server (hookwitness serve -h for its flags)
   health    exit 0 when the server at -addr / HOOKWITNESS_ADDR answers /healthz
   mcp       bridge an MCP client on stdio to a server's /mcp (hookwitness mcp -url http://127.0.0.1:8080)
+  apply     create or replace the endpoints of a setup file on a running server (hookwitness apply -h)
   user      add, change, remove and list who may log in (hookwitness user -h)
   version   print the version and exit
 `
@@ -64,6 +66,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return health(ctx, args[1:], getenv, stderr)
 	case "mcp":
 		return mcpBridge(ctx, args[1:], stderr)
+	case "apply":
+		return apply(ctx, args[1:], stdout, stderr)
 	case "user":
 		return userCmd(ctx, args[1:], getenv, stdout, stderr)
 	case "version", "--version", "-version":
@@ -116,6 +120,14 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	}
 	checkKey(ctx, st, keys, keySource, log)
 	warnUnreadableSecrets(ctx, st, keys, log)
+
+	reserved := cfg.AdminPrefix
+	if cfg.AdminAddr != "" {
+		reserved = ""
+	}
+	if cfg.Import != "" && !importSetup(ctx, st, cfg.Import, setup.Options{Reserved: reserved, MaxWait: cfg.MaxWait}, log) {
+		return 1
+	}
 
 	machine, machineWarn := "", ""
 	if f := getenv("HOOKWITNESS_API_TOKEN_FILE"); f != "" {
@@ -376,7 +388,7 @@ func warnUnreadableSecrets(ctx context.Context, st *store.Store, keys *secret.Ke
 		}
 		var bad []string
 		for _, s := range cfg.Secrets {
-			if s.Kind != emulate.SecretKey {
+			if s.Kind != emulate.SecretKey || !s.Set() {
 				continue
 			}
 			if _, err := keys.Open(s.Sealed); err != nil {
@@ -395,6 +407,16 @@ func newLogger(format string, w io.Writer) *slog.Logger {
 		return slog.New(slog.NewJSONHandler(w, nil))
 	}
 	return slog.New(slog.NewTextHandler(w, nil))
+}
+
+// readTokenFile reads a -token-file: one line holding the token.
+func readTokenFile(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	tok := strings.TrimSpace(string(b))
+	if err != nil || tok == "" || strings.ContainsAny(tok, "\r\n") {
+		return "", fmt.Errorf("-token-file %s: want one line holding the token", path)
+	}
+	return tok, nil
 }
 
 // stdin and stdout of the MCP bridge; tests replace them.
@@ -423,10 +445,9 @@ func mcpBridge(ctx context.Context, args []string, stderr io.Writer) int {
 	}
 	client := http.DefaultClient
 	if *tokenFile != "" {
-		b, err := os.ReadFile(*tokenFile)
-		tok := strings.TrimSpace(string(b))
-		if err != nil || tok == "" || strings.ContainsAny(tok, "\r\n") {
-			fmt.Fprintf(stderr, "hookwitness: -token-file %s: want one line holding the token\n", *tokenFile)
+		tok, err := readTokenFile(*tokenFile)
+		if err != nil {
+			fmt.Fprintln(stderr, "hookwitness:", err)
 			return 2
 		}
 		client = mcp.WithToken(client, tok)

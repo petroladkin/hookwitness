@@ -122,6 +122,11 @@ type Secret struct {
 	Standard    bool   `json:"standard,omitempty"` // a "whsec_" base64 key, usable by Standard Webhooks checks
 }
 
+// Set reports whether the secret has its value. A secret imported from a
+// setup file has only its name and kind until someone gives the value;
+// checks that use it give n/v "not set" and never refuse.
+func (s Secret) Set() bool { return s.Sealed != "" || s.Hash != "" }
+
 // Keyring opens signing keys and matches tokens (internal/secret.Key).
 type Keyring interface {
 	Open(sealed string) (string, error)
@@ -160,11 +165,11 @@ func (c Config) validateSecrets() error {
 		}
 		seen[s.Name] = true
 		switch {
-		case s.Kind == SecretKey && s.Sealed != "":
-		case s.Kind == SecretToken && s.Hash != "":
 		case s.Kind != SecretKey && s.Kind != SecretToken:
 			return fmt.Errorf("secret %q: unknown kind %q", s.Name, s.Kind)
-		default:
+		case s.Kind == SecretKey && s.Hash != "", s.Kind == SecretToken && s.Sealed != "":
+			return fmt.Errorf("secret %q: a value of the other kind", s.Name)
+		case !s.Set() && (s.Fingerprint != "" || s.Standard):
 			return fmt.Errorf("secret %q has no value", s.Name)
 		}
 	}
@@ -192,7 +197,7 @@ func (c Config) validateAuth(ch Check, maxWait time.Duration) error {
 	}
 	switch ch.kind() {
 	case KindStandard:
-		if !s.Standard {
+		if s.Set() && !s.Standard {
 			return fmt.Errorf(`%s is not a "whsec_" base64 secret`, s.Name)
 		}
 	case KindHMAC:
@@ -257,7 +262,9 @@ func (c Config) Verify(r Request, received time.Time, hasBody bool, keys Keyring
 		// cannot open (a lost key file) must not open the endpoint. A body that
 		// was not kept is answered 413 anyway.
 		// A check that does not apply (no schema for this event) lets it through.
-		if refuse == nil && ch.Enforce && v.Result != auth.Pass && v.Result != auth.NotChecked && (v.Result == auth.Fail || hasBody) {
+		// A secret not set yet (an imported setup) never refuses: the check
+		// cannot say anything about the request.
+		if refuse == nil && ch.Enforce && !c.unset(ch) && v.Result != auth.Pass && v.Result != auth.NotChecked && (v.Result == auth.Fail || hasBody) {
 			refuse = &Failed{Index: i + 1, Check: ch, Why: v.Reason, Problems: v.Problems, Total: v.Total}
 		}
 	}
@@ -271,6 +278,9 @@ func (c Config) verify(ch Check, r Request, in auth.Input, keys Keyring) auth.Ve
 	s, ok := c.SecretByName(ch.Secret)
 	if !ok {
 		return auth.Verdict{Result: auth.NotVerifiable, Reason: "secret " + ch.Secret + " does not exist"}
+	}
+	if !s.Set() {
+		return auth.Verdict{Result: auth.NotVerifiable, Reason: "secret " + s.Name + " not set"}
 	}
 	if keys == nil {
 		return auth.Verdict{Result: auth.NotVerifiable, Reason: "no secret key loaded"}
@@ -316,6 +326,16 @@ func (c Config) verify(ch Check, r Request, in auth.Input, keys Keyring) auth.Ve
 		content = []byte(out)
 	}
 	return auth.HMAC(in, auth.HMACParams{Header: ch.Header, Algo: ch.Algo, Encoding: ch.Encoding, Prefix: ch.Prefix}, key, content)
+}
+
+// unset reports whether an authorization check uses a secret that exists
+// without its value.
+func (c Config) unset(ch Check) bool {
+	if ch.kind() == KindSchema {
+		return false
+	}
+	s, ok := c.SecretByName(ch.Secret)
+	return ok && !s.Set()
 }
 
 // VerdictsJSON is the stored form of verdicts, "" without any.

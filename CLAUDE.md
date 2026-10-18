@@ -67,7 +67,16 @@ SameSite=Lax, idle 24 h, absolute 7 days), personal tokens
 token (`HOOKWITNESS_API_TOKEN_FILE`, closes the API and MCP even without
 users), two roles (user, admin), a login limit per client address
 (`-trusted-proxies`); token and user management needs a session; the
-catcher replaces the session cookie's value in recorded `Cookie` headers. A container image (distroless, non-root, data
+catcher replaces the session cookie's value in recorded `Cookie` headers. Setup files: an endpoint's setup (path,
+behaviour, secret names and kinds, never values; `"hookwitness": 1`,
+unknown fields refused) exports from the Behaviour page, Export all, `GET
+<prefix>/api/v1/setup` and MCP `export_endpoint`, and imports (all or
+none; a taken path replaced only when asked, keeping its requests, counter,
+on/off state and the values of same-named secrets) through the import dialog
+(review, other paths, optional secret values), `POST .../setup`, MCP
+`import_endpoints`, `serve -import` / `HOOKWITNESS_IMPORT` at every start and
+`hookwitness apply`; a secret without its value is "not set": its checks give
+n/v "secret NAME not set" and never refuse. A container image (distroless, non-root, data
 in the `/data` volume) is built, smoke-tested and published to GHCR by CI.
 Released: 0.1.0 (`CHANGELOG.md`); the documentation tells users to run the
 image `:0.1` (`TestDocsImageTag`), and `main` holds the tagged releases.
@@ -76,9 +85,11 @@ that makes it false.
 
 ## Layout
 
-- `cmd/hookwitness` — the command: subcommands `serve`, `health`, `mcp` (the
-  stdio bridge, `-token-file`), `user` (add / passwd / rm / list on the
-  database, exit codes 0-4), `version`; the first admin from the
+- `cmd/hookwitness` — the command: subcommands `serve` (`-import` applies a
+  setup file before listening), `health`, `mcp` (the stdio bridge,
+  `-token-file`), `apply` (a setup file through the API, `-url`,
+  `-token-file`), `user` (add / passwd / rm / list on the database, exit
+  codes 0-4), `version`; the first admin from the
   environment; signal handling; logger setup; wiring of the parts below.
 - `internal/access` — who may use the admin: names, passwords, tokens
   (format, minting), sessions (ids hashed with SHA-256, lifetimes, the
@@ -92,8 +103,14 @@ that makes it false.
   recorded in `schema_migrations`; a newer database schema is refused.
   Users, sessions and tokens (`access.go`; the last admin guarded inside the
   write transaction).
-  Endpoints and requests (`catch.go`); `endpoint_id` NULL is the Unmatched
+  Endpoints and requests (`catch.go`); imports (`import.go`: all or none); `endpoint_id` NULL is the Unmatched
   register; request ids are never reused (they are the SSE event ids).
+- `internal/setup` — setup files: `Export` (secret names and kinds only),
+  `Parse` (format marker and version, unknown fields refused, paths and
+  behaviours validated), `Endpoint.Config` (a replace keeps the values of
+  secrets with the same name and kind), `Apply` through
+  `store.ImportEndpoints` (one transaction; a `Plan` says which taken paths
+  to replace and gives sealed values typed at import).
 - `internal/wire` — follows the raw HTTP/1.x stream of each connection to keep
   header lines in received order, case and repetition (net/http's map loses
   them). The root handler must `wire.Take` every request.
@@ -200,7 +217,7 @@ that makes it false.
   (English only); `skills/hookwitness/SKILL.md` — a Claude Code skill for
   testing webhook senders with hookwitness.
 - `scripts/docscheck` — `make docs-check`: runs every `sh` block of the README
-  and `docs/` against a fresh server and checks the verdicts, statuses and
+  and `docs/` (the binary on PATH as `hookwitness`) against a fresh server and checks the verdicts, statuses and
   outputs the text promises (`setup.sh` does through the API what a page
   says to click); `scripts/media/media.mjs` — `make media`: does through the
   API what each page's text does (same paths, values, requests) and shoots

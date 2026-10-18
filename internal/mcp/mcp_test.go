@@ -157,7 +157,8 @@ func TestToolList(t *testing.T) {
 		got[tool.Name] = tool
 	}
 	want := []string{"create_endpoint", "list_endpoints", "get_endpoint", "configure_endpoint", "set_secret", "wait_for_request",
-		"list_requests", "get_request", "expect", "reset_endpoint", "recheck", "delete_endpoint", "switch_endpoint"}
+		"list_requests", "get_request", "expect", "reset_endpoint", "recheck", "delete_endpoint", "switch_endpoint",
+		"export_endpoint", "import_endpoints"}
 	if len(got) != len(want) {
 		t.Fatalf("%d tools, want %d", len(got), len(want))
 	}
@@ -167,12 +168,12 @@ func TestToolList(t *testing.T) {
 			t.Fatalf("%s: missing, or without description, schema or annotations", name)
 		}
 	}
-	for _, name := range []string{"list_endpoints", "get_endpoint", "wait_for_request", "list_requests", "get_request", "expect"} {
+	for _, name := range []string{"list_endpoints", "get_endpoint", "wait_for_request", "list_requests", "get_request", "expect", "export_endpoint"} {
 		if !got[name].Annotations.ReadOnlyHint {
 			t.Errorf("%s is not marked read-only", name)
 		}
 	}
-	for _, name := range []string{"delete_endpoint", "reset_endpoint"} {
+	for _, name := range []string{"delete_endpoint", "reset_endpoint", "import_endpoints"} {
 		if a := got[name].Annotations; a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint {
 			t.Errorf("%s is not marked destructive", name)
 		}

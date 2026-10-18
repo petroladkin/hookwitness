@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -48,6 +49,7 @@ var (
 	idempotent  = &sdk.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(false), OpenWorldHint: ptr(false)}
 	additive    = &sdk.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false)}
 	destructive = &sdk.ToolAnnotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(false)}
+	replacing   = &sdk.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)}
 )
 
 // Filters narrow the requests a tool looks at, as the API's list does.
@@ -139,6 +141,15 @@ func (s *tools) register(srv *sdk.Server) {
 		Description: "Turn an endpoint off (enabled false) or on (enabled true). Off keeps its path, behaviour, secrets, requests and counter; " +
 			"requests to its path are answered 404 and kept in the Unmatched register until it is on again."},
 		s.switchEndpoint)
+	sdk.AddTool(srv, &sdk.Tool{Name: "export_endpoint", Annotations: readOnly,
+		Description: "Export endpoints' setup as a hookwitness setup file: path, default reply, rules, checks, variables, schemas and the names and kinds of secrets (never their values). " +
+			"Save the setup object as the named .hookwitness.json file; import_endpoints, the UI, the API or hookwitness apply recreate the endpoints from it on any instance."},
+		s.exportEndpoint)
+	sdk.AddTool(srv, &sdk.Tool{Name: "import_endpoints", Annotations: replacing,
+		Description: "Create endpoints from a hookwitness setup file (the object export_endpoint gives, or a .hookwitness.json file's content), all or none. " +
+			"Their secrets are created without values: checks that use them give n/v until set_secret gives each value. " +
+			"A path that is already an endpoint is refused unless on_conflict is replace, which replaces its behaviour (its requests, counter and on/off state stay; secrets of the same name and kind keep their values). Importing the same file again changes nothing."},
+		s.importEndpoints)
 	sdk.AddTool(srv, &sdk.Tool{Name: "delete_endpoint", Annotations: destructive,
 		Description: "Delete an endpoint with its behaviour, secrets and requests."},
 		s.deleteEndpoint)
@@ -692,4 +703,80 @@ func describe(r map[string]any) string {
 		}
 	}
 	return s
+}
+
+// ---- setup files -------------------------------------------------------------
+
+type ExportIn struct {
+	Endpoints []string `json:"endpoints,omitempty" jsonschema:"the endpoints to export: ids or exact paths; empty for all of them"`
+}
+
+func (s *tools) exportEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in ExportIn) (*sdk.CallToolResult, map[string]any, error) {
+	q := url.Values{}
+	for _, ref := range in.Endpoints {
+		p, err := s.c.endpointPath(ctx, ref)
+		if err != nil {
+			return nil, nil, err
+		}
+		id, ok := strings.CutPrefix(p, "/endpoints/")
+		if !ok {
+			return nil, nil, errors.New("the Unmatched register has no setup to export")
+		}
+		q.Add("id", id)
+	}
+	hdr, b, err := s.c.do(ctx, http.MethodGet, "/setup", q, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	var file map[string]any
+	if err := json.Unmarshal(b, &file); err != nil {
+		return nil, nil, err
+	}
+	name := "endpoints.hookwitness.json"
+	if _, params, err := mime.ParseMediaType(hdr.Get("Content-Disposition")); err == nil && params["filename"] != "" {
+		name = params["filename"]
+	}
+	eps, _ := file["endpoints"].([]any)
+	return result(fmt.Sprintf("Setup of %d endpoint(s): save the setup object as %s; secret names and kinds are in it, their values are not in it", len(eps), name),
+		map[string]any{"file_name": name, "setup": file})
+}
+
+type ImportIn struct {
+	Setup      map[string]any `json:"setup" jsonschema:"the setup file: {hookwitness: 1, endpoints: [...]}, as export_endpoint gives it"`
+	OnConflict string         `json:"on_conflict,omitempty" jsonschema:"fail (default): a path that is already an endpoint refuses the import; replace: replace that endpoint's behaviour"`
+}
+
+func (s *tools) importEndpoints(ctx context.Context, _ *sdk.CallToolRequest, in ImportIn) (*sdk.CallToolResult, map[string]any, error) {
+	if in.Setup == nil {
+		return nil, nil, errors.New("give the setup file's content as setup")
+	}
+	q := url.Values{}
+	if in.OnConflict != "" {
+		q.Set("on_conflict", in.OnConflict)
+	}
+	out, err := s.c.call(ctx, http.MethodPost, "/setup", q, in.Setup)
+	if err != nil {
+		return nil, nil, err
+	}
+	var lines []string
+	unset := false
+	eps, _ := out["endpoints"].([]any)
+	for _, e := range eps {
+		m, _ := e.(map[string]any)
+		line := fmt.Sprintf("%v %v (endpoint %v)", m["result"], m["path"], num(m["id"]))
+		if names, _ := m["secrets_not_set"].([]any); len(names) > 0 {
+			var ns []string
+			for _, n := range names {
+				ns = append(ns, fmt.Sprint(n))
+			}
+			line += ", secrets not set: " + strings.Join(ns, ", ")
+			unset = true
+		}
+		lines = append(lines, line)
+	}
+	summary := "Imported: " + strings.Join(lines, "; ")
+	if unset {
+		summary += ". Checks over a secret that is not set give n/v until set_secret gives its value"
+	}
+	return result(summary, out)
 }

@@ -132,8 +132,9 @@ The tools are task-shaped. Each result is a summary line, then compact JSON.
 | `expect` | asserts that N matching requests arrive within a time: pass, or fail with what arrived and the reasons |
 | `switch_endpoint` | turns an endpoint off (its path goes to Unmatched, everything else kept) or on again |
 | `reset_endpoint`, `recheck`, `delete_endpoint` | reset the counter or clear requests, verify again, delete |
+| `export_endpoint`, `import_endpoints` | an endpoint's setup as a file (secret names and kinds, never values); endpoints created, or replaced, from one ([Sharing a setup](sharing.md)) |
 
-`delete_endpoint` and `reset_endpoint` are marked destructive, and the
+`delete_endpoint`, `reset_endpoint` and `import_endpoints` (it can replace an endpoint's behaviour) are marked destructive, and the
 reading tools read-only, so a client can ask you before the destructive ones.
 A session looks like this:
 

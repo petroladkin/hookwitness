@@ -218,6 +218,33 @@ The document (fields left out take their zero value; `default.status` 0 means 20
 - Validation errors are `422` with `field` pointing at the part:
   `rules[1]`, `checks[0]`, `default`, `vars`.
 
+### Setup files
+
+An endpoint's setup (path, behaviour, the names and kinds of its secrets) as
+a file to share between instances ([Sharing a setup](sharing.md)). The file
+never holds a secret's value, hash or fingerprint.
+
+| Route | Does |
+|---|---|
+| `GET /setup` | the setup file of `?id=<id>` (repeat it for several) or of every endpoint; `Content-Disposition` names it `<path>.hookwitness.json` |
+| `POST /setup` | create the file's endpoints, all or none; `201` when it created one, else `200`, with `{"endpoints": [{"id", "path", "result", "secrets_not_set"}]}`. `?on_conflict=replace` replaces the behaviour of an endpoint already at a path (its requests, counter and on/off state stay; a secret of the same name and kind keeps its value); without it a taken path is `409 duplicate_path` |
+
+```console
+$ curl -X POST $API/setup -H 'Content-Type: application/json' --data-binary @payments-webhooks.hookwitness.json
+201
+{"endpoints":[{"id":3,"path":"/payments/webhooks","result":"created","secrets_not_set":["STRIPE_SECRET"]}]}
+```
+
+- `result` is `created`, `replaced` or `unchanged` (the same setup applied
+  again); importing the same file twice changes nothing.
+- An imported secret has no value (`"set": false` in the behaviour): checks
+  that use it give `n/v` "secret NAME not set" and never refuse. Give the
+  value with `PUT /endpoints/{id}/secrets/{name}`.
+- A file that is not a setup (`"hookwitness": 1` missing), of a newer
+  format, with an unknown field, an invalid path or behaviour is `422
+  invalid_setup`, its message naming the problem; nothing is imported. Over
+  16 MiB is `413`.
+
 ### Secrets
 
 Signing keys and passwords that checks use. They are **write-only**: a value
@@ -232,8 +259,11 @@ goes in and never comes back; answers show a fingerprint.
 $ curl -X PUT $API/endpoints/1/secrets/ORDERS_PASSWORD -H 'Content-Type: application/json' \
     -d '{"kind":"token","value":"test-password"}'
 200
-{"name":"ORDERS_PASSWORD","kind":"token","fingerprint":"3f6d2964","used_by":[]}
+{"name":"ORDERS_PASSWORD","kind":"token","fingerprint":"3f6d2964","set":true,"used_by":[]}
 ```
+
+- `set` is `false` for a secret imported from a setup file without its
+  value (`fingerprint` is empty then); this call gives it one.
 
 - `kind`: `token` for bearer tokens and Basic passwords (stored as a salted
   hash), `key` for signing keys (stored encrypted).
