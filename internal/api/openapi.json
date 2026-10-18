@@ -781,6 +781,9 @@
           },
           {
             "$ref": "#/components/parameters/images"
+          },
+          {
+            "$ref": "#/components/parameters/setup"
           }
         ],
         "responses": {
@@ -3376,6 +3379,15 @@
           ],
           "default": "shown"
         }
+      },
+      "setup": {
+        "name": "setup",
+        "in": "query",
+        "schema": {
+          "type": "boolean",
+          "default": false
+        },
+        "description": "true adds a section with the endpoint's setup as it is when the report is made: checks, schemas, rules, replies, variables, and secrets by name, kind and whether they are set (never a value)."
       },
       "path": {
         "name": "path",

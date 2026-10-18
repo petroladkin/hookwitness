@@ -272,6 +272,8 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
 .card label{display:flex;flex-direction:column;gap:4px;font:600 10px/1.3 var(--f-data);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .card label[for]{display:block}
 .card label.check{flex-direction:row;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:12px}
+.card label.setup-switch{align-items:flex-start;line-height:1.45}
+.card label.setup-switch input{margin-top:2px}
 .card input:not([type=checkbox]),.card select,.card textarea{font:400 13px/1.4 var(--f-data);color:var(--text);background:var(--paper);border:0;border-bottom:2px solid var(--grid-major);padding:7px 8px;text-transform:none;letter-spacing:0;min-width:0}
 .card textarea{resize:vertical;width:100%}
 .card input:focus-visible,.card select:focus-visible,.card textarea:focus-visible{outline:none;border-bottom-color:var(--ink)}

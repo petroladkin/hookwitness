@@ -429,6 +429,12 @@ templ reportDialog(v exportView) {
 					<option value="listed" selected?={ v.Images == "listed" }>Listed only: a smaller file</option>
 				</select>
 			</label>
+			if v.HasSetup {
+				<label class="check setup-switch">
+					<input type="checkbox" name="setup" value="true" checked?={ v.Setup } aria-invalid?={ v.Field == "setup" }/>
+					<span>Add the endpoint's setup: checks, schemas, rules, replies, variables and secret names (never their values), as they are now</span>
+				</label>
+			}
 			<div class="grid2 even for-range">
 				<label>From, UTC <input type="datetime-local" name="from" step="0.001" value={ v.From } aria-invalid?={ v.Field == "from" }/></label>
 				<label>To, UTC <input type="datetime-local" name="to" step="0.001" value={ v.To } aria-invalid?={ v.Field == "to" }/></label>
