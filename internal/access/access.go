@@ -128,3 +128,6 @@ func IsInvalid(err error) (*ErrInvalid, bool) {
 	ok := errors.As(err, &e)
 	return e, ok
 }
+
+// MCPExtra is the key of the identity in the MCP SDK's TokenInfo.Extra.
+const MCPExtra = "hookwitness.identity"

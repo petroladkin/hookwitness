@@ -47,7 +47,7 @@ func (h *Handler) patchEndpoint(w http.ResponseWriter, r *http.Request) {
 			h.fail(w, "change path", err)
 			return
 		}
-		h.log.Info("endpoint moved", "from", ep.Path, "to", p, "via", "api")
+		h.log.Info("endpoint moved", logAttrs(r, "from", ep.Path, "to", p, "via", "api")...)
 	}
 	h.writeEndpoint(w, r, ep.ID)
 }
@@ -71,7 +71,7 @@ func (h *Handler) deleteEndpoint(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "delete endpoint", err)
 		return
 	}
-	h.log.Info("endpoint deleted", "path", ep.Path, "via", "api")
+	h.log.Info("endpoint deleted", logAttrs(r, "path", ep.Path, "via", "api")...)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -114,7 +114,7 @@ func (h *Handler) recheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.live.Publish(ep.ID)
-	h.log.Info("verdicts re-checked", "path", ep.Path, "requests", n, "via", "api")
+	h.log.Info("verdicts re-checked", logAttrs(r, "path", ep.Path, "requests", n, "via", "api")...)
 	writeJSON(w, http.StatusOK, map[string]int{"rechecked": n})
 }
 

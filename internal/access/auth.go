@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/secret"
@@ -30,7 +31,10 @@ type Authenticator struct {
 	machine []byte // HMAC of the machine token under mkey; nil: none
 	mkey    []byte // a random key of this process
 	now     func() time.Time
-	dummy   string // a password record checked for unknown names, so timing tells nothing
+	// dummy is a password record checked for unknown names, so timing tells
+	// nothing; made on first use (a hash costs a few milliseconds).
+	dummy     string
+	dummyOnce sync.Once
 }
 
 // New returns an authenticator; machineToken is the machine token's value
@@ -44,7 +48,6 @@ func New(st *store.Store, keys *secret.Key, machineToken string) *Authenticator 
 		rand.Read(a.mkey)
 		a.machine = a.mac(machineToken)
 	}
-	a.dummy = keys.HashToken("not a password of anyone")
 	return a
 }
 
@@ -88,6 +91,7 @@ func (a *Authenticator) Login(ctx context.Context, name, pw string) (store.User,
 	record := u.Password
 	switch {
 	case errors.Is(err, store.ErrNotFound):
+		a.dummyOnce.Do(func() { a.dummy = a.keys.HashToken("not a password of anyone") })
 		record = a.dummy
 	case err != nil:
 		return store.User{}, err

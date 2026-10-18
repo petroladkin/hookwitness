@@ -54,3 +54,8 @@ func bearer(header string) (token string, present bool) {
 	}
 	return strings.TrimSpace(rest), true
 }
+
+// TokenRE matches a personal token anywhere in text.
+func TokenRE() *regexp.Regexp { return tokenAnywhere }
+
+var tokenAnywhere = regexp.MustCompile(TokenPattern)
