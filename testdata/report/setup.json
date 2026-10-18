@@ -1,0 +1,59 @@
+{
+  "default": {
+    "status": 200,
+    "headers": [{"name": "Content-Type", "value": "application/json"}],
+    "body": "{\"ok\":true,\"shop\":\"{{.Var \"shop\"}}\"}\n"
+  },
+  "rules": [
+    {
+      "when": {"kind": "every", "n": 3},
+      "do": "reply",
+      "reply": {
+        "status": 503,
+        "headers": [{"name": "Retry-After", "value": "2"}],
+        "body": "busy | try `later`",
+        "delay_ms": 2000,
+        "jitter_ms": 500
+      }
+    },
+    {"when": {"kind": "first", "n": 1}, "do": "timeout"},
+    {"when": {"kind": "random", "percent": 10}, "do": "drop"},
+    {"when": {"kind": "every", "n": 7}, "do": "reply", "reply": {"status": 202, "body_base64": "AP8A/w=="}}
+  ],
+  "checks": [
+    {"kind": "header", "header": "X-Shop-Domain", "match": "equals", "value": "test-shop.example"},
+    {"kind": "github", "secret": "github-key", "enforce": true},
+    {"kind": "bearer", "secret": "api-token", "error": {"status": 403, "body": "no"}},
+    {
+      "kind": "schema",
+      "enforce": true,
+      "select": {
+        "from": "body",
+        "key": "/type",
+        "map": [{"value": "order.created", "schema": "order"}],
+        "default": ["event"]
+      }
+    }
+  ],
+  "vars": [{"name": "shop", "value": "test-shop"}],
+  "secrets": [
+    {
+      "name": "github-key",
+      "kind": "key",
+      "sealed": "v1.SEALED-TEST-ONLY-a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "fingerprint": "fp-test-only-9e8d7c6b"
+    },
+    {"name": "api-token", "kind": "token", "fingerprint": ""},
+    {
+      "name": "spare-token",
+      "kind": "token",
+      "hash": "pbkdf2-sha256$600000$SALT-TEST-ONLY$HASH-TEST-ONLY-0f1e2d3c",
+      "fingerprint": "fp-test-only-1a2b3c4d"
+    }
+  ],
+  "schemas": [
+    {"name": "order", "text": "{\"type\":\"object\",\"required\":[\"type\",\"id\"]}"},
+    {"name": "event", "text": "{\"type\":\"object\",\"required\":[\"type\"]}"},
+    {"name": "draft", "text": "{\"type\":\"object\"}"}
+  ]
+}

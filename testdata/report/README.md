@@ -13,3 +13,11 @@ by a schema check and a GIF data URL.
 with the options in `internal/report/report_test.go`. They are golden
 files: after an intended change to a report, regenerate them with
 `go test ./internal/report -update` and review the diff.
+
+`setup.json` is a synthetic endpoint behaviour with every part a report's
+setup section shows (a required header, signature, bearer and schema checks,
+rules of each kind, an exact-bytes reply, a variable, and secrets set and not
+set with made-up seals, hashes and fingerprints that no report may carry).
+`setup.md` and `setup.html` are the reports of the first request of
+`requests.json` with that setup shown; the reports above, without it, do
+not change.
