@@ -21,6 +21,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
+	"github.com/petroladkin/hookwitness/internal/replay"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -42,16 +43,20 @@ type Options struct {
 	// (tests). The caller's identity comes in the request's context
 	// (internal/access), put there by internal/web.
 	Access *access.Authenticator
+	// Replay sends caught requests to targets; nil: a service with the
+	// default target policy and no -max-inflight budget (tests).
+	Replay *replay.Service
 }
 
 // Handler serves the API. Create it with New.
 type Handler struct {
-	store *store.Store
-	live  *live.Broker
-	log   *slog.Logger
-	o     Options
-	base  string
-	mux   *http.ServeMux
+	store  *store.Store
+	live   *live.Broker
+	log    *slog.Logger
+	o      Options
+	base   string
+	mux    *http.ServeMux
+	replay *replay.Service
 
 	// beforeSave, when set (tests), runs between reading a behaviour and
 	// saving its replacement: the window another client can change it in.
@@ -63,7 +68,10 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	if o.MaxWait == 0 {
 		o.MaxWait = 5 * time.Minute
 	}
-	h := &Handler{store: st, live: broker, log: log, o: o, base: Base(o.Prefix), mux: http.NewServeMux()}
+	if o.Replay == nil {
+		o.Replay = replay.New(st, log, replay.Options{MaxWait: o.MaxWait})
+	}
+	h := &Handler{store: st, live: broker, log: log, o: o, base: Base(o.Prefix), mux: http.NewServeMux(), replay: o.Replay}
 	b := h.base
 	for _, rt := range h.routes() {
 		h.mux.HandleFunc(rt.method+" "+b+rt.path, h.guard(rt.need, rt.fn))
@@ -103,6 +111,10 @@ func (h *Handler) routes() []route {
 		{"GET", "/requests/{id}", h.getRequest, needAny},
 		{"GET", "/requests/{id}/body", h.rawBody, needAny},
 		{"GET", "/requests/{id}/image", h.getImage, needAny},
+		{"POST", "/requests/{id}/replays", h.replayRequest, needAny},
+		{"GET", "/requests/{id}/replays", h.listReplays, needAny},
+		{"GET", "/replays/{id}", h.getReplay, needAny},
+		{"GET", "/replays/{id}/body", h.replayBody, needAny},
 		{"GET", "/setup", h.exportSetup, needAny},
 		{"POST", "/setup", h.importSetup, needAny},
 		{"GET", "/unmatched/requests", h.listUnmatched, needAny},

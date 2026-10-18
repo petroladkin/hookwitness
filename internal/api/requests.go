@@ -40,6 +40,7 @@ type summaryJSON struct {
 	BodyKept    bool   `json:"body_kept"`          // false when the body was over the limit (413) or the server was busy (503)
 	BodyCut     bool   `json:"body_cut,omitempty"` // only the head was kept (Unmatched): body_size is the whole
 	ContentType string `json:"content_type"`
+	Replays     int    `json:"replays"` // replays kept of it (GET /requests/{id}/replays)
 }
 
 // requestJSON is one caught request in full.
@@ -99,7 +100,7 @@ type imageJSON struct {
 func summaryView(req store.Request) summaryJSON {
 	v := summaryJSON{ID: req.ID, No: req.No, ReceivedAt: stamp(req.ReceivedAt), Method: req.Method, Path: req.Path,
 		Query: req.RawQuery, Status: req.Status, Verdict: req.Verdict, BodySize: req.Size, BodyKept: !req.TooLarge,
-		BodyCut: !req.TooLarge && req.Kept < req.Size}
+		BodyCut: !req.TooLarge && req.Kept < req.Size, Replays: req.Replays}
 	if req.EndpointID != store.Unmatched {
 		id := req.EndpointID
 		v.EndpointID = &id
