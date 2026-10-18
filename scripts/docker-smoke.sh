@@ -151,11 +151,13 @@ cat > "$SETUP" <<'JSON'
 JSON
 chmod 644 "$SETUP"
 start "${LOGIN[@]}" -e HOOKWITNESS_IMPORT=/setup.json -v "$SETUP:/setup.json:ro"
-docker logs $C 2>&1 | grep -q '"endpoint created from a setup file"\|msg="endpoint created from a setup file"' || fail "no import line"
+LOG=$(docker logs $C 2>&1)   # grep -q on a pipe would end docker logs early (pipefail)
+grep -q 'msg="endpoint created from a setup file"' <<<"$LOG" || { echo "$LOG" >&2; fail "no import line"; }
 [ "$(status -d '{}' $B/payments/webhooks)" = 503 ] || fail "the imported rule"
 stop
 start "${LOGIN[@]}" -e HOOKWITNESS_IMPORT=/setup.json -v "$SETUP:/setup.json:ro"
-docker logs $C 2>&1 | grep -q 'created=0 replaced=0 unchanged=1' || fail "a restart changed the imported endpoint"
+LOG=$(docker logs $C 2>&1)
+grep -q 'created=0 replaced=0 unchanged=1' <<<"$LOG" || { echo "$LOG" >&2; fail "a restart changed the imported endpoint"; }
 [ "$(status -d '{}' $B/payments/webhooks)" = 503 ] || fail "the counter after a restart"
 [ "$(status -d '{}' $B/payments/webhooks)" = 200 ] || fail "the counter after a restart (third delivery)"
 ok "HOOKWITNESS_IMPORT: the endpoint at start, unchanged on a restart, its counter kept"
