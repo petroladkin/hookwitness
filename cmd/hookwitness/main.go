@@ -324,7 +324,7 @@ var (
 func mcpBridge(ctx context.Context, args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	server := fs.String("url", "http://127.0.0.1:8080", "the hookwitness server (its /admin/mcp is used), or the full MCP URL")
+	server := fs.String("url", "http://127.0.0.1:8080", "the hookwitness server (its /admin/mcp is used), or the full MCP URL (e.g. http://127.0.0.1:8081/mcp for an admin at the root of its own address)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0

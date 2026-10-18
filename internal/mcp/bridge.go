@@ -66,5 +66,16 @@ func Bridge(ctx context.Context, endpoint string, client *http.Client, in io.Rea
 	if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
 		return nil // the client closed stdin, or the process is stopping
 	}
-	return err
+	return notFoundHint(endpoint, err)
+}
+
+// notFoundHint adds to a "Not Found" from a server's /admin/mcp the URL an
+// admin at the root of its own port has: <server>/mcp.
+func notFoundHint(endpoint string, err error) error {
+	u, perr := url.Parse(endpoint)
+	if perr != nil || !strings.HasSuffix(u.Path, "/admin/mcp") || !strings.Contains(err.Error(), http.StatusText(http.StatusNotFound)) {
+		return err
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/admin/mcp") + "/mcp"
+	return fmt.Errorf("%w (%s has no MCP there; if the admin is at the root of its own address, give -url %s)", err, endpoint, u)
 }

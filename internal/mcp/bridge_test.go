@@ -81,3 +81,24 @@ func TestBridge(t *testing.T) {
 		t.Fatal("the bridge did not end when the client closed")
 	}
 }
+
+// An admin at the root of its own port has its MCP at /mcp, not /admin/mcp:
+// a 404 there names the URL to give instead.
+func TestBridgeHintsOnNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	in, w := io.Pipe()
+	go io.WriteString(w, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"c","version":"1"}}}`+"\n")
+	out := nopWriteCloser{io.Discard}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	endpoint, _ := Endpoint(srv.URL)
+	err := Bridge(ctx, endpoint, srv.Client(), in, out)
+	if err == nil || !strings.Contains(err.Error(), srv.URL+"/mcp") {
+		t.Fatalf("err = %v, want a hint naming %s/mcp", err, srv.URL)
+	}
+}
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
