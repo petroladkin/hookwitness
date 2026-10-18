@@ -31,6 +31,7 @@ type Config struct {
 	PublicURL   string        // base of the catch URLs shown, e.g. https://hooks.example.com; "" = derived
 	AdminHosts  []string      // host names the UI answers to besides IPs and localhost
 	MaxWait     time.Duration // longest reply delay or timeout hold
+	Import      string        // a setup file applied at every start (creates or replaces its endpoints)
 	// TrustedProxies are the reverse proxies whose X-Forwarded-For names the
 	// client (the login limit and the logs); none: the TCP peer.
 	TrustedProxies access.Proxies
@@ -76,6 +77,7 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		{"public-url", "HOOKWITNESS_PUBLIC_URL", "", "base URL senders reach the catch listener at, shown in the UI and the API (for proxies and tunnels), e.g. https://hooks.example.com", &c.PublicURL},
 		{"admin-hosts", "HOOKWITNESS_ADMIN_HOSTS", "", "comma-separated host names the web UI answers to, besides IP addresses and localhost", &adminHosts},
 		{"max-wait", "HOOKWITNESS_MAX_WAIT", DefaultMaxWait, "longest reply delay or timeout hold an endpoint may use, e.g. 30s or 5m", &maxWait},
+		{"import", "HOOKWITNESS_IMPORT", "", "a setup file (exported from hookwitness) applied at every start: its endpoints are created or their behaviour replaced; secrets keep the values they have", &c.Import},
 		{"trusted-proxies", "HOOKWITNESS_TRUSTED_PROXIES", "", "comma-separated addresses or CIDRs of reverse proxies whose X-Forwarded-For names the client (for the login limit); list only your own proxy", &proxies},
 	}
 
