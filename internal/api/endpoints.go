@@ -21,12 +21,8 @@ type endpointJSON struct {
 	Last     *stamp `json:"last_request_at,omitempty"`
 }
 
-func endpointView(r *http.Request, ep store.Endpoint) endpointJSON {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	v := endpointJSON{ID: ep.ID, Path: ep.Path, URL: scheme + "://" + r.Host + ep.Path,
+func (h *Handler) endpointView(r *http.Request, ep store.Endpoint) endpointJSON {
+	v := endpointJSON{ID: ep.ID, Path: ep.Path, URL: h.o.Catch.Base(r) + ep.Path,
 		Requests: ep.Count, Counter: ep.Counter, Created: stamp(ep.CreatedAt)}
 	if !ep.LastAt.IsZero() {
 		last := stamp(ep.LastAt)
@@ -47,7 +43,7 @@ func (h *Handler) listEndpoints(w http.ResponseWriter, r *http.Request) {
 		if q.Has("path") && ep.Path != q.Get("path") {
 			continue
 		}
-		out = append(out, endpointView(r, ep))
+		out = append(out, h.endpointView(r, ep))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"endpoints": out})
 }
@@ -83,7 +79,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	h.log.Info("endpoint created", "path", p, "via", "api")
 	w.Header().Set("Location", h.base+"/endpoints/"+strconv.FormatInt(ep.ID, 10))
-	writeJSON(w, http.StatusCreated, endpointView(r, ep))
+	writeJSON(w, http.StatusCreated, h.endpointView(r, ep))
 }
 
 func (h *Handler) getEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -91,5 +87,5 @@ func (h *Handler) getEndpoint(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, endpointView(r, ep))
+	writeJSON(w, http.StatusOK, h.endpointView(r, ep))
 }

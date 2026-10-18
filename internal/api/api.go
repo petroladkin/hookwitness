@@ -30,6 +30,7 @@ const maxBody = 1 << 20
 type Options struct {
 	Prefix   string          // the admin prefix, e.g. /admin; the API is at Prefix+"/api/v1"
 	Reserved string          // a path prefix endpoints may not use: the admin prefix when it shares the catch listener, else ""
+	Catch    CatchURL        // where senders reach the catch listener: the endpoints' url
 	MaxWait  time.Duration   // longest delay an endpoint may configure
 	Keys     emulate.Sealer  // seals and hashes secrets; nil refuses to set them
 	Keyring  emulate.Keyring // opens secrets for re-checks; nil: checks needing one are n/v

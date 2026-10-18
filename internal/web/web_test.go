@@ -29,6 +29,11 @@ type env struct {
 
 func newEnv(t *testing.T) env {
 	t.Helper()
+	return newEnvWith(t, Options{Prefix: "/admin", MaxBody: 10 << 20, Retention: 1000, Hosts: []string{"hooks.example.test", "example.com"}})
+}
+
+func newEnvWith(t *testing.T, o Options) env {
+	t.Helper()
 	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "hw.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -39,8 +44,8 @@ func newEnv(t *testing.T) env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return env{New(st, lv, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Options{Prefix: "/admin", MaxBody: 10 << 20, Retention: 1000, Hosts: []string{"hooks.example.test", "example.com"}, Keys: keys}), st, lv}
+	o.Keys = keys
+	return env{New(st, lv, slog.New(slog.NewTextHandler(io.Discard, nil)), o), st, lv}
 }
 
 func (e env) do(method, target string, form url.Values, hdr ...string) *httptest.ResponseRecorder {
@@ -560,5 +565,64 @@ func TestWithheldShown(t *testing.T) {
 	})
 	if ex := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(r.ID), nil).Body.String(); !strings.Contains(ex, "The configured reply's body of 11 B not sent: a 204 reply has none.") {
 		t.Error("the page does not say what was withheld")
+	}
+}
+
+// The admin at the root of its own port: every page, form, feed and asset
+// is under "/", catch URLs point at the catch listener, and paths under
+// "/admin" are ordinary endpoint paths.
+func TestAdminAtTheRootOfItsPort(t *testing.T) {
+	e := newEnvWith(t, Options{Prefix: "", Separate: true, CatchAddr: "127.0.0.1:8080", MaxBody: 10 << 20, Retention: 1000, Hosts: []string{"example.com"}})
+	rec := e.do("POST", "/endpoints", url.Values{"path": {"/admin/stripe"}})
+	loc := rec.Header().Get("Location")
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(loc, "/e/") {
+		t.Fatalf("create: %d %q %s", rec.Code, loc, rec.Body)
+	}
+	if rec := e.do("POST", "/endpoints", url.Values{"path": {"/healthz"}}); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("/healthz: %d", rec.Code)
+	}
+	page := e.do("GET", "/", nil, "Host", "127.0.0.1:8081")
+	if page.Code != 200 {
+		t.Fatalf("endpoints page: %d", page.Code)
+	}
+	body := page.Body.String()
+	for _, want := range []string{`href="/"`, `href="/?edit=new"`, `http://127.0.0.1:8080/admin/stripe`, `href="/static/`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("endpoints page lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "127.0.0.1:8081/admin") || strings.Contains(body, `href="//`) {
+		t.Errorf("endpoints page links the admin's own port or a protocol-relative URL")
+	}
+	reg := e.do("GET", loc, nil, "Host", "127.0.0.1:8081")
+	if reg.Code != 200 || !strings.Contains(reg.Body.String(), `sse-connect="`+loc+`/events?after=`) ||
+		!strings.Contains(reg.Body.String(), "curl -X POST http://127.0.0.1:8080/admin/stripe") {
+		t.Fatalf("register: %d", reg.Code)
+	}
+	if rec := e.do("GET", e.h.assetURL("app.css"), nil); rec.Code != 200 {
+		t.Fatalf("static: %d", rec.Code)
+	}
+	if rec := e.do("GET", "/api/v1/endpoints", nil); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"url": "http://127.0.0.1:8080/admin/stripe"`) {
+		t.Fatalf("api: %d %s", rec.Code, rec.Body)
+	}
+	// After a clear, back() keeps a register under the root and refuses a
+	// protocol-relative one.
+	id := strings.TrimPrefix(loc, "/e/")
+	if rec := e.do("POST", loc+"/clear", url.Values{"next": {loc}}); rec.Header().Get("Location") != loc {
+		t.Fatalf("clear back to %q: %q", loc, rec.Header().Get("Location"))
+	}
+	if rec := e.do("POST", "/e/"+id+"/clear", url.Values{"next": {"//evil.example/"}}); strings.HasPrefix(rec.Header().Get("Location"), "//") {
+		t.Fatalf("clear followed %q", rec.Header().Get("Location"))
+	}
+}
+
+// With a public URL, catch URLs are built on it, whatever the browser's
+// host.
+func TestCatchURLsFromThePublicURL(t *testing.T) {
+	e := newEnvWith(t, Options{Prefix: "/admin", PublicURL: "https://hooks.example.com", MaxBody: 10 << 20, Retention: 1000, Hosts: []string{"example.com"}})
+	e.do("POST", "/admin/endpoints", url.Values{"path": {"/gh"}})
+	body := e.do("GET", "/admin/", nil).Body.String()
+	if !strings.Contains(body, "https://hooks.example.com/gh") {
+		t.Fatal("endpoints page lacks the public catch URL")
 	}
 }

@@ -53,9 +53,10 @@ type Handler struct {
 	live    *live.Broker
 	log     *slog.Logger
 	prefix  string
-	reserve string // what endpoint paths may not use (catch.CheckPath)
-	limit   int64  // the body limit, shown when a body was refused
-	keep    int    // retention per register, so the page can drop pruned rows
+	reserve string       // what endpoint paths may not use (catch.CheckPath)
+	catch   api.CatchURL // where senders reach the catch listener
+	limit   int64        // the body limit, shown when a body was refused
+	keep    int          // retention per register, so the page can drop pruned rows
 	maxWait time.Duration
 	hosts   map[string]bool
 	keys    *secret.Key
@@ -73,6 +74,8 @@ type Handler struct {
 type Options struct {
 	Prefix    string        // where the UI is mounted, e.g. /admin; "" = the root of its own listener
 	Separate  bool          // the admin has its own listener: the catch side reserves nothing under Prefix
+	PublicURL string        // base URL senders reach the catch listener at; "" = derived
+	CatchAddr string        // the catch listener's address (a real port), for catch URLs when the admin is separate
 	MaxBody   int64         // the catcher's body limit, shown when a body was refused
 	Retention int           // requests kept per register
 	MaxWait   time.Duration // longest delay an endpoint may configure
@@ -94,13 +97,16 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	if !o.Separate {
 		h.reserve = prefix
 	}
+	h.catch = api.CatchURL{Public: o.PublicURL, Addr: o.CatchAddr, Separate: o.Separate}
 	h.assets = hashAssets()
 
 	mux := http.NewServeMux()
 	p := prefix
-	mux.HandleFunc("GET "+p, func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, p+"/", http.StatusMovedPermanently)
-	})
+	if p != "" { // at the root of its own port the endpoints page is GET /
+		mux.HandleFunc("GET "+p, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, p+"/", http.StatusMovedPermanently)
+		})
+	}
 	mux.HandleFunc("GET "+p+"/{$}", h.endpointsPage)
 	mux.HandleFunc("POST "+p+"/endpoints", h.createEndpoint)
 	mux.HandleFunc("GET "+p+"/e/{reg}", h.registerPage)
@@ -122,7 +128,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	h.csrf = http.NewCrossOriginProtection()
 	h.mux = h.csrf.Handler(mux)
 
-	ao := api.Options{Prefix: prefix, Reserved: h.reserve, MaxWait: h.maxWait, Stop: h.stop, Version: version.String()}
+	ao := api.Options{Prefix: prefix, Reserved: h.reserve, Catch: h.catch, MaxWait: h.maxWait, Stop: h.stop, Version: version.String()}
 	if o.Keys != nil {
 		ao.Keys, ao.Keyring = o.Keys, o.Keys // a nil *secret.Key must stay a nil interface
 	}
@@ -238,7 +244,7 @@ func (h *Handler) nav(r *http.Request, current int64, onRegister bool) (navView,
 	}
 	return navView{
 		Prefix:     h.prefix,
-		Host:       r.Host,
+		Catch:      h.catch.Base(r),
 		Endpoints:  eps,
 		Unmatched:  un.Count,
 		Current:    current,

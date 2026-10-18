@@ -58,7 +58,7 @@ func (h *Handler) writeEndpoint(w http.ResponseWriter, r *http.Request, id int64
 		h.fail(w, "endpoint", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, endpointView(r, ep))
+	writeJSON(w, http.StatusOK, h.endpointView(r, ep))
 }
 
 // deleteEndpoint removes an endpoint and its requests.
