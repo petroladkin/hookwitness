@@ -16,7 +16,9 @@ web UI under the admin prefix (default `/admin`); every other path is caught
 into the Unmatched register with a 404. An endpoint can be turned off
 (`enabled`): it keeps everything, and its path is answered as unmatched
 (outcome source `off`) until it is on again. The UI shows each endpoint's requests
-live (SSE + HTMX) with the recorder strip and the request detail. Each
+live (SSE + HTMX) with the recorder strip (2 min, 10 min, 1 h or 6 h, every
+kept request of the range from a UI-only marks route, the time before the
+oldest kept request hatched "not kept") and the request detail. Each
 endpoint's behaviour page scripts its answers: required-header checks, ordered
 rules (every Nth, first N, random p%) with reply / timeout / drop, a default
 reply, template variables; a reply body is a template or exact bytes

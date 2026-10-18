@@ -94,7 +94,7 @@ the header says the feed is connected.
 ### The strip
 
 Above the register, the strip draws the last two minutes like a recorder's
-paper. Each request is one mark, and its height is the body size. A red mark
+paper; **10 min**, **1 h** or **6 h** under it show a longer stretch. Each request is one mark, and its height is the body size. A red mark
 was not answered 2xx, a dashed one timed out, and a cross was dropped. A red
 bar under the line means a check failed. The same body delivered more than
 once is bracketed, with the gap between the deliveries above the bracket. A
@@ -107,6 +107,22 @@ twice and delivered again after 4 s and 8 s, and another body arrived twice,
 5 s apart.
 
 ![The strip of a payments endpoint after a minute of traffic](images/strip.webp)
+
+A longer range shows senders that retry after minutes or hours, or deliver
+once an hour: Standard Webhooks (Svix), for example, retries after 5 s,
+5 min, 30 min, 2 h and more, so its whole pattern fits on the 6 h paper.
+Each range has its own grid and time labels, and a gap between deliveries is
+written in its own unit (`+4.0 s`, `+5 min`, `+2 h`). The strip draws every
+request the endpoint keeps in the range, not only the rows the register has
+loaded. The browser remembers the range, and the page's address carries it
+(`?span=10m`, `1h`, `6h`), so a link shows the same paper.
+
+The register keeps the newest requests only (`-retention`, see
+[Deployment](deployment.md#settings)). The part of a range older than the oldest kept
+request is hatched and labelled **not kept**: requests may have arrived then,
+but they are gone. A cleared register shows the same before its first new
+request. With a very high retention, a long range of a busy endpoint has
+many marks to load and draw.
 
 ### Retries
 
