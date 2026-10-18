@@ -18,7 +18,10 @@ webhooks and read them with their verdicts. Everything is JSON.
 ## Access
 
 The API lives under the admin prefix: `http://<host>:8080/admin/api/v1`
-(`-admin-prefix` / `HOOKWITNESS_ADMIN_PREFIX` moves it with the UI). It has
+(`-admin-prefix` / `HOOKWITNESS_ADMIN_PREFIX` moves it with the UI; with
+`-admin-addr` / `HOOKWITNESS_ADMIN_ADDR` it moves to the admin's own port,
+`http://<host>:8081/api/v1` when the prefix is `/`). An endpoint's `url` is
+built on `-public-url` / `HOOKWITNESS_PUBLIC_URL` when it is set. It has
 the UI's access rules and no login of its own yet:
 
 - It answers only when called by IP address, `localhost`, or a host name

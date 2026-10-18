@@ -98,6 +98,11 @@ Other clients take the same in their configuration file:
 }
 ```
 
+With the admin on its own port ([Configuration and
+deployment](deployment.md#the-admin-on-its-own-port)), MCP is on that port:
+`http://127.0.0.1:8081/mcp` when the admin is at its root. Give the bridge the
+full URL then: `hookwitness mcp -url http://127.0.0.1:8081/mcp`.
+
 Check that the server answers MCP:
 
 ```sh

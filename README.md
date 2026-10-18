@@ -62,6 +62,10 @@ github.com/petroladkin/hookwitness/cmd/hookwitness@latest`, or `make build &&
 bin/hookwitness serve` in a clone. [Getting started](docs/getting-started.md)
 walks through it.
 
+The UI, the API and MCP share port 8080 under `/admin` by default; to give
+them their own port and publish only the catch port, see [the admin on its
+own port](docs/deployment.md#the-admin-on-its-own-port).
+
 ## What it does
 
 - **[Endpoints and the register](docs/endpoints.md)**: exact paths, a live

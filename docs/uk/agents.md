@@ -99,6 +99,11 @@ claude mcp add hookwitness -- docker exec -i hookwitness /hookwitness mcp -url h
 }
 ```
 
+З адмінкою на окремому порту ([Налаштування й
+розгортання](deployment.md#адмінка-на-окремому-порту)) MCP теж на тому
+порту: `http://127.0.0.1:8081/mcp`, якщо адмінка в його корені. Тоді
+передайте мосту повну адресу: `hookwitness mcp -url http://127.0.0.1:8081/mcp`.
+
 Перевірте, що сервер відповідає по MCP:
 
 ```sh

@@ -76,7 +76,9 @@ variable. In Docker, pass the variables: `-e HOOKWITNESS_RETENTION=5000`.
 | `-max-body` | `HOOKWITNESS_MAX_BODY` | `10MiB` | the largest body kept, in bytes or with `KiB`, `MiB`, `GiB`, at most `512MiB`; a larger one is answered `413` and not kept |
 | `-max-inflight` | `HOOKWITNESS_MAX_INFLIGHT` | the larger of `256MiB` and twice `-max-body` | bytes of request bodies read at once; a body that does not fit is answered `503` with `Retry-After: 5` and kept without its body; at least `-max-body` |
 | `-retention` | `HOOKWITNESS_RETENTION` | `1000` | requests kept per endpoint, and as many unmatched |
-| `-admin-prefix` | `HOOKWITNESS_ADMIN_PREFIX` | `/admin` | where the UI and the API live |
+| `-admin-addr` | `HOOKWITNESS_ADMIN_ADDR` | none | the admin's own address (host:port) for the UI, the API and MCP; none: they live under `-admin-prefix` on `-addr` ([below](#the-admin-on-its-own-port)) |
+| `-admin-prefix` | `HOOKWITNESS_ADMIN_PREFIX` | `/admin` | where the UI and the API live; `/` (the root) only with `-admin-addr` |
+| `-public-url` | `HOOKWITNESS_PUBLIC_URL` | none | the URL senders reach the catch paths at, such as `https://hooks.example.com`: the catch URLs the UI and the API show are built on it (behind a proxy, a tunnel or remapped ports) |
 | `-admin-hosts` | `HOOKWITNESS_ADMIN_HOSTS` | none | host names the UI and the API answer to, comma-separated |
 | `-max-wait` | `HOOKWITNESS_MAX_WAIT` | `5m` | the longest reply delay or timeout hold, from 1s to 1h |
 | — | `HOOKWITNESS_SECRET_KEY` | none | the secret key (below); without it, the key file `<db>.key` |
@@ -118,9 +120,42 @@ reverse proxy that publishes only the catch paths.
   `-e HOOKWITNESS_ADMIN_HOSTS=hooks.example.com`. Catch paths answer to any
   name.
 - Where strangers can reach the server, publish everything except the admin
-  prefix (`/admin`).
+  prefix (`/admin`), or give the admin its own port and publish only the
+  catch port (next section).
 
 ![The answer to a host name that is not allowed](images/host-refused.webp)
+
+### The admin on its own port
+
+By default one port does everything: the catch paths and, under `/admin`,
+the UI, the API and MCP. Set `HOOKWITNESS_ADMIN_ADDR` to give the admin its
+own port; the catch port then keeps only the catch paths and `/healthz`, and
+every other path there is caught, `/admin/…` too. Publish the catch port and
+keep the admin port on localhost:
+
+<!-- docs-check: skip: starts a container; scripts/docker-smoke.sh runs this layout in CI -->
+```sh
+docker run -d --name hookwitness -p 8080:8080 -p 127.0.0.1:8081:8081 \
+  -e HOOKWITNESS_ADMIN_ADDR=:8081 -e HOOKWITNESS_ADMIN_PREFIX=/ \
+  -e HOOKWITNESS_PUBLIC_URL=http://hooks.example.com:8080 \
+  -v hookwitness:/data ghcr.io/petroladkin/hookwitness:0.1
+```
+
+The UI is then at <http://127.0.0.1:8081/>, the API at
+`http://127.0.0.1:8081/api/v1` and MCP at `http://127.0.0.1:8081/mcp`
+(`hookwitness mcp -url http://127.0.0.1:8081/mcp`). With the default prefix
+they stay under `/admin` on the admin port. `/healthz` answers on both ports;
+the image's health check asks the catch port.
+
+The catch URLs the UI shows need to know where senders reach the catch port.
+Without `HOOKWITNESS_PUBLIC_URL` they use the catch port's own host when
+`-addr` names one, else the host you opened the UI by, with the catch port
+(`8080`). Behind a proxy, a tunnel or a remapped port (`-p 9000:8080`) that
+guess is wrong: set `HOOKWITNESS_PUBLIC_URL`.
+
+An endpoint may now use a path under `/admin`. If the admin later moves back
+under the prefix on the catch port, it covers such an endpoint, which then
+catches nothing; the server names those endpoints in a warning at start.
 
 ## Build from source
 
