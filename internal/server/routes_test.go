@@ -248,3 +248,85 @@ func TestDropThroughTheRecordingListener(t *testing.T) {
 		t.Fatalf("sender saw %v, want a TCP reset", err)
 	}
 }
+
+// With the admin on its own listener, the catch root serves only the health
+// check and the catcher: the prefix is a path like any other.
+func TestCatchRoot(t *testing.T) {
+	c := &recordingCatcher{}
+	h := CatchRoot(Options{DB: pinger{}, Log: quiet, Catch: c})
+	for target, want := range map[string]int{
+		"/healthz":          200,
+		"/admin":            299,
+		"/admin/e/1":        299,
+		"/api/v1/endpoints": 299,
+		"/":                 299,
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
+		if rec.Code != want {
+			t.Errorf("%s: %d, want %d", target, rec.Code, want)
+		}
+	}
+}
+
+// The admin root serves the health check and the admin under its prefix;
+// nothing is caught there.
+func TestAdminRoot(t *testing.T) {
+	admin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(298) })
+	for _, c := range []struct {
+		prefix string
+		want   map[string]int
+	}{
+		{"/admin", map[string]int{"/healthz": 200, "/admin": 298, "/admin/e/1": 298, "/stripe/webhook": 404, "/": 404}},
+		{"", map[string]int{"/healthz": 200, "/": 298, "/e/1": 298, "/api/v1/endpoints": 298, "/mcp": 298, "/admin/x": 298}},
+	} {
+		h := AdminRoot(Options{DB: pinger{}, Log: quiet, AdminPrefix: c.prefix, Admin: admin})
+		for target, want := range c.want {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
+			if rec.Code != want {
+				t.Errorf("prefix %q %s: %d, want %d", c.prefix, target, rec.Code, want)
+			}
+		}
+	}
+}
+
+// The admin root takes each request's recorded head, as the shared root
+// does, so the heads of a kept-alive connection never pile up: by the time
+// the admin runs, its head is gone from the queue.
+func TestAdminRootTakesEachHead(t *testing.T) {
+	var got []string
+	admin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, left := wire.Take(r)
+		got = append(got, fmt.Sprintf("%s:%v", r.Header.Get("X-N"), left))
+		w.WriteHeader(204)
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, ln, AdminRoot(Options{DB: pinger{}, Log: quiet, AdminPrefix: "", Admin: admin}), quiet)
+	}()
+	defer func() { cancel(); <-done }()
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	br := bufio.NewReader(c)
+	for _, n := range []string{"1", "2"} {
+		fmt.Fprintf(c, "GET /e/1 HTTP/1.1\r\nHost: 127.0.0.1\r\nX-N: %s\r\n\r\n", n)
+		resp, err := http.ReadResponse(br, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	if strings.Join(got, ",") != "1:false,2:false" {
+		t.Fatalf("got %v", got)
+	}
+}
