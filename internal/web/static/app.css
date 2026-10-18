@@ -109,6 +109,11 @@ code{font:400 .9em/1 var(--f-data)}
 .strip canvas{display:block;width:100%;height:150px}
 .strip .legend{font:400 10px/1.3 var(--f-data);color:var(--muted);padding:0 8px 6px}
 .strip .legend b{color:var(--ink);font-weight:600}
+.strip .legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
+.strip .spans{display:inline-flex;align-items:center;gap:4px}
+.strip .spans button{font:600 10px/1 var(--f-data);color:var(--ink);background:transparent;border:1px solid var(--grid-major);padding:3px 6px;cursor:pointer}
+.strip .spans button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.strip .spans button:focus-visible{outline:2px solid var(--alarm);outline-offset:1px}
 
 /* register and exhibit */
 .desk{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);flex:1;min-height:0}

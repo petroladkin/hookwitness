@@ -89,3 +89,49 @@ for (const [w, h] of [[358, 110], [1300, 150]]) {
     assert.ok(box[0] > s.pen + 6 && box[1] <= w, `now at ${box}, arrow to ${s.pen + 6}`);
   });
 }
+
+const { SPANS, ago, full, short } = sandbox.HookwitnessStrip;
+
+test("the ranges: 2 min, 10 min, 1 h, 6 h, each with its grid and labels", () => {
+  assert.deepEqual(Object.keys(SPANS), ["2m", "10m", "1h", "6h"]);
+  const want = {
+    "2m": [120000, 2000, 10000, 30000, ["−30 s", "−60 s", "−90 s"]],
+    "10m": [600000, 10000, 60000, 120000, ["−2 min", "−4 min", "−6 min", "−8 min"]],
+    "1h": [3600000, 60000, 600000, 600000, ["−10 min", "−20 min", "−30 min", "−40 min", "−50 min"]],
+    "6h": [21600000, 600000, 3600000, 3600000, ["−1 h", "−2 h", "−3 h", "−4 h", "−5 h"]],
+  };
+  for (const [k, [span, line, major, label, labels]] of Object.entries(want)) {
+    const s = SPANS[k];
+    assert.deepEqual([s.span, s.line, s.major, s.label], [span, line, major, label], k);
+    const got = [];
+    for (let t = s.label; t < s.span; t += s.label) got.push(ago(t, s.span));
+    assert.deepEqual(got, labels, k);
+    assert.equal(s.major % s.line, 0, `${k}: major lines fall on lines`);
+    assert.ok(s.span / s.line <= 60, `${k}: at most 60 lines across`);
+  }
+});
+
+test("gaps between deliveries in their own unit", () => {
+  for (const [ms, f, sh] of [
+    [4000, "+4.0 s", "4.0s"], [45000, "+45.0 s", "45s"],
+    [300000, "+5 min", "5m"], [330000, "+5.5 min", "5.5m"], [1800000, "+30 min", "30m"],
+    [7200000, "+2 h", "2h"], [18000000, "+5 h", "5h"], [9000000, "+2.5 h", "2.5h"],
+  ]) {
+    assert.equal(full(ms), f);
+    assert.equal(short(ms), sh);
+  }
+});
+
+test("a long range's retries get labels in minutes and hours", () => {
+  // Standard Webhooks' schedule on the 6 h paper: 5 s, 5 min, 30 min, 2 h.
+  const w = 1300, pen = w - 28, span = SPANS["6h"].span, now = 30000000;
+  const x = (t) => pen - ((now - t) / span) * (pen - 8);
+  let at = now - 3 * 3600000;
+  const marks = [];
+  for (const gap of [0, 5000, 300000, 1800000, 7200000]) {
+    at += gap;
+    marks.push({ at, group: "a", x: x(at) });
+  }
+  const labels = layout(marks, w, 150, pen, measure).brackets.map((b) => b.label).filter(Boolean);
+  assert.ok(labels.includes("+2 h") && labels.includes("+30 min"), `labels: ${labels}`);
+});

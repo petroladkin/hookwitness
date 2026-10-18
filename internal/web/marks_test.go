@@ -106,3 +106,23 @@ func TestMarksRefused(t *testing.T) {
 		t.Errorf("unknown endpoint: %d", rec.Code)
 	}
 }
+
+// AC-1: the strip's legend offers the ranges, 2 min chosen; the canvas
+// knows where its marks are.
+func TestStripRanges(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/a")
+	page := e.do("GET", "/admin/e/"+id(ep.ID), nil).Body.String()
+	for _, want := range []string{
+		`data-marks="/admin/e/` + id(ep.ID) + `/marks"`,
+		`<button type="button" data-span="2m" aria-pressed="true">2 min</button>`,
+		`data-span="10m" aria-pressed="false"`, `data-span="1h"`, `data-span="6h"`, "hatched: not kept",
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("lacks %s", want)
+		}
+	}
+	if !strings.Contains(e.do("GET", "/admin/e/unmatched", nil).Body.String(), `data-marks="/admin/e/unmatched/marks"`) {
+		t.Fatal("unmatched strip")
+	}
+}
