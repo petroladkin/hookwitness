@@ -119,6 +119,9 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	}
 	mux.HandleFunc("GET "+p+"/{$}", h.endpointsPage)
 	mux.HandleFunc("POST "+p+"/endpoints", h.createEndpoint)
+	mux.HandleFunc("POST "+p+"/import", h.importSetup)
+	mux.HandleFunc("GET "+p+"/setup", h.exportSetup)
+	mux.HandleFunc("GET "+p+"/e/{reg}/setup", h.exportSetup)
 	mux.HandleFunc("GET "+p+"/e/{reg}", h.registerPage)
 	mux.HandleFunc("GET "+p+"/e/{reg}/r/{id}", h.registerPage)
 	mux.HandleFunc("GET "+p+"/e/{reg}/rows", h.olderRows)
@@ -309,17 +312,38 @@ func (h *Handler) nav(r *http.Request, current int64, onRegister bool) (navView,
 }
 
 func (h *Handler) endpointsPage(w http.ResponseWriter, r *http.Request) {
-	h.showEndpoints(w, r, http.StatusOK, r.URL.Query().Get("edit") == "new", "", "")
+	q := r.URL.Query()
+	d := endpointsDialog{Creating: q.Get("edit") == "new", Imported: q["imported"]}
+	if q.Get("edit") == "import" {
+		d.Import = &importView{}
+	}
+	d.Unset, _ = strconv.Atoi(q.Get("unset"))
+	h.showEndpointsWith(w, r, http.StatusOK, d)
+}
+
+// endpointsDialog is what the endpoints page shows besides the list: the
+// new-endpoint dialog, the import dialog, the outcome of an import.
+type endpointsDialog struct {
+	Creating bool
+	FormPath string
+	FormErr  string
+	Import   *importView
+	Imported []string // "created /path", "replaced /path", ...
+	Unset    int      // secrets left without a value by the import
 }
 
 // showEndpoints renders the list; creating opens the new-endpoint dialog.
 func (h *Handler) showEndpoints(w http.ResponseWriter, r *http.Request, status int, creating bool, formPath, formErr string) {
+	h.showEndpointsWith(w, r, status, endpointsDialog{Creating: creating, FormPath: formPath, FormErr: formErr})
+}
+
+func (h *Handler) showEndpointsWith(w http.ResponseWriter, r *http.Request, status int, d endpointsDialog) {
 	nav, err := h.nav(r, -1, false)
 	if err != nil {
 		h.fail(w, "endpoints", err)
 		return
 	}
-	h.render(w, r, status, endpointsPage(nav, creating, formPath, formErr))
+	h.render(w, r, status, endpointsPage(nav, d))
 }
 
 // checkPath validates an endpoint path; the message is for the person who
@@ -518,6 +542,7 @@ func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64
 		ID:       reg,
 		Path:     ep.Path,
 		Enabled:  ep.Enabled || reg == store.Unmatched,
+		Unset:    unsetSecrets(ep.Config),
 		Count:    ep.Count,
 		Rows:     rows,
 		More:     more,
