@@ -119,7 +119,7 @@ sha512 and base64.
 ```sh
 H=http://127.0.0.1:8080/hooks
 BODY='{"event":"ping"}'
-X=$(printf '%s' "$BODY" | openssl dgst -sha512 -hmac hmac_test_key -binary | base64)
+X=$(printf '%s' "$BODY" | openssl dgst -sha512 -hmac hmac_test_key -binary | openssl base64 -A)
 curl -s -d "$BODY" -H "X-Signature: $X" $H            # pass
 curl -s -d "$BODY" -H "X-Signature: not-base64!" $H   # fail: signature is not base64
 ```
