@@ -107,4 +107,36 @@ ok "catch port: /admin/x and /api/v1/endpoints caught into Unmatched; admin and 
 stop
 [ "$code" = 0 ] || fail "exit code $code after docker stop"
 ok "docker stop: exit 0 with two listeners"
+
+# Login: the first admin from a mounted password file (docs/access.md), on
+# the same volume, with the admin on its own port.
+PW=$(mktemp); trap 'cleanup; rm -f "$PW"' EXIT
+printf 'smoke-admin-password\n' > "$PW"; chmod 644 "$PW"   # the image's user must read it
+LOGIN=(-p 127.0.0.1:$APORT:8081 -e HOOKWITNESS_ADMIN_ADDR=:8081 -e HOOKWITNESS_ADMIN_PREFIX=/ -e HOOKWITNESS_PUBLIC_URL=$B
+  -e HOOKWITNESS_ADMIN_USER=root -e HOOKWITNESS_ADMIN_PASSWORD_FILE=/run/secrets/admin_password -v "$PW:/run/secrets/admin_password:ro")
+start "${LOGIN[@]}"
+docker logs $C 2>&1 | grep -q 'admin user created' || fail "no bootstrap line"
+[ "$(status "$X/")" = 303 ] && [ "$(status "$X/api/v1/endpoints")" = 401 ] || fail "the admin is open with a user"
+[ "$(status $B/healthz)" = 200 ] || fail "healthz with login on"
+J=$(mktemp)
+[ "$(status -c "$J" -d name=root -d password=smoke-admin-password "$X/login")" = 303 ] || fail "login"
+SID=$(awk '$6=="hookwitness_session"{print $7}' "$J")
+[ -n "$SID" ] || fail "no session cookie"
+TOKEN=$(curl -fsS -b "$J" -X POST -H 'Content-Type: application/json' -d '{"name":"smoke"}' "$X/api/v1/me/tokens" | sed -n 's/.*"token": "\([^"]*\)".*/\1/p')
+[ "$(status -H "Authorization: Bearer $TOKEN" "$X/api/v1/endpoints")" = 200 ] || fail "the API with a token"
+ok "first admin from the password file; UI 303 and API 401 without a login; login and a token work"
+# A browser logged in on the admin port sends its cookie to the catch port.
+status -H "Cookie: theme=dark; hookwitness_session=$SID" -d '{}' $B/hooks >/dev/null
+last=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$X/api/v1/endpoints/1/requests?limit=1" | sed -n 's/.*"id": \([0-9]*\),.*/\1/p' | head -1)
+got=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$X/api/v1/requests/$last")
+grep -q 'hookwitness_session=\[hookwitness session\]' <<<"$got" && ! grep -q "$SID" <<<"$got" || fail "the session cookie was recorded"
+ok "the session cookie's value is never kept in a caught request"
+stop
+start "${LOGIN[@]}"
+docker logs $C 2>&1 | grep -q 'admin bootstrap skipped' || fail "no skipped line on the second start"
+[ "$(status -d name=root -d password=smoke-admin-password "$X/login")" = 303 ] || fail "login after a restart"
+docker logs $C 2>&1 | grep -q -e smoke-admin-password -e "$TOKEN" -e "$SID" && fail "a secret value in the log"
+ok "restart: bootstrap skipped, the same password works, no secret value in the log"
+rm -f "$J"
+stop
 echo "smoke: all passed"
