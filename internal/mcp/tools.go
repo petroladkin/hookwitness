@@ -49,6 +49,7 @@ var (
 	idempotent  = &sdk.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(false), OpenWorldHint: ptr(false)}
 	additive    = &sdk.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false)}
 	destructive = &sdk.ToolAnnotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(false)}
+	outward     = &sdk.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(true)} // reaches outside the server
 	replacing   = &sdk.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)}
 )
 
@@ -125,8 +126,13 @@ func (s *tools) register(srv *sdk.Server) {
 		Description: "List an endpoint's requests (or the Unmatched register: endpoint \"unmatched\"), newest first; with after, the newer ones oldest first. Filters as in wait_for_request."},
 		s.listRequests)
 	sdk.AddTool(srv, &sdk.Tool{Name: "get_request", Annotations: readOnly,
-		Description: "One request in full: method, path, query, headers in the order sent, the body (cut at 16 KiB with its size), what was answered, and every verdict with its reason and schema problems."},
+		Description: "One request in full: method, path, query, headers in the order sent, the body (cut at 16 KiB with its size), what was answered, every verdict with its reason and schema problems, and its replays (target, status or error)."},
 		s.getRequest)
+	sdk.AddTool(srv, &sdk.Tool{Name: "replay_request", Annotations: outward,
+		Description: "Send a caught request again, byte for byte, to a URL (e.g. your own handler at http://localhost:3000/webhooks) and return what it answered: status, headers in order, body (cut at 16 KiB), timings, or the error. " +
+			"The body and the header lines go as they arrived; only Host becomes the target's (host: received keeps it). Use it to tell a handler's verification bug from bytes changed on the way. " +
+			"Redirects are not followed. Link-local and cloud-metadata addresses are refused, and the server may allow fewer targets (-replay-allow)."},
+		s.replayRequest)
 	sdk.AddTool(srv, &sdk.Tool{Name: "expect", Annotations: readOnly,
 		Description: "Assert that count requests matching the filters arrive at an endpoint within within_s seconds (default 30, at most 300), counting from after (default: now). " +
 			"Returns pass with the matching requests, or fail with what arrived instead and the reasons of their verdicts."},
@@ -446,7 +452,65 @@ func (s *tools) getRequest(ctx context.Context, _ *sdk.CallToolRequest, in GetIn
 		return nil, nil, err
 	}
 	s.cut(r)
+	if num(r["replays"]) > 0 {
+		list, err := s.c.get(ctx, "/requests/"+strconv.FormatInt(in.ID, 10)+"/replays", nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		var brief []map[string]any
+		rs, _ := list["replays"].([]any)
+		for _, x := range rs {
+			rp, _ := x.(map[string]any)
+			brief = append(brief, map[string]any{"id": rp["id"], "created_at": rp["created_at"], "url": rp["url"],
+				"status": rp["status"], "error": rp["error"], "duration_ms": rp["duration_ms"]})
+		}
+		r["replays"] = brief
+	}
 	return result(describe(r), r)
+}
+
+type ReplayIn struct {
+	RequestID   int64  `json:"request_id" jsonschema:"the id of the caught request to send again"`
+	URL         string `json:"url" jsonschema:"where to send it: http or https, with the path and query, e.g. http://localhost:3000/webhooks/github"`
+	Host        string `json:"host,omitempty" jsonschema:"target (default): Host is the URL's host and port; received: the Host line as caught"`
+	InsecureTLS bool   `json:"insecure_tls,omitempty" jsonschema:"https: accept any certificate (a self-signed local handler)"`
+	TimeoutMS   int64  `json:"timeout_ms,omitempty" jsonschema:"milliseconds for the whole exchange; default 30000"`
+}
+
+func (s *tools) replayRequest(ctx context.Context, _ *sdk.CallToolRequest, in ReplayIn) (*sdk.CallToolResult, map[string]any, error) {
+	body := map[string]any{"url": in.URL, "insecure_tls": in.InsecureTLS}
+	if in.Host != "" {
+		body["host"] = in.Host
+	}
+	if in.TimeoutMS != 0 {
+		body["timeout_ms"] = in.TimeoutMS
+	}
+	rp, err := s.c.call(ctx, http.MethodPost, "/requests/"+strconv.FormatInt(in.RequestID, 10)+"/replays", nil, body)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, k := range []string{"body_text", "body_base64"} {
+		if v, ok := rp[k].(string); ok && len(v) > MaxBody {
+			limit := MaxBody
+			for k == "body_text" && limit > 0 && !utf8Start(v[limit]) {
+				limit--
+			}
+			rp[k] = v[:limit]
+			rp["body_cut"] = true
+			rp["body_url"] = "http://" + s.c.host + s.c.base + "/replays/" + strconv.FormatInt(int64(num(rp["id"])), 10) + "/body"
+		}
+	}
+	target := in.URL
+	if u, err := url.Parse(in.URL); err == nil {
+		target = u.Scheme + "://" + u.Host + u.EscapedPath()
+	}
+	summary := fmt.Sprintf("replayed request %d to %s: ", in.RequestID, target)
+	if e, ok := rp["error"].(map[string]any); ok {
+		summary += fmt.Sprintf("no answer (%v: %v)", e["kind"], e["message"])
+	} else {
+		summary += fmt.Sprintf("%v in %v ms", num(rp["status"]), num(rp["duration_ms"]))
+	}
+	return result(summary, rp)
 }
 
 type WaitIn struct {
