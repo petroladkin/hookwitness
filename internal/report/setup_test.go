@@ -87,8 +87,8 @@ func TestSetupSection(t *testing.T) {
 	}
 	in("**Checks**",
 		"| 1 | header X-Shop-Domain | equals \"test-shop.example\" · else 400 naming the header |",
-		"| 2 | GitHub signature | secret github-key · enforced · else 401 |",
-		"| 3 | Bearer token | secret api-token · record only |",
+		"| 2 | GitHub signature | secret GITHUB\\_KEY · enforced · else 401 |",
+		"| 3 | Bearer token | secret API\\_TOKEN · record only |",
 		"| 4 | JSON Schema by /type | \"order.created\" → order · other values → event · enforced · else 400 listing the problems |")
 	in("**Schemas**", "| order | check 4 (JSON Schema by /type) |", "| event | check 4", "| draft | not used |")
 	in("**Rules**",
@@ -98,9 +98,9 @@ func TestSetupSection(t *testing.T) {
 	in("**Default reply**", "| Status | 200 |", "| Delay | none |", "| `Content-Type` | `application/json` |", `{"ok":true,"shop":"{{.Var "shop"}}"}`)
 	in("**Variables**", "| `shop` | `test-shop` |")
 	in("**Secrets**",
-		"| github-key | signing key | set | check 2 (GitHub signature) |",
-		"| api-token | token or password | not set | check 3 (Bearer token) |",
-		"| spare-token | token or password | set | not used |")
+		"| GITHUB\\_KEY | signing key | set | check 2 (GitHub signature) |",
+		"| API\\_TOKEN | token or password | not set | check 3 (Bearer token) |",
+		"| SPARE\\_TOKEN | token or password | set | not used |")
 }
 
 // AC-2: the section names the time it shows, the generation time.
@@ -149,7 +149,7 @@ func TestSetupNoSecrets(t *testing.T) {
 	defer func() { pdfTextHook = nil }()
 	pdf := render(t, PDF, setupOptions(t), rs)
 	text := drawn.String()
-	for _, want := range []string{"SETUP", "github-key", "not set", "every 3rd", "test-shop"} {
+	for _, want := range []string{"SETUP", "GITHUB_KEY", "not set", "every 3rd", "test-shop"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("the PDF does not draw %q", want)
 		}

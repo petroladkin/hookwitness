@@ -37,8 +37,8 @@ The endpoint's setup when this report was generated, 2026-10-12T09:30:00.000Z.
 | # | Check | What it does |
 |---:|---|---|
 | 1 | header X-Shop-Domain | equals "test-shop.example" · else 400 naming the header |
-| 2 | GitHub signature | secret github-key · enforced · else 401 |
-| 3 | Bearer token | secret api-token · record only |
+| 2 | GitHub signature | secret GITHUB\_KEY · enforced · else 401 |
+| 3 | Bearer token | secret API\_TOKEN · record only |
 | 4 | JSON Schema by /type | "order.created" → order · other values → event · enforced · else 400 listing the problems |
 
 **Schemas**
@@ -104,9 +104,9 @@ Body (a template)
 
 | Name | Kind | State | Used by |
 |---|---|---|---|
-| github-key | signing key | set | check 2 (GitHub signature) |
-| api-token | token or password | not set | check 3 (Bearer token) |
-| spare-token | token or password | set | not used |
+| GITHUB\_KEY | signing key | set | check 2 (GitHub signature) |
+| API\_TOKEN | token or password | not set | check 3 (Bearer token) |
+| SPARE\_TOKEN | token or password | set | not used |
 
 ## Requests
 

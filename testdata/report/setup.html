@@ -194,8 +194,8 @@ pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var
 <table class="kv3">
 <caption>Checks · in order</caption>
 <tr><td class="n">1</td><th scope="row">header X-Shop-Domain</th><td>equals &#34;test-shop.example&#34; · else 400 naming the header</td></tr>
-<tr><td class="n">2</td><th scope="row">GitHub signature</th><td>secret github-key · enforced · else 401</td></tr>
-<tr><td class="n">3</td><th scope="row">Bearer token</th><td>secret api-token · record only</td></tr>
+<tr><td class="n">2</td><th scope="row">GitHub signature</th><td>secret GITHUB_KEY · enforced · else 401</td></tr>
+<tr><td class="n">3</td><th scope="row">Bearer token</th><td>secret API_TOKEN · record only</td></tr>
 <tr><td class="n">4</td><th scope="row">JSON Schema by /type</th><td>&#34;order.created&#34; → order · other values → event · enforced · else 400 listing the problems</td></tr>
 </table>
 <table class="kv">
@@ -247,9 +247,9 @@ pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var
 <table class="secrets">
 <caption>Secrets · named, never shown</caption>
 <tr><th scope="col">Name</th><th scope="col">Kind</th><th scope="col">State</th><th scope="col">Used by</th></tr>
-<tr><th scope="row">github-key</th><td>signing key</td><td class="">set</td><td>check 2 (GitHub signature)</td></tr>
-<tr><th scope="row">api-token</th><td>token or password</td><td class="hot">not set</td><td>check 3 (Bearer token)</td></tr>
-<tr><th scope="row">spare-token</th><td>token or password</td><td class="">set</td><td>not used</td></tr>
+<tr><th scope="row">GITHUB_KEY</th><td>signing key</td><td class="">set</td><td>check 2 (GitHub signature)</td></tr>
+<tr><th scope="row">API_TOKEN</th><td>token or password</td><td class="hot">not set</td><td>check 3 (Bearer token)</td></tr>
+<tr><th scope="row">SPARE_TOKEN</th><td>token or password</td><td class="">set</td><td>not used</td></tr>
 </table>
 </section>
 <h2 class="requests-title">Requests</h2>
