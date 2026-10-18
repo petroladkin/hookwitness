@@ -53,8 +53,9 @@ type Handler struct {
 	live    *live.Broker
 	log     *slog.Logger
 	prefix  string
-	limit   int64 // the body limit, shown when a body was refused
-	keep    int   // retention per register, so the page can drop pruned rows
+	reserve string // what endpoint paths may not use (catch.CheckPath)
+	limit   int64  // the body limit, shown when a body was refused
+	keep    int    // retention per register, so the page can drop pruned rows
 	maxWait time.Duration
 	hosts   map[string]bool
 	keys    *secret.Key
@@ -70,7 +71,8 @@ type Handler struct {
 
 // Options configure the UI.
 type Options struct {
-	Prefix    string        // where the UI is mounted, e.g. /admin
+	Prefix    string        // where the UI is mounted, e.g. /admin; "" = the root of its own listener
+	Separate  bool          // the admin has its own listener: the catch side reserves nothing under Prefix
 	MaxBody   int64         // the catcher's body limit, shown when a body was refused
 	Retention int           // requests kept per register
 	MaxWait   time.Duration // longest delay an endpoint may configure
@@ -89,6 +91,9 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 		h.hosts[strings.ToLower(name)] = true
 	}
 	prefix := o.Prefix
+	if !o.Separate {
+		h.reserve = prefix
+	}
 	h.assets = hashAssets()
 
 	mux := http.NewServeMux()
@@ -117,7 +122,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	h.csrf = http.NewCrossOriginProtection()
 	h.mux = h.csrf.Handler(mux)
 
-	ao := api.Options{Prefix: prefix, MaxWait: h.maxWait, Stop: h.stop, Version: version.String()}
+	ao := api.Options{Prefix: prefix, Reserved: h.reserve, MaxWait: h.maxWait, Stop: h.stop, Version: version.String()}
 	if o.Keys != nil {
 		ao.Keys, ao.Keyring = o.Keys, o.Keys // a nil *secret.Key must stay a nil interface
 	}
@@ -259,7 +264,7 @@ func (h *Handler) showEndpoints(w http.ResponseWriter, r *http.Request, status i
 
 // checkPath validates an endpoint path; the message is for the person who
 // typed it.
-func (h *Handler) checkPath(p string) string { return catch.CheckPath(h.prefix, p) }
+func (h *Handler) checkPath(p string) string { return catch.CheckPath(h.reserve, p) }
 
 func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimSpace(r.PostFormValue("path"))

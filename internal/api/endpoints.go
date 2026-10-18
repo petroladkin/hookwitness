@@ -63,7 +63,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	if p == "" {
 		p = catch.RandomPath()
 	}
-	if msg := catch.CheckPath(h.o.Prefix, p); msg != "" {
+	if msg := catch.CheckPath(h.o.Reserved, p); msg != "" {
 		WriteError(w, http.StatusUnprocessableEntity, "invalid", msg, "path")
 		return
 	}

@@ -47,7 +47,7 @@ func TestBridge(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	keys, _ := secret.Load("", filepath.Join(t.TempDir(), "hw.db.key"))
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	a := api.New(st, live.New(), log, api.Options{Prefix: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: make(chan struct{}), Version: "test"})
+	a := api.New(st, live.New(), log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: make(chan struct{}), Version: "test"})
 	mux := http.NewServeMux()
 	mux.Handle("/admin/mcp", Handler(a, api.Base("/admin"), "test", log, nil))
 	srv := httptest.NewServer(mux)
