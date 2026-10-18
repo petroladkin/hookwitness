@@ -29,6 +29,11 @@ until curl -fs $HW/healthz >/dev/null; do sleep 0.5; done
 - Already running? `curl -fs $HW/healthz` answers `{"status":"ok",…}` — reuse it.
 - `--rm` without a volume: every run starts empty. Stop with `docker stop hookwitness`.
 - The UI for a human is at `$HW/admin/` (the same data, live).
+- A shared server may have login on: the API then answers `401`. Ask the user
+  for a token (from their account page in the UI) and send it with every
+  call: `AUTH="Authorization: Bearer $(cat token-file)"`, `curl -H "$AUTH" …`
+  (MCP: `--header "Authorization: Bearer …"`). Never print the token. A fresh
+  container you start yourself has no users, so no token is needed there.
 
 ## 2. Create an endpoint and point the sender at it
 

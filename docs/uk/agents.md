@@ -104,6 +104,12 @@ claude mcp add hookwitness -- docker exec -i hookwitness /hookwitness mcp -url h
 порту: `http://127.0.0.1:8081/mcp`, якщо адмінка в його корені. Тоді
 передайте мосту повну адресу: `hookwitness mcp -url http://127.0.0.1:8081/mcp`.
 
+З увімкненим входом ([Користувачі, вхід і токени](access.md)) MCP потребує
+токена: `--header "Authorization: Bearer <token>"` для клієнта, що говорить
+HTTP, `-token-file <file>` для мосту (див. [MCP з
+токеном](access.md#mcp-з-токеном)). Агент тоді діє від імені власника
+токена.
+
 Перевірте, що сервер відповідає по MCP:
 
 ```sh

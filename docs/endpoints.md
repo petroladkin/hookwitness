@@ -99,7 +99,9 @@ Click a row to open it on the right. From the top:
 - **Answer** says what Hookwitness sent, which rule or the default reply
   decided, and the measured delay.
 - **Headers** in the order and case the sender wrote them, repeated ones
-  kept.
+  kept. One value is never kept: the admin's own login cookie
+  (`hookwitness_session`), which a browser logged in on another port of the
+  same host sends along, reads `[hookwitness session]`.
 - **Query**, the query string as name and value pairs.
 
 **Report** (on the request or on the register) exports the evidence, see

@@ -22,6 +22,8 @@ by task: what to click and what happens. [Українською](uk/README.md).
    host name, unreadable secrets, 413, lost data.
 9. [Testing a sender with an AI agent](agents.md): the Claude Code skill and
    the MCP server.
+10. [Users, login and tokens](access.md): turning login on, roles, tokens for
+    scripts and MCP, a lost password.
 
 Reference: the [REST API](api.md) (English only), and its OpenAPI 3.1
 description served at `/admin/api/v1/openapi.json`.

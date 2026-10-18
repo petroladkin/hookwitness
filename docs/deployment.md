@@ -81,6 +81,9 @@ variable. In Docker, pass the variables: `-e HOOKWITNESS_RETENTION=5000`.
 | `-public-url` | `HOOKWITNESS_PUBLIC_URL` | none | the URL senders reach the catch paths at, such as `https://hooks.example.com`: the catch URLs the UI and the API show are built on it (behind a proxy, a tunnel or remapped ports) |
 | `-admin-hosts` | `HOOKWITNESS_ADMIN_HOSTS` | none | host names the UI and the API answer to, comma-separated |
 | `-max-wait` | `HOOKWITNESS_MAX_WAIT` | `5m` | the longest reply delay or timeout hold, from 1s to 1h |
+| `-trusted-proxies` | `HOOKWITNESS_TRUSTED_PROXIES` | none | reverse proxies (addresses or CIDRs, comma-separated) whose `X-Forwarded-For` names the client, for the login limit ([Users and login](access.md#behind-a-reverse-proxy)) |
+| — | `HOOKWITNESS_ADMIN_USER`, `HOOKWITNESS_ADMIN_PASSWORD_FILE` | none | the first admin, created at start on a database without users ([Users and login](access.md)) |
+| — | `HOOKWITNESS_API_TOKEN_FILE` | none | a file with a machine token for the API and MCP ([Users and login](access.md#a-machine-token)) |
 | — | `HOOKWITNESS_SECRET_KEY` | none | the secret key (below); without it, the key file `<db>.key` |
 
 The database grows to at most about (endpoints × `-retention` × `-max-body`)
@@ -109,8 +112,10 @@ server warns about it at startup; see [Troubleshooting](troubleshooting.md).
 
 ## Reaching it from other machines
 
-The UI and the API have **no login yet**. Keep them on localhost, or behind a
-reverse proxy that publishes only the catch paths.
+Until it has a user, the admin (the UI, the API and MCP) has **no login**:
+keep it on localhost, or add a user before you publish it
+([Users, login and tokens](access.md)). Even with login on, publishing only
+the catch paths is the safer default.
 
 - `-p 127.0.0.1:8080:8080` keeps it on this host. `-p 8080:8080` publishes it
   to the network.
