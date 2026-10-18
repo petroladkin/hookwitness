@@ -142,7 +142,7 @@ templ tokenTable(nav navView, ts []store.Token, owners bool) {
 		<p class="empty">No tokens.</p>
 	} else {
 		<div class="scroll">
-			<table class="eps">
+			<table class="eps tokens">
 				<thead>
 					<tr>
 						if owners {
@@ -163,8 +163,8 @@ templ tokenTable(nav navView, ts []store.Token, owners bool) {
 							}
 							<td>{ t.Name }</td>
 							<td class="url">{ access.Shown(t.PublicID) }</td>
-							<td class="when">{ lastSeen(t.CreatedAt) }</td>
-							<td class="when">{ lastSeen(t.LastUsedAt) }</td>
+							<td class="when made">{ lastSeen(t.CreatedAt) }</td>
+							<td class="when used">{ lastSeen(t.LastUsedAt) }</td>
 							<td class="acts">
 								if owners {
 									<form method="post" action={ templ.SafeURL(nav.Prefix + "/tokens/" + t.PublicID + "/revoke") } data-confirm={ "Revoke " + t.Owner + "'s token " + t.Name + "? Whatever uses it stops working at once." }>
@@ -210,7 +210,7 @@ templ usersPage(nav navView, v usersView) {
 			</div>
 			if len(v.Users) > 0 {
 				<div class="scroll">
-					<table class="eps">
+					<table class="eps people">
 						<thead>
 							<tr><th>Name</th><th>Role</th><th>Added</th><th class="num">Tokens</th><th><span class="sr">Actions</span></th></tr>
 						</thead>

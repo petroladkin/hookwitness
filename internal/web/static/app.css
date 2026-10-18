@@ -294,6 +294,10 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
   .eps .num::after{content:" kept"}
   .eps .when{grid-row:3;grid-column:1}
   .eps .acts{grid-column:1 / -1;justify-content:flex-start;flex-wrap:wrap}
+  .eps.people .num::after{content:" tokens"}
+  .eps.tokens .when{grid-row:auto;grid-column:1 / -1}
+  .eps.tokens .made::before{content:"made "}
+  .eps.tokens .used::before{content:"last used "}
   .tabs a{padding-inline:9px;gap:6px}
   .grid3,.grid3.when,.grid2{grid-template-columns:minmax(0,1fr)}
   .items li{grid-template-columns:2em minmax(0,1fr)}
