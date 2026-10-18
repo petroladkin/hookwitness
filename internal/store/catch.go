@@ -19,6 +19,8 @@ const Unmatched int64 = 0
 var (
 	ErrNotFound      = errors.New("not found")
 	ErrDuplicatePath = errors.New("an endpoint with this path already exists")
+	// ErrOff: the endpoint was turned off after its request was looked up.
+	ErrOff = errors.New("the endpoint is off")
 )
 
 // Endpoint is an exact path that catches requests, with a summary of what it
@@ -32,6 +34,7 @@ type Endpoint struct {
 	LastAt    time.Time // newest kept request; zero when there is none
 	Config    string    // how it answers (internal/emulate); empty for the default
 	Counter   int64     // requests that passed its checks since the last reset
+	Enabled   bool      // on: it catches; off: requests to its path go to Unmatched
 }
 
 // Header is one header line as received: original case, received order,
@@ -99,20 +102,20 @@ func (s *Store) CreateEndpoint(ctx context.Context, path string) (Endpoint, erro
 	if err != nil {
 		return Endpoint{}, err
 	}
-	return Endpoint{ID: id, Path: path, CreatedAt: fromMillis(millis(now))}, nil
+	return Endpoint{ID: id, Path: path, CreatedAt: fromMillis(millis(now)), Enabled: true}, nil
 }
 
 const endpointSummary = `SELECT e.id, e.path, e.created_at,
 	(SELECT COUNT(*) FROM requests r WHERE r.endpoint_id = e.id),
 	(SELECT MAX(received_at) FROM requests r WHERE r.endpoint_id = e.id),
-	e.config, e.counter
+	e.config, e.counter, e.enabled
 	FROM endpoints e`
 
 func scanEndpoint(sc interface{ Scan(...any) error }) (Endpoint, error) {
 	var e Endpoint
 	var created int64
 	var last sql.NullInt64
-	if err := sc.Scan(&e.ID, &e.Path, &created, &e.Count, &last, &e.Config, &e.Counter); err != nil {
+	if err := sc.Scan(&e.ID, &e.Path, &created, &e.Count, &last, &e.Config, &e.Counter, &e.Enabled); err != nil {
 		return Endpoint{}, err
 	}
 	e.CreatedAt = fromMillis(created)
@@ -161,13 +164,13 @@ func (s *Store) Endpoint(ctx context.Context, id int64) (Endpoint, error) {
 }
 
 // EndpointByPath finds the endpoint whose path equals p byte for byte and
-// returns its id and configuration.
-func (s *Store) EndpointByPath(ctx context.Context, p string) (id int64, config string, err error) {
-	err = s.db.QueryRowContext(ctx, `SELECT id, config FROM endpoints WHERE path = ?`, p).Scan(&id, &config)
+// returns its id, configuration and whether it is on.
+func (s *Store) EndpointByPath(ctx context.Context, p string) (id int64, config string, enabled bool, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT id, config, enabled FROM endpoints WHERE path = ?`, p).Scan(&id, &config, &enabled)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, "", ErrNotFound
+		return 0, "", false, ErrNotFound
 	}
-	return id, config, err
+	return id, config, enabled, err
 }
 
 // SetConfig replaces an endpoint's configuration; the caller validates it.
@@ -196,16 +199,29 @@ func (s *Store) SetConfigIf(ctx context.Context, id int64, old, config string) (
 	return false, err
 }
 
-// ResetCounter starts an endpoint's request count again from zero.
 // SetPath moves an endpoint to another path; its requests stay with it.
 func (s *Store) SetPath(ctx context.Context, id int64, path string) error {
-	err := s.updateEndpoint(ctx, `UPDATE endpoints SET path = ? WHERE id = ?`, path, id)
+	return s.UpdateEndpoint(ctx, id, EndpointChange{Path: &path})
+}
+
+// EndpointChange is what UpdateEndpoint changes; nil fields stay.
+type EndpointChange struct {
+	Path    *string // the caller validates it
+	Enabled *bool
+}
+
+// UpdateEndpoint changes an endpoint's path and on/off state together: a
+// taken path changes nothing. Turning one off keeps everything it has.
+func (s *Store) UpdateEndpoint(ctx context.Context, id int64, c EndpointChange) error {
+	err := s.updateEndpoint(ctx, `UPDATE endpoints SET path = COALESCE(?, path), enabled = COALESCE(?, enabled) WHERE id = ?`,
+		c.Path, c.Enabled, id)
 	if err != nil && isUnique(err) {
 		return ErrDuplicatePath
 	}
 	return err
 }
 
+// ResetCounter starts an endpoint's request count again from zero.
 func (s *Store) ResetCounter(ctx context.Context, id int64) error {
 	return s.updateEndpoint(ctx, `UPDATE endpoints SET counter = 0 WHERE id = ?`, id)
 }
@@ -399,7 +415,8 @@ func (s *Store) ClearRequests(ctx context.Context, endpointID int64) error {
 // the register's oldest requests beyond keep. It sets r.ID, r.No and
 // r.BodySHA256. With decide (an endpoint's request that passed its checks)
 // the endpoint's counter advances and decide sets r.Status and r.Outcome in
-// the same transaction. An endpoint deleted meanwhile yields ErrNotFound.
+// the same transaction. An endpoint deleted meanwhile yields ErrNotFound,
+// one turned off meanwhile ErrOff.
 func (s *Store) AddRequest(ctx context.Context, r *Request, keep int, decide Decide) error {
 	if keep < 1 {
 		return fmt.Errorf("keep must be at least 1, got %d", keep)
@@ -442,8 +459,12 @@ func (s *Store) AddRequest(ctx context.Context, r *Request, keep int, decide Dec
 		}
 	} else {
 		err := tx.QueryRowContext(ctx,
-			`UPDATE endpoints SET last_no = last_no + 1 WHERE id = ? RETURNING last_no`, r.EndpointID).Scan(&no)
+			`UPDATE endpoints SET last_no = last_no + 1 WHERE id = ? AND enabled RETURNING last_no`, r.EndpointID).Scan(&no)
 		if errors.Is(err, sql.ErrNoRows) {
+			var one int
+			if tx.QueryRowContext(ctx, `SELECT 1 FROM endpoints WHERE id = ?`, r.EndpointID).Scan(&one) == nil {
+				return ErrOff
+			}
 			return ErrNotFound
 		}
 		if err != nil {

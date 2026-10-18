@@ -32,6 +32,7 @@ type navView struct {
 type registerView struct {
 	ID       int64
 	Path     string // empty for Unmatched
+	Enabled  bool   // the endpoint is on (always true for Unmatched)
 	Count    int
 	Rows     []rowView
 	More     bool  // older requests exist beyond Rows
@@ -184,10 +185,22 @@ func (r rowView) tag() string {
 		return "500 template error"
 	case o.Source == emulate.FromRule:
 		return strconv.Itoa(o.Status) + " · rule " + strconv.Itoa(o.Rule)
+	case o.Source == emulate.FromOff:
+		return "endpoint off"
 	case o.Source == emulate.FromDefault && !o.Good():
 		return strconv.Itoa(o.Status)
 	}
 	return ""
+}
+
+// someOff reports whether any endpoint is off: the picker then groups them.
+func (n navView) someOff() bool {
+	for _, e := range n.Endpoints {
+		if !e.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 // hostOf is a catch base without its "http://" scheme, for the header's

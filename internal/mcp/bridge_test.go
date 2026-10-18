@@ -64,7 +64,7 @@ func TestBridge(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := cs.ListTools(context.Background(), nil)
-	if err != nil || len(list.Tools) != 12 {
+	if err != nil || len(list.Tools) != 13 {
 		t.Fatalf("tools through the bridge: %v %v", err, list)
 	}
 	res, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "create_endpoint", Arguments: map[string]any{"path": "/via/stdio"}})

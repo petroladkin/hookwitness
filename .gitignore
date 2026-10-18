@@ -12,6 +12,8 @@ coverage.*
 *.db-wal
 *.db-shm
 *.db.key
+# ...except the databases of released versions the store tests open
+!testdata/store/*.db
 .env
 .local/
 

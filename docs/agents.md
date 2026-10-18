@@ -130,6 +130,7 @@ The tools are task-shaped. Each result is a summary line, then compact JSON.
 | `wait_for_request` | waits for the next request that matches (verdict, status, text, a JSON value), up to 300 s, and returns it in full |
 | `list_requests`, `get_request` | requests with the same filters; one in full, its body cut at 16 KiB with its size |
 | `expect` | asserts that N matching requests arrive within a time: pass, or fail with what arrived and the reasons |
+| `switch_endpoint` | turns an endpoint off (its path goes to Unmatched, everything else kept) or on again |
 | `reset_endpoint`, `recheck`, `delete_endpoint` | reset the counter or clear requests, verify again, delete |
 
 `delete_endpoint` and `reset_endpoint` are marked destructive, and the

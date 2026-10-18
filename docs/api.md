@@ -97,16 +97,16 @@ into the Unmatched register with a `404`.
 
 | Route | Does |
 |---|---|
-| `GET /endpoints` | all endpoints, by path; `?path=/x` finds one (an empty list when there is none) |
+| `GET /endpoints` | all endpoints, by path; `?path=/x` finds one (an empty list when there is none); `?enabled=true` or `false` only those on or off |
 | `POST /endpoints` | create: `{"path": "/x"}`; no path or an empty one picks a random path. `201`, `Location` |
 | `GET /endpoints/{id}` | one endpoint |
-| `PATCH /endpoints/{id}` | change its path: `{"path": "/y"}`, validated as on create; its requests and behaviour stay. `200` with the endpoint |
+| `PATCH /endpoints/{id}` | change its path, `{"path": "/y"}` (validated as on create; its requests and behaviour stay), turn it off or on, `{"enabled": false}`, or both at once (both change or, on an error, neither). `200` with the endpoint |
 | `DELETE /endpoints/{id}` | delete it and its requests. `204` |
 
 ```console
 $ curl -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/orders/events"}'
 201
-{"id":1,"path":"/orders/events","url":"http://localhost:8080/orders/events","requests":0,"counter":0,"created_at":"2026-10-12T17:28:06.808Z"}
+{"id":1,"path":"/orders/events","url":"http://localhost:8080/orders/events","requests":0,"counter":0,"enabled":true,"created_at":"2026-10-12T17:28:06.808Z"}
 ```
 
 - `url` is where senders deliver: the path on the host name you called the
@@ -114,6 +114,10 @@ $ curl -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/
   name, e.g. from another container).
 - `requests` is how many are kept; `counter` how many passed the checks since
   the rule counter was last reset; `last_request_at` appears once one arrived.
+- `enabled` is `false` for an endpoint that is off: it keeps its path,
+  behaviour, secrets, requests and counter, and requests to its path are
+  answered `404` and kept in the Unmatched register (outcome `source` `off`).
+  A new endpoint is on.
 - Paths are letters, digits and `. _ ~ -` segments; `/healthz` and the admin
   prefix are reserved (`422`, field `path`). A taken path is `409
   duplicate_path`.
@@ -284,7 +288,8 @@ One request adds:
 - `body_text` when the body is valid UTF-8, else `body_base64`; neither when
   the body was not kept.
 - `outcome` says what was done: `source` (`default`, `rule` with `rule` and
-  `label`, `check` with the refusing `check`, `limit`), `action` (`reply`,
+  `label`, `check` with the refusing `check`, `limit`, `busy`, `unmatched`
+  for a path without an endpoint, `off` for an endpoint that is off), `action` (`reply`,
   `timeout`, `drop`, `refused`, `error`, `abandoned`), the reply sent
   (`status`, `headers` as `{name, value}`, the first 64 KiB of `body`),
   `delay_ms`, `waited_ms` for a timeout, `counter`. `abandoned`: the sender

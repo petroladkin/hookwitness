@@ -29,6 +29,14 @@
               "type": "string"
             },
             "description": "Only the endpoint with this path."
+          },
+          {
+            "name": "enabled",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Only the endpoints that are on (`true`) or off (`false`)."
           }
         ],
         "responses": {
@@ -50,6 +58,16 @@
                     "endpoints"
                   ],
                   "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query parameter is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -172,9 +190,9 @@
         }
       },
       "patch": {
-        "operationId": "changeEndpointPath",
-        "summary": "Change an endpoint's path",
-        "description": "Validated as the UI validates a new path; its requests and behaviour stay.",
+        "operationId": "changeEndpoint",
+        "summary": "Change an endpoint's path or turn it on or off",
+        "description": "Give `path`, `enabled` or both; both change together or, on an error, neither. A new path is validated as the UI validates one; its requests and behaviour stay. Turning an endpoint off keeps everything it has; requests to its path are then answered 404 and kept in the Unmatched register.",
         "requestBody": {
           "required": true,
           "content": {
@@ -184,12 +202,14 @@
                 "properties": {
                   "path": {
                     "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "`false` turns the endpoint off, `true` on."
                   }
                 },
-                "required": [
-                  "path"
-                ],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "minProperties": 1
               }
             }
           }
@@ -1886,6 +1906,10 @@
             "type": "integer",
             "description": "Requests that passed its checks since the counter was reset; the rules count these."
           },
+          "enabled": {
+            "type": "boolean",
+            "description": "On: it catches. Off: it keeps its path, behaviour, secrets, requests and counter, and requests to its path are answered 404 and kept in the Unmatched register."
+          },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
           },
@@ -1900,6 +1924,7 @@
           "url",
           "requests",
           "counter",
+          "enabled",
           "created_at"
         ],
         "additionalProperties": false
@@ -2616,7 +2641,7 @@
               "object",
               "null"
             ],
-            "description": "What was done: source, action (reply, timeout, drop, refused, error, abandoned — the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB; withheld says what of the configured reply HTTP did not send — a body and some headers with 204 or 304, a body to HEAD), delay_ms, waited_ms, counter."
+            "description": "What was done: source (default, rule, check, limit, busy, unmatched — no endpoint at the path, off — the path is an endpoint's that is off), action (reply, timeout, drop, refused, error, abandoned — the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB; withheld says what of the configured reply HTTP did not send — a body and some headers with 204 or 304, a body to HEAD), delay_ms, waited_ms, counter."
           },
           "verdicts": {
             "type": "array",

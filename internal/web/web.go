@@ -125,6 +125,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("GET "+p+"/e/{reg}/events", h.events)
 	mux.HandleFunc("POST "+p+"/e/{reg}/clear", h.clear)
 	mux.HandleFunc("POST "+p+"/e/{reg}/delete", h.deleteEndpoint)
+	mux.HandleFunc("POST "+p+"/e/{reg}/switch", h.switchEndpoint)
 	mux.HandleFunc("POST "+p+"/e/{reg}/recheck", h.recheck)
 	mux.HandleFunc("GET "+p+"/e/{reg}/report", h.report)
 	mux.HandleFunc("GET "+p+"/e/{reg}/behaviour", h.behaviourPage)
@@ -383,6 +384,40 @@ func (h *Handler) deleteEndpoint(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
 }
 
+// switchEndpoint turns an endpoint off or on.
+func (h *Handler) switchEndpoint(w http.ResponseWriter, r *http.Request) {
+	id, ok := regID(r)
+	if !ok || id == store.Unmatched {
+		http.NotFound(w, r)
+		return
+	}
+	on, err := strconv.ParseBool(r.PostFormValue("enabled"))
+	if err != nil {
+		http.Error(w, "enabled must be true or false.", http.StatusBadRequest)
+		return
+	}
+	ep, err := h.store.Endpoint(r.Context(), id)
+	if err == nil {
+		err = h.store.UpdateEndpoint(r.Context(), id, store.EndpointChange{Enabled: &on})
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.fail(w, "switch endpoint", err)
+		return
+	}
+	if on != ep.Enabled {
+		state := "off"
+		if on {
+			state = "on"
+		}
+		h.log.Info("endpoint turned "+state, append([]any{"path", ep.Path}, who(r)...)...)
+	}
+	http.Redirect(w, r, h.back(r, h.regPath(id)), http.StatusSeeOther)
+}
+
 // back is the form's "next" page when it is one of ours, else def.
 func (h *Handler) back(r *http.Request, def string) string {
 	next := r.PostFormValue("next")
@@ -482,6 +517,7 @@ func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64
 		Verdicts: verdicts,
 		ID:       reg,
 		Path:     ep.Path,
+		Enabled:  ep.Enabled || reg == store.Unmatched,
 		Count:    ep.Count,
 		Rows:     rows,
 		More:     more,

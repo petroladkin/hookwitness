@@ -36,6 +36,42 @@ curl -s -X POST http://127.0.0.1:8080/stripe/webhook -d '{}'   # 404: kept under
 
 ![Реєстр Unmatched з одним запитом на /stripe/webhook](../images/unmatched.webp)
 
+## Вимкнений ендпоінт
+
+На сервері, яким користуються кілька продуктів, ендпоінтів налаштовано
+багато, а потрібні в кожен момент лише кілька. Решту можна **вимкнути**
+замість того, щоб видаляти. Вимкнений ендпоінт зберігає свій шлях (інший
+ендпоінт його не займе), поведінку, секрети, збережені запити й лічильник
+правил, але нічого не ловить: запит на його шлях отримує `404` і
+зберігається в Unmatched, як для шляху без ендпоінта, з позначкою
+**endpoint off**. Як і з будь-яким запитом в Unmatched, зберігаються лише
+перші 64 KiB тіла. Запит, який уже утримує timeout у момент вимкнення,
+завершується так, як задано.
+
+Перемикач є в кожному рядку сторінки Endpoints (вимкнені рядки приглушені)
+і поруч із **Clear** у реєстрі ендпоінта, який, поки ендпоінт вимкнений,
+пише, куди йдуть його запити. Коли якийсь ендпоінт вимкнений, список
+**Endpoint** у шапці показує ввімкнені й вимкнені окремо. Увімкніть його
+знову (**On**), і наступний запит зловить ендпоінт, а правила рахуватимуть
+далі з того місця, де зупинились. Новий ендпоінт увімкнений. Скрипти й
+агенти користуються полем `enabled` в API.
+
+<!-- docs-check: setup: stripe_endpoint -->
+```sh
+curl -s -X PATCH http://127.0.0.1:8080/admin/api/v1/endpoints/1 -H 'Content-Type: application/json' -d '{"enabled":false}' | jq -c '{path, enabled}'
+# {"path":"/stripe/webhooks","enabled":false}
+curl -s -X POST http://127.0.0.1:8080/stripe/webhooks -d '{}'   # 404: kept under Unmatched, tagged endpoint off
+curl -s -X PATCH http://127.0.0.1:8080/admin/api/v1/endpoints/1 -H 'Content-Type: application/json' -d '{"enabled":true}' | jq -c '{path, enabled}'
+# {"path":"/stripe/webhooks","enabled":true}
+curl -s -X POST http://127.0.0.1:8080/stripe/webhooks -d '{}'   # 200: caught by the endpoint again
+```
+
+![Сторінка Endpoints, де /stripe/webhooks вимкнений і приглушений](../images/endpoints-off.webp)
+
+![Реєстр /stripe/webhooks, поки він вимкнений: запити йдуть в Unmatched](../images/register-off.webp)
+
+![Запит в Unmatched на /stripe/webhooks з відповіддю 404, бо ендпоінт вимкнений](../images/unmatched-off.webp)
+
 ## Реєстр
 
 Натисніть ендпоінт, щоб відкрити його реєстр: запити ендпоінта, найновіші

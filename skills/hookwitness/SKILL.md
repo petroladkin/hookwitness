@@ -45,6 +45,9 @@ ID=$(printf '%s\n' "$EP" | jq .id); URL=$(printf '%s\n' "$EP" | jq -r .url)    #
 - Create the endpoint before triggering the sender: an unknown path is
   answered `404` (and kept in the Unmatched register).
 - Reuse an existing one: `curl -s "$API/endpoints?path=/orders/events" | jq '.endpoints[0]'`.
+  If its `enabled` is `false` it is off (its requests go to Unmatched with a
+  `404`); turn it on first:
+  `curl -s -X PATCH $API/endpoints/$ID -H 'Content-Type: application/json' -d '{"enabled":true}'`.
 - Configure the app under test with the webhook URL:
   - app on the host → `$URL`;
   - app in a container → `http://host.docker.internal:8080/orders/events`

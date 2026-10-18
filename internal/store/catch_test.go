@@ -50,10 +50,10 @@ func TestEndpointLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id, _, err := s.EndpointByPath(ctx, "/a/"); err != nil || id != b.ID {
+	if id, _, _, err := s.EndpointByPath(ctx, "/a/"); err != nil || id != b.ID {
 		t.Fatalf("by path /a/: %d, %v", id, err)
 	}
-	if _, _, err := s.EndpointByPath(ctx, "/a"); !errors.Is(err, ErrNotFound) {
+	if _, _, _, err := s.EndpointByPath(ctx, "/a"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("/a must not match /a/: %v", err)
 	}
 
@@ -310,7 +310,7 @@ func TestConfigAndCounter(t *testing.T) {
 	if err := s.SetConfig(ctx, ep.ID, `{"default":{"status":418}}`); err != nil {
 		t.Fatal(err)
 	}
-	if _, cfg, _ := s.EndpointByPath(ctx, "/cfg"); cfg != `{"default":{"status":418}}` {
+	if _, cfg, _, _ := s.EndpointByPath(ctx, "/cfg"); cfg != `{"default":{"status":418}}` {
 		t.Fatalf("config %q", cfg)
 	}
 	if err := s.SetConfig(ctx, 999, "{}"); !errors.Is(err, ErrNotFound) {
