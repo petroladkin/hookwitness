@@ -8,6 +8,8 @@
 // the README's demo GIF, Docker (ffmpeg runs in a container). The social
 // preview goes to <out dir>/../media.
 // With names, only those shots are taken. `make media` runs it.
+// MEDIA_WIDTH (default 1280) and MEDIA_SCHEME (light or dark) take the same
+// shots at another width or in the other theme, for evidence elsewhere.
 import { spawn, execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -128,8 +130,9 @@ const cdp = (method, params = {}) => new Promise((ok, fail) => {
 });
 const js = async (expression) => (await cdp("Runtime.evaluate", { expression, awaitPromise: true })).result.value;
 await cdp("Page.enable");
-await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false });
-await cdp("Emulation.setEmulatedMedia", { media: "", features: [{ name: "prefers-color-scheme", value: "light" }] });
+const WIDTH = Number(process.env.MEDIA_WIDTH) || 1280;
+await cdp("Emulation.setDeviceMetricsOverride", { width: WIDTH, height: 800, deviceScaleFactor: 2, mobile: WIDTH < 600 });
+await cdp("Emulation.setEmulatedMedia", { media: "", features: [{ name: "prefers-color-scheme", value: process.env.MEDIA_SCHEME || "light" }] });
 
 // shot navigates, optionally runs a step (a click, a choice), and captures
 // the page down to its last element, at most maxHeight CSS pixels; with a
@@ -145,11 +148,11 @@ async function shot(name, url, { step, maxHeight = 800, selector } = {}) {
   const bottom = await js(`Math.ceil(Math.max(...[...document.body.querySelectorAll("*")]
     .filter((e) => !e.children.length && e.offsetParent && !e.closest("dialog:not([open])"))
     .map((e) => e.getBoundingClientRect().bottom + scrollY)) + 24)`);
-  let clip = { x: 0, y: 0, width: 1280, height: Math.min(bottom, maxHeight), scale: 1 };
+  let clip = { x: 0, y: 0, width: WIDTH, height: Math.min(bottom, maxHeight), scale: 1 };
   if (selector) {
     const r = JSON.parse(await js(`(() => { const b = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
       return JSON.stringify({ x: b.x, y: b.y + scrollY, width: b.width, height: b.height }); })()`));
-    clip = { x: Math.max(0, r.x - 16), y: Math.max(0, r.y - 16), width: Math.min(1280, r.width + 32), height: Math.min(r.height + 32, maxHeight), scale: 1 };
+    clip = { x: Math.max(0, r.x - 16), y: Math.max(0, r.y - 16), width: Math.min(WIDTH, r.width + 32), height: Math.min(r.height + 32, maxHeight), scale: 1 };
   }
   const { data } = await cdp("Page.captureScreenshot", { format: "webp", quality: 88, captureBeyondViewport: true, clip });
   const file = join(outDir, `${name}.webp`);
@@ -442,5 +445,40 @@ if (!only.length || only.includes("social")) {
 // docs/troubleshooting.md, docs/deployment.md: the UI opened by a name that
 // is not allowed.
 await shot("host-refused", `http://hooks.example.com:${port}/admin/`, { maxHeight: 80 });
+
+// docs/access.md: login, last, since the first user turns it on for the API
+// too. First the endpoints page with login off; then the first admin, added
+// through the API as the page shows, a user with a token, and the pages.
+if (!only.length || ["login-off", "login", "users", "token-new"].some((n) => only.includes(n))) {
+  if (!only.length || only.includes("login-off")) {
+    if ((await api("GET", "/endpoints")).json.endpoints.length === 0) await api("POST", "/endpoints", { path: "/stripe/webhooks" });
+  }
+  await shot("login-off", `${UI}/`, { maxHeight: 420 });
+  await api("POST", "/users", { name: "ann", role: "admin", password: "correct-horse-battery" });
+  const login = await fetch(`${UI}/login`, { method: "POST", redirect: "manual",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "name=ann&password=correct-horse-battery" });
+  const cookie = login.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  const as = { Cookie: cookie };
+  await api("POST", "/users", { name: "bob", role: "user", password: "bob-password-123" }, as);
+  await api("POST", "/users", { name: "carol", role: "admin", password: "carol-password-1" }, as);
+  // Tokens of bob and ann, as their account pages would make them.
+  const bobLogin = await fetch(`${UI}/login`, { method: "POST", redirect: "manual",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "name=bob&password=bob-password-123" });
+  const bob = { Cookie: bobLogin.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ") };
+  await api("POST", "/me/tokens", { name: "ci-pipeline" }, bob);
+  await api("POST", "/me/tokens", { name: "claude-code" }, as);
+  await shot("login", `${UI}/login`, { maxHeight: 520,
+    step: `document.querySelector('[name=name]').value = 'ann'` });
+  // The browser logs in as ann through the form.
+  await cdp("Page.navigate", { url: `${UI}/login` });
+  await sleep(700);
+  await js(`(() => { document.querySelector('[name=name]').value = 'ann';
+    document.querySelector('[name=password]').value = 'correct-horse-battery';
+    document.querySelector('form.card').submit(); })()`);
+  await sleep(900);
+  await shot("users", `${UI}/users`, { maxHeight: 900 });
+  await shot("token-new", `${UI}/account?dialog=token`, { selector: dialog, step: steps(
+    type("name", "agent"), "document.querySelector('dialog[open] form').submit()") });
+}
 ws.close();
 process.exit(0);

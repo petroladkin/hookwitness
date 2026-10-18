@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -509,6 +510,38 @@ func rawQuery(r *http.Request) string {
 }
 
 func storeHeaders(r *http.Request, hs []wire.Header, ok bool) []store.Header {
+	out := storeHeaderLines(r, hs, ok)
+	for i, h := range out {
+		if strings.EqualFold(h.Name, "Cookie") {
+			out[i].Value = RedactSession(h.Value)
+		}
+	}
+	return out
+}
+
+// SessionRedacted replaces the value of the admin's login cookie in a
+// recorded Cookie header.
+const SessionRedacted = "[hookwitness session]"
+
+// RedactSession replaces the value of a hookwitness_session cookie in a
+// Cookie header's value. Cookies ignore ports, so a browser logged in to an
+// admin on another port of the same host sends it to catch paths too; it
+// must never be kept with the evidence. Everything else stays as sent.
+func RedactSession(v string) string {
+	if !strings.Contains(v, access.CookieName) {
+		return v
+	}
+	parts := strings.Split(v, ";")
+	for i, p := range parts {
+		name, _, found := strings.Cut(p, "=")
+		if found && strings.TrimSpace(name) == access.CookieName {
+			parts[i] = name + "=" + SessionRedacted
+		}
+	}
+	return strings.Join(parts, ";")
+}
+
+func storeHeaderLines(r *http.Request, hs []wire.Header, ok bool) []store.Header {
 	if ok {
 		out := make([]store.Header, len(hs))
 		for i, h := range hs {

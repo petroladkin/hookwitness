@@ -64,7 +64,9 @@ walks through it.
 
 The UI, the API and MCP share port 8080 under `/admin` by default; to give
 them their own port and publish only the catch port, see [the admin on its
-own port](docs/deployment.md#the-admin-on-its-own-port).
+own port](docs/deployment.md#the-admin-on-its-own-port). Until you add a
+user the admin has no login; add one before others can reach it ([users,
+login and tokens](docs/access.md)).
 
 ## What it does
 
@@ -85,6 +87,8 @@ own port](docs/deployment.md#the-admin-on-its-own-port).
   everything the UI does, plus long-poll waits and an `expect` assertion for
   agents; an [agent skill](docs/agents.md) for testing senders with Claude
   Code.
+- **[Users and tokens](docs/access.md)**: login for a shared server, two
+  roles, personal tokens for scripts, CI and MCP.
 
 ## How it compares
 

@@ -103,6 +103,12 @@ deployment](deployment.md#the-admin-on-its-own-port)), MCP is on that port:
 `http://127.0.0.1:8081/mcp` when the admin is at its root. Give the bridge the
 full URL then: `hookwitness mcp -url http://127.0.0.1:8081/mcp`.
 
+With login on ([Users, login and tokens](access.md)), MCP needs a token:
+`--header "Authorization: Bearer <token>"` for a client that speaks HTTP,
+`-token-file <file>` for the bridge (see [MCP with a
+token](access.md#mcp-with-a-token)). The agent then acts as the token's
+owner.
+
 Check that the server answers MCP:
 
 ```sh

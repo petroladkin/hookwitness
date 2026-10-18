@@ -22,6 +22,10 @@ type navView struct {
 	OnRegister bool  // a register page with a live feed
 	Asset      func(string) string
 	Build      string // the build serving the page: "<version> (<commit>)"
+	NoLogin    bool   // login is off: every page says that anyone can use it
+	User       string // who is logged in; "" with login off
+	Admin      bool   // the logged-in user may manage users
+	Bare       bool   // the login page: no endpoints, no addresses
 }
 
 // registerView is one register: an endpoint's requests or the Unmatched ones.

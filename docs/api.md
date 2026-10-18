@@ -8,7 +8,7 @@ webhooks and read them with their verdicts. Everything is JSON.
 - [Conventions and errors](#conventions-and-errors)
 - [Routes](#routes): [endpoints](#endpoints), [behaviour](#behaviour),
   [secrets](#secrets), [requests](#requests), [actions](#actions),
-  [reports](#reports), [OpenAPI](#openapi)
+  [reports](#reports), [users and tokens](#users-and-tokens), [OpenAPI](#openapi)
 - [Recipes](#recipes): [wait for a webhook](#wait-for-a-webhook-and-read-its-verdict),
   [wait for one task's callback](#wait-for-the-callback-of-one-task),
   [Basic credentials](#require-basic-credentials),
@@ -22,23 +22,35 @@ The API lives under the admin prefix: `http://<host>:8080/admin/api/v1`
 `-admin-addr` / `HOOKWITNESS_ADMIN_ADDR` it moves to the admin's own port,
 `http://<host>:8081/api/v1` when the prefix is `/`). An endpoint's `url` is
 built on `-public-url` / `HOOKWITNESS_PUBLIC_URL` when it is set. It has
-the UI's access rules and no login of its own yet:
+the UI's access rules:
+
+- **Credentials, once login is on.** While there are no users it is open.
+  Once a user exists (or a machine token is set,
+  `HOOKWITNESS_API_TOKEN_FILE`), every route needs a token as
+  `Authorization: Bearer <token>` (from the account page, or `POST
+  /me/tokens`), or the web UI's login cookie; without them `401
+  unauthorized`, with a wrong or revoked token `401 invalid_token`, both with
+  `WWW-Authenticate: Bearer`. A token acts as its owner, with the owner's
+  role as it is now. See [Users, login and tokens](access.md).
 
 - It answers only when called by IP address, `localhost`, or a host name
   listed in `-admin-hosts` / `HOOKWITNESS_ADMIN_HOSTS`; any other name gets
   `421 wrong_host` (this stops a web page from reaching it through a domain
-  pointed at your machine).
+  pointed at your machine). A request with a valid token is answered on any
+  name.
 - Writes (`POST`, `PUT`) must send `Content-Type: application/json`, else
   `415`; a write sent by a web page from another site is refused (`403
   cross_origin`). curl and HTTP client libraries are not affected.
-- Keep it on localhost or a trusted network: whoever reaches it can configure
-  endpoints and make the server verify with your test secrets.
+- Without users, keep it on localhost or a trusted network: whoever reaches
+  it can configure endpoints and make the server verify with your test
+  secrets.
 
 Catch endpoints themselves (where senders deliver webhooks) answer to any
 host name: only the admin prefix is restricted.
 
 The same server answers MCP at `/admin/mcp` (Streamable HTTP), with the same
-access rules; its tools are built on these routes. See
+access rules (with login on, a token: a login cookie is not enough); its
+tools are built on these routes and act as the token's owner. See
 [MCP](agents.md#mcp).
 
 ## Conventions and errors
@@ -56,9 +68,12 @@ access rules; its tools are built on these routes. See
 | Status | `code` | When |
 |---|---|---|
 | 400 | `bad_json`, `unknown_field` | the body is not valid JSON, has an unknown field or a wrong type (`field` names it) |
+| 401 | `unauthorized`, `invalid_token` | login is on and the request has no credentials, or a token that is not valid |
 | 403 | `cross_origin` | a write from a web page on another site |
+| 403 | `forbidden`, `session_required` | only an admin may do this; managing tokens and users needs a login, not a token |
 | 404 | `not_found` | no such endpoint, secret, request or route |
 | 409 | `duplicate_path`, `secret_in_use`, `conflict` | the path is taken; the secret is used by a check; too many concurrent changes |
+| 409 | `exists`, `last_admin`, `login_off` | a user or token name is taken; the change would leave no admin; there are no users yet |
 | 412 | `stale_version` | the behaviour changed since you read it (`If-Match`) |
 | 413 | `too_large` | the body is over 1 MiB |
 | 415 | `unsupported_media_type` | a write without `Content-Type: application/json` |
@@ -356,6 +371,28 @@ naming it.
 curl -s -o report.pdf -w '%{http_code}\n' "$API/endpoints/1/report?format=pdf&scope=picked&pick=3-5&mask=Authorization"
 # 200
 ```
+
+### Users and tokens
+
+The caller, their tokens, and (for admins) users and everyone's tokens.
+Everything but `GET /me` needs a login (the web UI's cookie, or the
+session of a script that logged in at `<prefix>/login`): a token gets `403
+session_required`, so a leaked token cannot make others. While there are no
+users the user routes are open, to add the first one, which must be an
+admin.
+
+| Route | Does |
+|---|---|
+| `GET /me` | who the caller is: `{"login":true,"name","role","via"}` (`via`: `session`, `token`, `machine token`), or `{"login":false}` while login is off |
+| `PUT /me/password` `{"current","new"}` | changes your password (at least 12 characters); your other logins end. `204`; `422` (field `current` or `new`) |
+| `GET /me/tokens` | your tokens: `id`, `name`, `shown` (`hkw_<id>_…`), `created_at`, `last_used_at`; never the value |
+| `POST /me/tokens` `{"name"}` | makes a token; the answer's `token` is the value, **shown this once**. `201`; `409 exists` for a name you use |
+| `DELETE /me/tokens/{id}` | revokes one of yours: refused from its next request. `204` |
+| `GET /users` | users with `name`, `role`, `created_at`, `tokens` (admins) |
+| `POST /users` `{"name","role","password"}` | adds a user (`role` `user` by default). `201`; `409 exists`; `422` naming the field |
+| `PATCH /user/{name}` `{"role"?, "password"?}` | changes a role or sets a password; either ends that user's logins. `409 last_admin` for the last admin |
+| `DELETE /user/{name}` | removes a user with their tokens. `204`; `409 last_admin` |
+| `GET /tokens`, `DELETE /tokens/{id}` | everyone's tokens, with their `owner`; revoke any (admins) |
 
 ### OpenAPI
 

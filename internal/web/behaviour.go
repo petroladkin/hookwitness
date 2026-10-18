@@ -295,7 +295,7 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusConflict, op, changedElsewhere, nil)
 		return
 	}
-	h.log.Info("endpoint behaviour changed", "path", ep.Path, "op", op)
+	h.log.Info("endpoint behaviour changed", append([]any{"path", ep.Path, "op", op}, who(r)...)...)
 	http.Redirect(w, r, savedURL(h.regPath(id), section), http.StatusSeeOther)
 }
 

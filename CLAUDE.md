@@ -55,7 +55,17 @@ version`, reports, the UI and `/healthz` name the build as `<version>
 lives under the prefix on the catch listener, or on its own address
 (`-admin-addr`, prefix `/` allowed there), where the catch listener keeps
 only endpoints and `/healthz`; catch URLs come from `-public-url` or are
-derived (`api.CatchURL`). A container image (distroless, non-root, data
+derived (`api.CatchURL`). Access: with no users the admin is open (a "no
+login" line on every page, a start-up warning beyond loopback); the first
+user (always an admin; from the Users page, `HOOKWITNESS_ADMIN_USER` +
+`HOOKWITNESS_ADMIN_PASSWORD_FILE` at start, `hookwitness user add`, or the
+API) turns login on for the UI, the API and MCP: browser sessions (cookie,
+SameSite=Lax, idle 24 h, absolute 7 days), personal tokens
+(`hkw_<id>_<secret>`, Bearer, shown once; skip the host check), a machine
+token (`HOOKWITNESS_API_TOKEN_FILE`, closes the API and MCP even without
+users), two roles (user, admin), a login limit per client address
+(`-trusted-proxies`); token and user management needs a session; the
+catcher replaces the session cookie's value in recorded `Cookie` headers. A container image (distroless, non-root, data
 in the `/data` volume) is built, smoke-tested and published to GHCR by CI.
 Released: 0.1.0 (`CHANGELOG.md`); the documentation tells users to run the
 image `:0.1` (`TestDocsImageTag`), and `main` holds the tagged releases.
@@ -65,13 +75,21 @@ that makes it false.
 ## Layout
 
 - `cmd/hookwitness` — the command: subcommands `serve`, `health`, `mcp` (the
-  stdio bridge), `version`; signal
-  handling; logger setup; wiring of the parts below.
+  stdio bridge, `-token-file`), `user` (add / passwd / rm / list on the
+  database, exit codes 0-4), `version`; the first admin from the
+  environment; signal handling; logger setup; wiring of the parts below.
+- `internal/access` — who may use the admin: names, passwords, tokens
+  (format, minting), sessions (ids hashed with SHA-256, lifetimes, the
+  cookie), the login limiter and trusted proxies, the identity a request
+  carries in its context (`With`, `From`, `Who` for logs), the
+  `Authenticator` over the store and `internal/secret`.
 - `internal/config` — `serve` settings from flags and `HOOKWITNESS_*` env
   (the admin's own address and the public URL validated with the rest).
 - `internal/store` — sqlite (modernc.org/sqlite, no cgo): pragmas, embedded
   migrations in `internal/store/migrations/NNNN_name.sql`, applied in order and
   recorded in `schema_migrations`; a newer database schema is refused.
+  Users, sessions and tokens (`access.go`; the last admin guarded inside the
+  write transaction).
   Endpoints and requests (`catch.go`); `endpoint_id` NULL is the Unmatched
   register; request ids are never reused (they are the SSE event ids).
 - `internal/wire` — follows the raw HTTP/1.x stream of each connection to keep
@@ -154,8 +172,11 @@ that makes it false.
   (our `app.css`, `app.js`; vendored htmx, htmx-ext-sse and fonts under
   `static/vendor/<name>/` with `LICENSE` and `SOURCE`). Strict CSP: no
   inline scripts or styles, nothing from other origins. Answers only to IP
-  addresses, localhost and `-admin-hosts` names (DNS rebinding); refuses
-  cross-origin form posts.
+  addresses, localhost and `-admin-hosts` names (DNS rebinding; a valid
+  token skips it); refuses cross-origin form posts. The admin's gate
+  (`access.go`: credentials, then the host check, then the rules per route)
+  and the login, account and users pages (`users.go`, `access.templ`); the
+  live feed checks its session at each heartbeat (`event: login`).
 - `internal/version` — version and commit, set via `-ldflags` by `make build`;
   without them (`go install`) taken from the build info Go records.
 - `internal/repoguard` — tests over the repository itself: no private network
@@ -221,7 +242,8 @@ that makes it false.
 ## Scope
 
 - In the first release: the features above.
-- Out of scope: Kafka / MQTT / gRPC, users and RBAC, a hosted cloud version.
+- Out of scope: Kafka / MQTT / gRPC, roles beyond user and admin
+  (per-endpoint permissions, RBAC), SSO/OIDC, a hosted cloud version.
 
 ## Stack
 

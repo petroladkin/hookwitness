@@ -77,7 +77,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "create endpoint", err)
 		return
 	}
-	h.log.Info("endpoint created", "path", p, "via", "api")
+	h.log.Info("endpoint created", logAttrs(r, "path", p, "via", "api")...)
 	w.Header().Set("Location", h.base+"/endpoints/"+strconv.FormatInt(ep.ID, 10))
 	writeJSON(w, http.StatusCreated, h.endpointView(r, ep))
 }

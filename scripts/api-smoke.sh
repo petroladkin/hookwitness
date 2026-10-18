@@ -1,7 +1,9 @@
 #!/bin/bash
 # API scenario: the Basic-credentials recipe of docs/api.md end to end —
 # create an endpoint, set a password, require it, send JSON events with
-# right and wrong credentials, wait for them and read their verdicts.
+# right and wrong credentials, wait for them and read their verdicts. On a
+# server it starts itself (--binary, --image) it then turns login on: the
+# first admin, a login, a token, the API with and without it (docs/access.md).
 #
 # Usage:
 #   scripts/api-smoke.sh <base-url>            against a running hookwitness
@@ -21,14 +23,16 @@ trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { echo "ok: $*"; }
 
+OWN=
 case "${1:?usage: api-smoke.sh <base-url> | --binary <path> | --image <image>}" in
 --binary)
   "${2:?binary}" serve -addr 127.0.0.1:$PORT -db "$WORK/hw.db" >"$WORK/log" 2>&1 &
-  PID=$!
+  PID=$! OWN=1
   HW=http://127.0.0.1:$PORT ;;
 --image)
   C=hw-api-smoke-$$
   docker run -d --name $C -p 127.0.0.1:$PORT:8080 "${2:?image}" >/dev/null
+  OWN=1
   HW=http://127.0.0.1:$PORT ;;
 *) HW=${1%/} ;;
 esac
@@ -112,5 +116,37 @@ code=$(curl -sS -o /dev/null -w '%{http_code}' -d 'path=/form' "$API/endpoints")
 echo "$code"; echo
 [ "$code" = 415 ] || fail "form post answered $code"
 ok "stale If-Match 412, form post 415"
+
+# 7. Login (only on a server of our own: it cannot be turned off again).
+if [ -n "$OWN" ]; then
+  call POST /users '{"name":"smoke-admin","role":"admin","password":"smoke-admin-password"}'
+  expect 201 "the first admin"
+  call GET /endpoints
+  expect 401 "the API once login is on"
+  grep -qi '^www-authenticate: Bearer' "$WORK/headers" || fail "401 without WWW-Authenticate"
+  echo "\$ curl -c cookies -d name=smoke-admin -d password=*** $HW/admin/login"
+  code=$(curl -sS -o /dev/null -w '%{http_code}' -c "$WORK/cookies" -d name=smoke-admin -d password=smoke-admin-password "$HW/admin/login")
+  echo "$code"; echo
+  [ "$code" = 303 ] || fail "login answered $code"
+  call POST /me/tokens '{"name":"smoke"}' -b "$WORK/cookies" >/dev/null
+  expect 201 "make a token"
+  TOKEN=$(jq -r .token <<<"$body"); TID=$(jq -r .id <<<"$body")
+  echo "\$ curl -X POST '$API/me/tokens' -b cookies -d '{\"name\":\"smoke\"}'"
+  echo "201 $(jq -c '.token = "***"' <<<"$body")"; echo
+  [[ "$TOKEN" =~ ^hkw_[a-z2-7]{8}_[a-z2-7]{40}$ ]] || fail "token format"
+  call GET "/endpoints/$ID/requests" '' -H "Authorization: Bearer $TOKEN" >/dev/null
+  echo "\$ curl '$API/endpoints/$ID/requests' -H 'Authorization: Bearer ***'"; echo "$code"; echo
+  expect 200 "the API with the token"
+  [ "$(jq '.requests | length' <<<"$body")" = 2 ] || fail "requests with the token: $body"
+  call POST /me/tokens '{"name":"more"}' -H "Authorization: Bearer $TOKEN" >/dev/null
+  expect 403 "a token making tokens"
+  [ "$(jq -r .error.code <<<"$body")" = session_required ] || fail "token making tokens: $body"
+  call DELETE /me/tokens/$TID '' -b "$WORK/cookies"
+  expect 204 "revoke"
+  call GET /endpoints '' -H "Authorization: Bearer $TOKEN" >/dev/null
+  expect 401 "a revoked token"
+  ! grep -q "$TOKEN" "$WORK/body" || fail "an answer holds the token"
+  ok "login on: 401 without credentials, a token works, cannot make tokens, revoked 401"
+fi
 
 echo "api smoke: all passed"

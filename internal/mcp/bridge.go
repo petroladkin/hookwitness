@@ -66,7 +66,33 @@ func Bridge(ctx context.Context, endpoint string, client *http.Client, in io.Rea
 	if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
 		return nil // the client closed stdin, or the process is stopping
 	}
+	if strings.Contains(err.Error(), http.StatusText(http.StatusUnauthorized)) {
+		return fmt.Errorf("%w (the server has login on and wants a token: pass -token-file with a token from its account page)", err)
+	}
 	return notFoundHint(endpoint, err)
+}
+
+// WithToken is client sending Authorization: Bearer token with every
+// request, for a server with login on.
+func WithToken(client *http.Client, token string) *http.Client {
+	c := *client
+	base := c.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	c.Transport = bearerTransport{base: base, value: "Bearer " + token}
+	return &c
+}
+
+type bearerTransport struct {
+	base  http.RoundTripper
+	value string
+}
+
+func (t bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", t.value)
+	return t.base.RoundTrip(r)
 }
 
 // notFoundHint adds to a "Not Found" from a server's /admin/mcp the URL an

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -37,6 +38,10 @@ type Options struct {
 	Stop     <-chan struct{} // closed on shutdown: waiting calls answer at once
 	Version  string          // the build, named in reports
 	Fonts    fs.FS           // the UI's fonts, embedded in HTML reports
+	// Access checks passwords and makes tokens; nil: login is off for good
+	// (tests). The caller's identity comes in the request's context
+	// (internal/access), put there by internal/web.
+	Access *access.Authenticator
 }
 
 // Handler serves the API. Create it with New.
@@ -61,43 +66,56 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	h := &Handler{store: st, live: broker, log: log, o: o, base: Base(o.Prefix), mux: http.NewServeMux()}
 	b := h.base
 	for _, rt := range h.routes() {
-		h.mux.HandleFunc(rt.method+" "+b+rt.path, rt.fn)
+		h.mux.HandleFunc(rt.method+" "+b+rt.path, h.guard(rt.need, rt.fn))
 	}
-	h.mux.HandleFunc("GET "+b+"/openapi.json", serveOpenAPI)
-	h.mux.HandleFunc(b+"/", func(w http.ResponseWriter, r *http.Request) {
+	h.mux.HandleFunc("GET "+b+"/openapi.json", h.guard(needAny, serveOpenAPI))
+	h.mux.HandleFunc(b+"/", h.guard(needAny, func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no route %s %s", r.Method, r.URL.Path), "")
-	})
+	}))
 	return h
 }
 
-// route is one operation of the API; openapi.json documents each.
+// route is one operation of the API; openapi.json documents each. need is
+// what it asks of the caller once login is on.
 type route struct {
 	method, path string
 	fn           http.HandlerFunc
+	need         need
 }
 
 func (h *Handler) routes() []route {
 	return []route{
-		{"GET", "/endpoints", h.listEndpoints},
-		{"POST", "/endpoints", h.createEndpoint},
-		{"GET", "/endpoints/{id}", h.getEndpoint},
-		{"PATCH", "/endpoints/{id}", h.patchEndpoint},
-		{"DELETE", "/endpoints/{id}", h.deleteEndpoint},
-		{"GET", "/endpoints/{id}/behaviour", h.getBehaviour},
-		{"PUT", "/endpoints/{id}/behaviour", h.putBehaviour},
-		{"PUT", "/endpoints/{id}/secrets/{name}", h.putSecret},
-		{"DELETE", "/endpoints/{id}/secrets/{name}", h.deleteSecret},
-		{"POST", "/endpoints/{id}/reset-counter", h.resetCounter},
-		{"POST", "/endpoints/{id}/recheck", h.recheck},
-		{"POST", "/endpoints/{id}/schema-draft", h.schemaDraft},
-		{"GET", "/endpoints/{id}/report", h.endpointReport},
-		{"GET", "/endpoints/{id}/requests", h.listRequests},
-		{"DELETE", "/endpoints/{id}/requests", h.clearRequests},
-		{"GET", "/requests/{id}", h.getRequest},
-		{"GET", "/requests/{id}/body", h.rawBody},
-		{"GET", "/requests/{id}/image", h.getImage},
-		{"GET", "/unmatched/requests", h.listUnmatched},
-		{"GET", "/unmatched/report", h.unmatchedReport},
+		{"GET", "/endpoints", h.listEndpoints, needAny},
+		{"POST", "/endpoints", h.createEndpoint, needAny},
+		{"GET", "/endpoints/{id}", h.getEndpoint, needAny},
+		{"PATCH", "/endpoints/{id}", h.patchEndpoint, needAny},
+		{"DELETE", "/endpoints/{id}", h.deleteEndpoint, needAny},
+		{"GET", "/endpoints/{id}/behaviour", h.getBehaviour, needAny},
+		{"PUT", "/endpoints/{id}/behaviour", h.putBehaviour, needAny},
+		{"PUT", "/endpoints/{id}/secrets/{name}", h.putSecret, needAny},
+		{"DELETE", "/endpoints/{id}/secrets/{name}", h.deleteSecret, needAny},
+		{"POST", "/endpoints/{id}/reset-counter", h.resetCounter, needAny},
+		{"POST", "/endpoints/{id}/recheck", h.recheck, needAny},
+		{"POST", "/endpoints/{id}/schema-draft", h.schemaDraft, needAny},
+		{"GET", "/endpoints/{id}/report", h.endpointReport, needAny},
+		{"GET", "/endpoints/{id}/requests", h.listRequests, needAny},
+		{"DELETE", "/endpoints/{id}/requests", h.clearRequests, needAny},
+		{"GET", "/requests/{id}", h.getRequest, needAny},
+		{"GET", "/requests/{id}/body", h.rawBody, needAny},
+		{"GET", "/requests/{id}/image", h.getImage, needAny},
+		{"GET", "/unmatched/requests", h.listUnmatched, needAny},
+		{"GET", "/unmatched/report", h.unmatchedReport, needAny},
+		{"GET", "/me", h.me, needAny},
+		{"PUT", "/me/password", h.changeOwnPassword, needSession},
+		{"GET", "/me/tokens", h.listTokens(ownID), needSession},
+		{"POST", "/me/tokens", h.createToken, needSession},
+		{"DELETE", "/me/tokens/{id}", h.revokeToken(ownID), needSession},
+		{"GET", "/users", h.listUsers, needAdmin},
+		{"POST", "/users", h.addUser, needAdmin},
+		{"PATCH", "/user/{name}", h.patchUser, needAdmin},
+		{"DELETE", "/user/{name}", h.removeUser, needAdmin},
+		{"GET", "/tokens", h.listTokens(everyone), needAdmin},
+		{"DELETE", "/tokens/{id}", h.revokeToken(everyone), needAdmin},
 	}
 }
 

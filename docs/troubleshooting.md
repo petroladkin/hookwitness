@@ -109,3 +109,19 @@ The live register is a Server-Sent Events stream at `/admin/e/<id>/events`. A
 reverse proxy that buffers responses holds it back; turn buffering off for
 the admin prefix (nginx: `proxy_buffering off;`; Hookwitness also sends
 `X-Accel-Buffering: no`). A reload always shows the current state.
+
+## The API answers 401 since a user was added
+
+The first user turns login on for the REST API and MCP too: scripts and
+agents now need a token (`Authorization: Bearer <token>`, from your account
+page), see [Users, login and tokens](access.md#tokens-for-scripts-and-agents).
+`401 invalid_token` means the token is wrong or was revoked, or its owner
+was removed.
+
+## Nobody can log in any more
+
+On the server, `hookwitness user passwd <name>` sets a new password and
+`hookwitness user add <name> --admin` adds another admin; see [Lost the admin
+password](access.md#lost-the-admin-password). Ten failed logins from one
+address pause its logins for 15 minutes; behind a reverse proxy, set
+`-trusted-proxies` so that the pause hits the client, not the proxy.
