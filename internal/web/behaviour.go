@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petroladkin/hookwitness/internal/auth"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -722,65 +721,6 @@ func varOrName(name string) string {
 	return name
 }
 
-// refusalLabel says how a check refuses.
-func refusalLabel(c emulate.Check) string {
-	switch {
-	case c.Error != nil:
-		return strconv.Itoa(c.Error.Status) + " (own reply)"
-	case c.Kind == emulate.KindSchema:
-		return "400 listing the problems"
-	case c.GivesVerdict():
-		return "401"
-	}
-	return "400 naming the header"
-}
-
-// checkSummary describes a check in its list row, after its label.
-func checkSummary(c emulate.Check) string {
-	if !c.GivesVerdict() {
-		return matchLabel(c) + " · else " + refusalLabel(c)
-	}
-	parts := []string{"secret " + c.Secret}
-	if c.Kind == emulate.KindSchema {
-		parts = nil
-		if c.Select != nil {
-			for _, m := range c.Select.Map {
-				parts = append(parts, strconv.Quote(m.Value)+" → "+m.Schema)
-			}
-			other := "other values not checked"
-			if d := c.Select.Default; len(d) > 0 {
-				other = "other values → " + strings.Join(d, " or ")
-			}
-			parts = []string{strings.Join(parts, ", "), other}
-		}
-	}
-	switch c.Kind {
-	case emulate.KindBasic:
-		parts = append(parts, "user "+c.User)
-	case emulate.KindHMAC:
-		parts = append(parts, c.Algo+" "+c.Encoding)
-	case emulate.KindStripe, emulate.KindStandard:
-		if c.IgnoreTimestamp {
-			parts = append(parts, "any timestamp")
-		} else {
-			parts = append(parts, "tolerance "+strconv.FormatInt(tolerance(c), 10)+" s")
-		}
-	}
-	if c.Enforce {
-		parts = append(parts, "enforced · else "+refusalLabel(c))
-	} else {
-		parts = append(parts, "record only")
-	}
-	return strings.Join(parts, " · ")
-}
-
-func tolerance(c emulate.Check) int64 {
-	if c.ToleranceS > 0 {
-		return c.ToleranceS
-	}
-	return auth.DefaultTolerance
-}
-
 // kindTitle names a check kind in the editor's select.
 func kindTitle(k string) string {
 	switch k {
@@ -801,13 +741,6 @@ func checkKind(c emulate.Check) string {
 		return emulate.KindHeader
 	}
 	return c.Kind
-}
-
-func secretKindTitle(k string) string {
-	if k == emulate.SecretToken {
-		return "token or password"
-	}
-	return "signing key"
 }
 
 // checkFor is a new check that uses a secret: a bearer check for a token, a
@@ -869,16 +802,6 @@ func secretUse(c emulate.Config, name string) string {
 		return "not used"
 	}
 	return "used by " + strings.Join(users, ", ")
-}
-
-func delayLabel(r emulate.Reply) string {
-	switch {
-	case r.DelayMs == 0 && r.JitterMs == 0:
-		return "none"
-	case r.JitterMs == 0:
-		return duration(r.DelayMs)
-	}
-	return duration(r.DelayMs) + " + up to " + duration(r.JitterMs) + " at random"
 }
 
 func tabCurrent(on bool) string {
@@ -949,27 +872,6 @@ func ms(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
 
-func duration(msec int64) string {
-	d := time.Duration(msec) * time.Millisecond
-	if d < time.Second {
-		return strconv.FormatInt(msec, 10) + " ms"
-	}
-	return strconv.FormatFloat(d.Seconds(), 'f', 1, 64) + " s"
-}
-
-func ruleAction(r emulate.Rule) string {
-	switch r.Do {
-	case emulate.ActTimeout:
-		return "time out"
-	case emulate.ActDrop:
-		return "drop the connection"
-	}
-	if r.Reply.DelayMs > 0 || r.Reply.JitterMs > 0 {
-		return strconv.Itoa(r.Reply.Status) + " after " + duration(r.Reply.DelayMs) + "+"
-	}
-	return strconv.Itoa(r.Reply.Status)
-}
-
 // replyOrDefault keeps the reply fields sensible for timeout and drop rules,
 // so switching such a rule back to "reply" starts from something valid.
 func replyOrDefault(r emulate.Rule) emulate.Reply {
@@ -977,16 +879,6 @@ func replyOrDefault(r emulate.Rule) emulate.Reply {
 		return emulate.Reply{Status: 500}
 	}
 	return r.Reply
-}
-
-func matchLabel(c emulate.Check) string {
-	switch c.Match {
-	case emulate.MatchEquals:
-		return "equals " + strconv.Quote(c.Value)
-	case emulate.MatchRegex:
-		return "matches /" + c.Value + "/"
-	}
-	return "is present"
 }
 
 func errorOrStandard(c emulate.Check) emulate.Reply {
@@ -1012,13 +904,13 @@ func answerText(o emulate.Outcome) string {
 	case emulate.ActTimeout:
 		s = "Held without an answer"
 		if o.WaitedMs > 0 {
-			s += " for " + duration(o.WaitedMs)
+			s += " for " + emulate.Duration(o.WaitedMs)
 		}
 		s += ", then closed"
 	case emulate.ActAbandoned:
-		s = "The sender left after " + duration(o.WaitedMs) + ", before the reply"
+		s = "The sender left after " + emulate.Duration(o.WaitedMs) + ", before the reply"
 		if o.DelayMs > 0 {
-			s += "'s " + duration(o.DelayMs) + " delay ran out"
+			s += "'s " + emulate.Duration(o.DelayMs) + " delay ran out"
 		}
 		s += ", so nothing was sent; it would have been " + strconv.Itoa(o.Would)
 	case emulate.ActDrop:
@@ -1028,7 +920,7 @@ func answerText(o emulate.Outcome) string {
 	default:
 		s = strconv.Itoa(o.Status) + " sent"
 		if o.DelayMs > 0 {
-			s += " after " + duration(o.DelayMs)
+			s += " after " + emulate.Duration(o.DelayMs)
 		}
 	}
 	if w := o.Why(); w != "" {

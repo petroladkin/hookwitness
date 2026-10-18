@@ -41,7 +41,9 @@ screenshots) and its Ukrainian twin in `docs/uk/`; the README keeps the pitch,
 the quick start and links. Reports: a register's requests (all, a time range or
 picked by number) download from the UI as Markdown, self-contained HTML or a
 native PDF, with a summary (answers by class, verdicts per check, retry
-groups, the strip of the range) and optional header masking. The REST API
+groups, the strip of the range), optional header masking and an optional
+section with the endpoint's setup at generation time (secrets by name,
+kind and set / not set only). The REST API
 covers the UI: endpoints (create, change path, delete), behaviour, secrets,
 requests with filters (verdict, status, text in the body, a value at a
 JSON pointer), bodies in lists and long-poll, the Unmatched register, the raw body,
@@ -149,7 +151,9 @@ that makes it false.
   pretty-printed with tokens tagged (class, JSON pointer; indentation capped
   at 32 levels, no pointer past 128, so deep bodies stay small), the text test, the
   hex dump, query pairs; shared by the UI and the reports.
-- `internal/report` — reports of caught requests: Markdown, one HTML file
+- `internal/report` — reports of caught requests (and, asked for, the
+  endpoint's setup in words, `setup.go`, through `emulate`'s `words.go`
+  shared with the behaviour page): Markdown, one HTML file
   (inline CSS, the UI's fonts as data URIs, a CSP that forbids requests, an
   SVG strip) and PDF (signintech/gopdf; Martian Mono and Atkinson
   Hyperlegible TTFs vendored in `internal/report/fonts/<name>/` with LICENSE

@@ -397,7 +397,10 @@ printf '%s\n' "$D" | jq -c '{name, exists}'   # the name is suggested from the p
 Parameters as in the UI's dialog: `format` (`md`, `html`, `pdf`; required),
 `scope` (`all`, `range` with `from` / `to`, `picked` with `pick=3,5-9`),
 `mask` (a header name; repeat it) and `mask_other` (comma-separated),
-`images` (`shown` or `listed`). Times are RFC 3339 (`2026-10-13T09:00:00Z`) or
+`images` (`shown` or `listed`), `setup` (`true` adds the endpoint's setup:
+checks, schemas, rules, replies, variables, and secrets by name, kind and
+whether they are set, never a value; the Unmatched register has none, so
+it is ignored there). Times are RFC 3339 (`2026-10-13T09:00:00Z`) or
 a date-time without a zone, read as UTC. A wrong parameter is `422 invalid`
 naming it.
 

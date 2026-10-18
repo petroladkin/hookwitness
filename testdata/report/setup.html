@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:">
+<meta name="generator" content="Hookwitness v0.0.0-test">
+<title>Hookwitness report · /orders</title>
+<style>
+:root{
+  --paper:#E6ECE7;--paper-2:#DCE4DE;--grid:#B9CDBF;--grid-major:#93AF9C;
+  --ink:#24308C;--ink-soft:#4B56A6;--alarm:#C2331F;--text:#17201B;--muted:#58695F;--rule:#C3D2C8;
+  --f-stamp:"Saira Stencil One","Arial Narrow",Impact,sans-serif;
+  --f-body:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-data:"Martian Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme:dark){:root{
+  --paper:#0F1613;--paper-2:#141D19;--grid:#1E2C25;--grid-major:#2C4136;
+  --ink:#9AA8FF;--ink-soft:#7884D6;--alarm:#FF6E58;--text:#DAE4DD;--muted:#86998E;--rule:#22322A}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--text);font:400 15px/1.5 var(--f-body);padding-inline:16px;padding-block:0 32px}
+.wrap{max-width:1100px;margin:0 auto}
+.wrap>*{min-width:0}
+a{color:var(--ink)}
+code,pre{font-family:var(--f-data)}
+code{font-size:.86em}
+h1{font:600 18px/1.3 var(--f-data);margin:0;overflow-wrap:anywhere}
+h1 code{font-size:1em}
+h2{font:400 15px/1 var(--f-stamp);letter-spacing:.08em;text-transform:uppercase;color:var(--ink);margin:28px 0 12px}
+h3{font:700 12px/1.2 var(--f-body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:16px 0 6px}
+.mast{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 18px;padding-block:18px 10px;border-bottom:2px solid var(--ink)}
+.brand{font:400 22px/1 var(--f-stamp);letter-spacing:.04em;color:var(--ink);text-transform:uppercase}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:8px 24px;margin:14px 0}
+.facts div{min-width:0}
+.facts dt{font:700 11px/1.2 var(--f-body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.facts dd{margin:2px 0 0;font:400 13px/1.45 var(--f-data);overflow-wrap:anywhere}
+.strip{margin:8px 0 0;border:1px solid var(--rule);background:var(--paper)}
+.strip svg{display:block;width:100%;height:132px}
+.strip figcaption{font-size:12px;color:var(--muted);padding:6px 10px;border-top:1px solid var(--rule)}
+.paper{fill:var(--paper)}
+.grid{stroke:var(--grid);stroke-width:1;vector-effect:non-scaling-stroke}
+.grid-major{stroke:var(--grid-major);stroke-width:1;vector-effect:non-scaling-stroke}
+.baseline{stroke:var(--ink);stroke-opacity:.35;vector-effect:non-scaling-stroke}
+.tick,.gap{font:400 10px var(--f-data);fill:var(--muted);text-anchor:middle}
+.gap{fill:var(--ink);font-weight:600;stroke:var(--paper);stroke-width:3px;paint-order:stroke}
+.bracket.dense{stroke-dasharray:1 2}
+.bracket{fill:none;stroke:var(--ink-soft);stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
+.stem{stroke:var(--ink);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}
+.stem.bad{stroke:var(--alarm)}
+.dashed{stroke-dasharray:3 3}
+.dot{fill:var(--ink)}.dot.bad{fill:var(--alarm)}
+.ring{fill:none;stroke:var(--alarm);stroke-width:2;vector-effect:non-scaling-stroke}
+.alarm{fill:var(--alarm)}
+.summary .tables{display:flex;flex-wrap:wrap;gap:16px 32px;align-items:flex-start}
+table{border-collapse:collapse;font-size:13px}
+caption{text-align:left;font:700 11px/1.2 var(--f-body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding-bottom:6px}
+th,td{text-align:left;padding:4px 12px 4px 0;border-bottom:1px solid var(--rule);vertical-align:top}
+.counts td,.checks td{font:600 15px/1.2 var(--f-data);font-variant-numeric:tabular-nums}
+.counts th{font-weight:400;color:var(--muted)}
+.hot{color:var(--alarm)}
+.retries{margin-top:16px;width:100%}
+.summary caption{white-space:nowrap}
+.checks td.none{font:inherit;color:var(--muted)}
+.none{color:var(--muted)}
+.requests-title{margin-top:36px}
+.exhibit{background:var(--paper-2);border-left:3px solid var(--ink);padding:12px 16px 14px;margin:0 0 18px;break-inside:auto}
+.exhibit>header{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;break-after:avoid}
+.exhibit .no{font:600 15px/1 var(--f-data);color:var(--ink)}
+.exhibit .line{font:400 14px/1.4 var(--f-data);overflow-wrap:anywhere;min-width:0}
+.exhibit .stamp{margin-left:auto;font:400 13px/1 var(--f-stamp);letter-spacing:.08em;text-transform:uppercase;color:var(--ink);border:2px solid currentColor;padding:4px 7px 3px;transform:rotate(-2deg)}
+.exhibit .stamp.alarm{color:var(--alarm)}
+.kv{width:100%;table-layout:fixed}
+.kv th{width:32%;font-weight:400}
+.kv td,.kv th{overflow-wrap:anywhere}
+.masked{font:400 12px var(--f-data);color:var(--muted)}
+.verdicts ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.verdicts li{padding-left:10px;border-left:3px solid var(--ink)}
+.verdicts li.v-fail{border-color:var(--alarm)}
+.verdicts li.v-fail b{color:var(--alarm)}
+.verdicts li.v-n\/v,.verdicts li.v-n\/c{border-color:var(--muted)}
+.sig{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.problems{margin-top:4px}
+.problems th{font:400 12px var(--f-data)}
+.more{font-size:12px;color:var(--muted)}
+.note{font:400 12px/1.4 var(--f-data);text-transform:none;letter-spacing:0;color:var(--muted);overflow-wrap:anywhere}
+pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var(--rule);font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.json .k{color:var(--ink)}.json .s{color:var(--text)}.json .n{color:var(--ink-soft)}
+.json .elided{color:var(--muted);font-style:italic}
+.json .bad{color:var(--alarm);text-decoration:underline wavy var(--alarm);text-underline-offset:3px}
+.images{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,220px),1fr));gap:12px}
+.images figure{margin:0;border-top:2px solid var(--ink);padding-top:6px;min-width:0}
+.images figure.bad{border-top-color:var(--alarm)}
+.images img{display:block;max-width:100%;max-height:240px;margin:0 0 6px;background:var(--paper);border:1px solid var(--rule)}
+.images figcaption{font:400 12px/1.4 var(--f-data);color:var(--muted);overflow-wrap:anywhere}
+.images figcaption code{color:var(--text)}
+.foot{margin-top:32px;font-size:12px;color:var(--muted)}
+@media print{
+  :root{--paper:#fff;--paper-2:#fff;--grid:#B9CDBF;--grid-major:#93AF9C;--ink:#24308C;--ink-soft:#4B56A6;
+    --alarm:#C2331F;--text:#000;--muted:#58695F;--rule:#C3D2C8;color-scheme:light}
+  body{font-size:11pt;padding:0}
+  .exhibit{border:1px solid var(--rule);border-left:3px solid var(--ink)}
+  .exhibit>header,.exhibit .facts,.verdicts{break-inside:avoid}
+  .strip{break-inside:avoid}
+  a{color:inherit;text-decoration:none}
+}
+@page{size:A4;margin:15mm}
+.setup .intro{margin:0 0 12px;color:var(--muted);font-size:13px}
+.setup table{width:100%;margin:0 0 16px}
+.kv3{table-layout:fixed}
+.kv3 .n{width:2.5em;font:600 13px var(--f-data);color:var(--ink)}
+.kv3 th{width:30%;font-weight:400}
+.kv3 td,.kv3 th{overflow-wrap:anywhere}
+.reply{margin:0 0 16px;padding-left:10px;border-left:3px solid var(--ink-soft)}
+.reply h3{margin-top:0}
+.reply table{margin:0 0 6px}
+.reply .note{margin:6px 0 4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="mast">
+<div class="brand">Hookwitness</div>
+<h1>Report · <code>/orders</code></h1>
+</header>
+<dl class="facts">
+<div><dt>Time range</dt><dd>2026-10-11T12:00:01.250Z – 2026-10-11T12:00:01.250Z</dd></div>
+<div><dt>Selection</dt><dd>whole register</dd></div>
+<div><dt>Requests</dt><dd>1</dd></div>
+<div><dt>Generated</dt><dd>2026-10-12T09:30:00.000Z by Hookwitness v0.0.0-test</dd></div>
+<div><dt>Masked headers</dt><dd><code>Authorization</code>, <code>cookie</code>, <code>X-Hub-Signature-256</code></dd></div>
+</dl>
+<figure class="strip">
+<svg viewBox="0 0 1000 132" preserveAspectRatio="none" role="img" aria-label="Requests over the reported range">
+<rect class="paper" x="0" y="0" width="1000" height="132"/>
+<line class="grid" x1="47.8" y1="40" x2="47.8" y2="106"/>
+<line class="grid" x1="95.4" y1="40" x2="95.4" y2="106"/>
+<line class="grid-major" x1="143" y1="40" x2="143" y2="106"/>
+<line class="grid" x1="190.6" y1="40" x2="190.6" y2="106"/>
+<line class="grid" x1="238.2" y1="40" x2="238.2" y2="106"/>
+<line class="grid" x1="285.8" y1="40" x2="285.8" y2="106"/>
+<line class="grid" x1="333.4" y1="40" x2="333.4" y2="106"/>
+<line class="grid-major" x1="381" y1="40" x2="381" y2="106"/>
+<line class="grid" x1="428.6" y1="40" x2="428.6" y2="106"/>
+<line class="grid" x1="476.2" y1="40" x2="476.2" y2="106"/>
+<line class="grid" x1="523.8" y1="40" x2="523.8" y2="106"/>
+<line class="grid" x1="571.4" y1="40" x2="571.4" y2="106"/>
+<line class="grid-major" x1="619" y1="40" x2="619" y2="106"/>
+<line class="grid" x1="666.6" y1="40" x2="666.6" y2="106"/>
+<line class="grid" x1="714.2" y1="40" x2="714.2" y2="106"/>
+<line class="grid" x1="761.8" y1="40" x2="761.8" y2="106"/>
+<line class="grid" x1="809.4" y1="40" x2="809.4" y2="106"/>
+<line class="grid-major" x1="857" y1="40" x2="857" y2="106"/>
+<line class="grid" x1="904.6" y1="40" x2="904.6" y2="106"/>
+<line class="grid" x1="952.2" y1="40" x2="952.2" y2="106"/>
+<line class="grid" x1="0" y1="106" x2="1000" y2="106"/>
+<line class="grid" x1="0" y1="90" x2="1000" y2="90"/>
+<line class="grid" x1="0" y1="74" x2="1000" y2="74"/>
+<line class="grid" x1="0" y1="58" x2="1000" y2="58"/>
+<line class="grid" x1="0" y1="42" x2="1000" y2="42"/>
+<line class="baseline" x1="0" y1="106" x2="1000" y2="106"/>
+<text class="tick" x="143" y="132" dy="-8">12:00:00.5</text>
+<text class="tick" x="381" y="132" dy="-8">12:00:01.0</text>
+<text class="tick" x="619" y="132" dy="-8">12:00:01.5</text>
+<text class="tick" x="857" y="132" dy="-8">12:00:02.0</text>
+<line class="stem ok" x1="500" y1="106" x2="500" y2="94.4"/><circle class="dot ok" cx="500" cy="94.4" r="3"/>
+</svg>
+<figcaption>Height = body size · red: not 2xx · dashed: timeout · ×: dropped · red bar under the line: a failed check · same body bracketed · times in UTC</figcaption>
+</figure>
+<section class="summary">
+<h2>Summary</h2>
+<div class="tables">
+<table class="counts">
+<caption>Answers</caption>
+<tr><th scope="col">2xx</th><th scope="col">4xx</th><th scope="col">5xx</th><th scope="col">timeout</th><th scope="col">drop</th><th scope="col">refused by a check</th></tr>
+<tr><td class="">1</td><td class="">0</td><td class="">0</td><td class="">0</td><td class="">0</td><td class="">0</td></tr>
+</table>
+<table class="checks">
+<caption>Verdicts</caption>
+<tr><th scope="col">Check</th><th scope="col">pass</th><th scope="col">fail</th><th scope="col">not checked</th><th scope="col">not verifiable</th></tr>
+<tr><th scope="row">1 · GitHub signature</th><td>1</td><td class="">0</td><td>0</td><td>0</td></tr>
+<tr><th scope="row">2 · JSON Schema by /type</th><td>1</td><td class="">0</td><td>0</td><td>0</td></tr>
+</table>
+</div>
+<table class="retries">
+<caption>Retries · the same body delivered more than once</caption>
+<tr><td class="none">None.</td></tr>
+</table>
+</section>
+<section class="setup">
+<h2>Setup</h2>
+<p class="intro">The endpoint&#39;s setup when this report was generated, 2026-10-12T09:30:00.000Z.</p>
+<table class="kv3">
+<caption>Checks · in order</caption>
+<tr><td class="n">1</td><th scope="row">header X-Shop-Domain</th><td>equals &#34;test-shop.example&#34; · else 400 naming the header</td></tr>
+<tr><td class="n">2</td><th scope="row">GitHub signature</th><td>secret GITHUB_KEY · enforced · else 401</td></tr>
+<tr><td class="n">3</td><th scope="row">Bearer token</th><td>secret API_TOKEN · record only</td></tr>
+<tr><td class="n">4</td><th scope="row">JSON Schema by /type</th><td>&#34;order.created&#34; → order · other values → event · enforced · else 400 listing the problems</td></tr>
+</table>
+<table class="kv">
+<caption>Schemas</caption>
+<tr><th scope="row">order</th><td>check 4 (JSON Schema by /type)</td></tr>
+<tr><th scope="row">event</th><td>check 4 (JSON Schema by /type)</td></tr>
+<tr><th scope="row">draft</th><td>not used</td></tr>
+</table>
+<table class="kv3">
+<caption>Rules · in order; the first that holds answers</caption>
+<tr><td class="n">1</td><th scope="row">every 3rd</th><td>503 after 2.0 s&#43;</td></tr>
+<tr><td class="n">2</td><th scope="row">first 1</th><td>time out</td></tr>
+<tr><td class="n">3</td><th scope="row">10%</th><td>drop the connection</td></tr>
+<tr><td class="n">4</td><th scope="row">every 7th</th><td>202</td></tr>
+</table>
+<div class="reply">
+<h3>Rule 1 · every 3rd · 503</h3>
+<table class="kv">
+<tr><th scope="row">Status</th><td>503</td></tr>
+<tr><th scope="row">Delay</th><td>2.0 s &#43; up to 500 ms at random</td></tr>
+<tr><th scope="row"><code>Retry-After</code></th><td><code>2</code></td></tr>
+</table>
+<p class="note">Body (a template)</p>
+<pre class="body">busy | try `later`</pre>
+</div>
+<div class="reply">
+<h3>Rule 4 · every 7th · 202</h3>
+<table class="kv">
+<tr><th scope="row">Status</th><td>202</td></tr>
+<tr><th scope="row">Delay</th><td>none</td></tr>
+<tr><th scope="row">Body</th><td>4 B given as exact bytes</td></tr>
+</table>
+</div>
+<div class="reply">
+<h3>Default reply</h3>
+<table class="kv">
+<tr><th scope="row">Status</th><td>200</td></tr>
+<tr><th scope="row">Delay</th><td>none</td></tr>
+<tr><th scope="row"><code>Content-Type</code></th><td><code>application/json</code></td></tr>
+</table>
+<p class="note">Body (a template)</p>
+<pre class="body">{&#34;ok&#34;:true,&#34;shop&#34;:&#34;{{.Var &#34;shop&#34;}}&#34;}
+</pre>
+</div>
+<table class="kv">
+<caption>Variables</caption>
+<tr><th scope="row"><code>shop</code></th><td><code>test-shop</code></td></tr>
+</table>
+<table class="kv">
+<caption>Secrets · named, never shown</caption>
+<tr><th scope="row">GITHUB_KEY</th><td>signing key · <span class="">set</span> · used by check 2 (GitHub signature)</td></tr>
+<tr><th scope="row">API_TOKEN</th><td>token or password · <span class="hot">not set</span> · used by check 3 (Bearer token)</td></tr>
+<tr><th scope="row">SPARE_TOKEN</th><td>token or password · <span class="">set</span> · not used</td></tr>
+</table>
+</section>
+<h2 class="requests-title">Requests</h2>
+<article class="exhibit" id="r1">
+<header>
+<span class="no">#1</span>
+<span class="line"><b>POST</b> <code>/orders?source=test&amp;retry</code></span>
+<span class="stamp">200 sent</span>
+</header>
+<dl class="facts">
+<div><dt>Received</dt><dd>2026-10-11T12:00:01.250Z from <code>203.0.113.5:40100</code> · HTTP/1.1</dd></div>
+<div><dt>Answer</dt><dd>200 sent · default reply</dd></div>
+</dl>
+<section class="verdicts">
+<h3>Verdicts</h3>
+<ul>
+<li class="v-pass"><b>GitHub signature: pass</b> — signature matches</li>
+<li class="v-pass"><b>JSON Schema by /type: pass</b> — matches OrderPaid</li>
+</ul>
+</section>
+<section>
+<h3>Query</h3>
+<table class="kv"><tr><th><code>source</code></th><td><code>test</code></td></tr><tr><th><code>retry</code></th><td><code></code></td></tr></table>
+</section>
+<section>
+<h3>Headers</h3>
+<table class="kv"><tr><th><code>Host</code></th><td><code>hooks.example.com</code></td></tr><tr><th><code>Content-Type</code></th><td><code>application/json</code></td></tr><tr><th><code>X-GitHub-Event</code></th><td><code>order</code></td></tr><tr><th><code>X-Hub-Signature-256</code></th><td><span class="masked">•••• 71 chars</span></td></tr><tr><th><code>User-Agent</code></th><td><code>Shop-Hookshot/2.1</code></td></tr></table>
+</section>
+<section>
+<h3>Body <span class="note">156 B</span></h3>
+<pre class="body json">{
+  <span class="k">&#34;type&#34;</span>: <span class="s">&#34;order.paid&#34;</span>,
+  <span class="k">&#34;order_id&#34;</span>: <span class="n">1042</span>,
+  <span class="k">&#34;amount&#34;</span>: {
+    <span class="k">&#34;value&#34;</span>: <span class="n">4200</span>,
+    <span class="k">&#34;currency&#34;</span>: <span class="s">&#34;UAH&#34;</span>
+  },
+  <span class="k">&#34;customer&#34;</span>: {
+    <span class="k">&#34;name&#34;</span>: <span class="s">&#34;Олена Петренко&#34;</span>,
+    <span class="k">&#34;email&#34;</span>: <span class="s">&#34;olena@example.com&#34;</span>
+  }
+}</pre>
+</section>
+</article>
+<footer class="foot">Written by Hookwitness · times are UTC</footer>
+</div>
+</body>
+</html>

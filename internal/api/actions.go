@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/catch"
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/report"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
@@ -178,7 +179,10 @@ func (h *Handler) rawBody(w http.ResponseWriter, r *http.Request) {
 
 // report writes a register's report (an endpoint's, or with unmatched the
 // Unmatched register's) with the UI dialog's parameters.
-func (h *Handler) report(w http.ResponseWriter, r *http.Request, reg int64, path string) {
+//
+// setup is the endpoint's behaviour, shown when the query asks for it; nil
+// for the Unmatched register.
+func (h *Handler) report(w http.ResponseWriter, r *http.Request, reg int64, path string, setup *emulate.Config) {
 	rq, err := report.ParseQuery(r.URL.Query())
 	var fe *report.FieldError
 	if errors.As(err, &fe) {
@@ -189,6 +193,9 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request, reg int64, path
 	o := report.Options{
 		Endpoint: path, Selection: rq.Words, From: rq.Selection.From, To: rq.Selection.To,
 		Mask: rq.Mask, Version: h.o.Version, Generated: now, NoImages: rq.NoImages, Fonts: h.o.Fonts,
+	}
+	if rq.Setup {
+		o.Setup = setup
 	}
 	src := func(ctx context.Context, withBody bool, through int64, fn func(store.Request) error) error {
 		s := rq.Selection
@@ -214,11 +221,16 @@ func (h *Handler) endpointReport(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	h.report(w, r, ep.ID, ep.Path)
+	cfg, err := emulate.Parse(ep.Config)
+	if err != nil {
+		h.fail(w, "report", err)
+		return
+	}
+	h.report(w, r, ep.ID, ep.Path, &cfg)
 }
 
 func (h *Handler) unmatchedReport(w http.ResponseWriter, r *http.Request) {
-	h.report(w, r, store.Unmatched, "")
+	h.report(w, r, store.Unmatched, "", nil)
 }
 
 // onOff names an endpoint's state as the UI and the logs say it.

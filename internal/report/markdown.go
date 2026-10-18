@@ -80,11 +80,89 @@ func (m *mdWriter) head(h *Head) error {
 		}
 		m.p("\n")
 	}
+	if h.Setup != nil {
+		m.setup(h)
+	}
 	m.p("## Requests\n")
 	if h.Count == 0 {
 		m.p("\nNo requests in the selection.\n")
 	}
 	return nil
+}
+
+// setup writes the endpoint's setup section.
+func (m *mdWriter) setup(h *Head) {
+	s := h.Setup
+	m.p("## Setup\n\n", mdText(setupIntro(h)), "\n\n")
+	m.p("**Checks** (in order)\n\n")
+	if len(s.Checks) == 0 {
+		m.p("None.\n\n")
+	} else {
+		m.p("| # | Check | What it does |\n|---:|---|---|\n")
+		for _, c := range s.Checks {
+			m.p("| ", strconv.Itoa(c.No), " | ", mdCell(c.Label), " | ", mdCell(c.Detail), " |\n")
+		}
+		m.p("\n")
+	}
+	if len(s.Schemas) > 0 {
+		m.p("**Schemas**\n\n| Name | Used by |\n|---|---|\n")
+		for _, sc := range s.Schemas {
+			m.p("| ", mdCell(sc.Name), " | ", mdCell(sc.Use), " |\n")
+		}
+		m.p("\n")
+	}
+	m.p("**Rules** (in order; the first that holds answers)\n\n")
+	if len(s.Rules) == 0 {
+		m.p("None: every request gets the default reply.\n\n")
+	} else {
+		m.p("| # | When | Then |\n|---:|---|---|\n")
+		for _, r := range s.Rules {
+			m.p("| ", strconv.Itoa(r.No), " | ", mdCell(r.When), " | ", mdCell(r.Then), " |\n")
+		}
+		m.p("\n")
+		for _, r := range s.Rules {
+			if r.Reply != nil {
+				m.reply("*"+mdText(r.ReplyTitle())+"*", *r.Reply)
+			}
+		}
+	}
+	m.reply("**Default reply**", s.Default)
+	m.p("**Variables**\n\n")
+	if len(s.Vars) == 0 {
+		m.p("None.\n\n")
+	} else {
+		m.p("| Name | Value |\n|---|---|\n")
+		for _, v := range s.Vars {
+			m.p("| ", mdCode(v.Name), " | ", mdCode(v.Value), " |\n")
+		}
+		m.p("\n")
+	}
+	m.p("**Secrets** (named, never shown)\n\n")
+	if len(s.Secrets) == 0 {
+		m.p("None.\n\n")
+	} else {
+		m.p("| Name | Kind | State | Used by |\n|---|---|---|---|\n")
+		for _, sc := range s.Secrets {
+			m.p("| ", mdCell(sc.Name), " | ", mdCell(sc.Kind), " | ", sc.State, " | ", mdCell(sc.Use), " |\n")
+		}
+		m.p("\n")
+	}
+}
+
+// reply writes a configured reply under its title.
+func (m *mdWriter) reply(title string, r SetupReply) {
+	m.p(title, "\n\n| | |\n|---|---|\n")
+	m.p("| Status | ", strconv.Itoa(r.Status), " |\n")
+	m.p("| Delay | ", mdCell(r.Delay), " |\n")
+	for _, hd := range r.Headers {
+		m.p("| ", mdCode(hd.Name), " | ", mdCode(hd.Value), " |\n")
+	}
+	if line := r.BodyLine(); line != "" {
+		m.p("| Body | ", mdCell(line), " |\n\n")
+		return
+	}
+	fence := strings.Repeat("`", max(3, longestRun(r.Body, '`')+1))
+	m.p("\nBody (a template)\n\n", fence, "\n", strings.TrimRight(r.Body, "\n"), "\n", fence, "\n\n")
 }
 
 func (m *mdWriter) item(it Item) error {

@@ -112,10 +112,17 @@ func (p *pdfWriter) font(family string, bold bool, size float64, c rgb) {
 	p.pdf.SetTextColor(c[0], c[1], c[2])
 }
 
+// pdfTextHook, when set (by tests), gets every string the PDF draws: the
+// text a reader sees, which the compressed glyph streams do not show.
+var pdfTextHook func(string)
+
 // text draws s with its top at y.
 func (p *pdfWriter) text(x, y float64, s string) {
 	if s == "" {
 		return
+	}
+	if pdfTextHook != nil {
+		pdfTextHook(s)
 	}
 	p.pdf.SetXY(x, y)
 	p.keep(p.pdf.Cell(nil, s))
@@ -375,6 +382,9 @@ func (p *pdfWriter) head(h *Head) error {
 			p.place(b)
 		}
 	}
+	if h.Setup != nil {
+		p.setup(h)
+	}
 	// The heading goes with the first request, never alone at a page end.
 	p.pending = []block{gapBlock(10), {24, func(y float64) {
 		p.font(fSans, true, 11, cInk)
@@ -385,6 +395,82 @@ func (p *pdfWriter) head(h *Head) error {
 		p.pending = nil
 	}
 	return p.err
+}
+
+// setup draws the endpoint's setup section.
+func (p *pdfWriter) setup(h *Head) {
+	s := h.Setup
+	p.together([]block{gapBlock(10), {24, func(y float64) {
+		p.font(fSans, true, 11, cInk)
+		p.text(margin, y+6, "SETUP")
+	}}, p.plain(setupIntro(h))})
+	part := func(caption string, rows [][2]string, none string) {
+		p.place(p.caption(caption))
+		if len(rows) == 0 {
+			p.place(p.plain(none))
+			return
+		}
+		for _, b := range p.kv(rows, nil) {
+			p.place(b)
+		}
+	}
+	var rows [][2]string
+	for _, c := range s.Checks {
+		rows = append(rows, [2]string{strconv.Itoa(c.No) + " · " + c.Label, c.Detail})
+	}
+	part("Checks · in order", rows, "None.")
+	if len(s.Schemas) > 0 {
+		rows = nil
+		for _, sc := range s.Schemas {
+			rows = append(rows, [2]string{sc.Name, sc.Use})
+		}
+		part("Schemas", rows, "")
+	}
+	rows = nil
+	for _, r := range s.Rules {
+		rows = append(rows, [2]string{strconv.Itoa(r.No) + " · " + r.When, r.Then})
+	}
+	part("Rules · in order; the first that holds answers", rows, "None: every request gets the default reply.")
+	for _, r := range s.Rules {
+		if r.Reply != nil {
+			p.reply(r.ReplyTitle(), *r.Reply)
+		}
+	}
+	p.reply("Default reply", s.Default)
+	rows = nil
+	for _, v := range s.Vars {
+		rows = append(rows, [2]string{v.Name, v.Value})
+	}
+	part("Variables", rows, "None.")
+	rows = nil
+	for _, sc := range s.Secrets {
+		use := sc.Use
+		if use != "not used" {
+			use = "used by " + use
+		}
+		rows = append(rows, [2]string{sc.Name, sc.Kind + " · " + sc.State + " · " + use})
+	}
+	part("Secrets · named, never shown", rows, "None.")
+}
+
+// reply draws a configured reply under its caption.
+func (p *pdfWriter) reply(title string, r SetupReply) {
+	rows := [][2]string{{"Status", strconv.Itoa(r.Status)}, {"Delay", r.Delay}}
+	for _, hd := range r.Headers {
+		rows = append(rows, [2]string{hd.Name, hd.Value})
+	}
+	if line := r.BodyLine(); line != "" {
+		rows = append(rows, [2]string{"Body", line})
+	}
+	bs := append([]block{p.caption(title)}, p.kv(rows, nil)...)
+	p.together(bs)
+	if r.BodyLine() == "" {
+		p.place(p.caption("Body (a template)"))
+		for _, b := range p.monoLines(margin, contentW, 7.5, cText, false, strings.TrimRight(r.Body, "\n")) {
+			p.place(b)
+		}
+	}
+	p.place(gapBlock(4))
 }
 
 func (p *pdfWriter) widthAt(family string, bold bool, size float64, s string) float64 {

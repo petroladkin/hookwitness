@@ -28,10 +28,14 @@ type exportView struct {
 	To     string
 	Pick   string // "3, 5-9"
 	Images string // shown, listed
-	Masks  []maskOption
-	Other  string // more header names to mask, comma-separated
-	Error  string
-	Field  string // the field the error is about
+	Setup  bool   // show the endpoint's setup
+	// HasSetup offers the setup: an endpoint has one, the Unmatched
+	// register does not.
+	HasSetup bool
+	Masks    []maskOption
+	Other    string // more header names to mask, comma-separated
+	Error    string
+	Field    string // the field the error is about
 }
 
 type maskOption struct {
@@ -42,7 +46,8 @@ type maskOption struct {
 // exportDefaults is the dialog as first opened: HTML of the whole
 // register, or of the request on show; nothing masked.
 func (h *Handler) exportDefaults(reg int64, ep store.Endpoint, ex *exhibitView, closeURL string) *exportView {
-	v := &exportView{Action: h.regPath(reg) + "/report", Close: closeURL, Count: ep.Count, Format: "html", Scope: "all", Images: "shown"}
+	v := &exportView{Action: h.regPath(reg) + "/report", Close: closeURL, Count: ep.Count, Format: "html", Scope: "all", Images: "shown",
+		HasSetup: reg != store.Unmatched}
 	if ex != nil {
 		v.Scope, v.Pick = "picked", strconv.FormatInt(ex.No, 10)
 	}
@@ -79,6 +84,7 @@ func (h *Handler) readExport(q url.Values, v *exportView) (report.Query, error) 
 	if v.Images = q.Get("images"); v.Images != "listed" {
 		v.Images = "shown"
 	}
+	v.Setup = q.Get("setup") == "true"
 	for i := range v.Masks {
 		v.Masks[i].On = slices.Contains(q["mask"], v.Masks[i].Name)
 	}
@@ -127,6 +133,14 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
 		Version:   version.String(),
 		Generated: now,
 		NoImages:  rq.NoImages,
+	}
+	if rq.Setup && reg != store.Unmatched {
+		cfg, err := emulate.Parse(ep.Config)
+		if err != nil {
+			h.fail(w, "report", err)
+			return
+		}
+		o.Setup = &cfg
 	}
 	if format == report.HTML {
 		o.Fonts, _ = fs.Sub(staticFS, "static")
