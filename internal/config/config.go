@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,7 +24,9 @@ type Config struct {
 	MaxBody     int64         // largest request body kept, in bytes
 	MaxInFlight int64         // bytes of request bodies held at once; over it requests get 503
 	Retention   int           // requests kept per endpoint
-	AdminPrefix string        // path prefix of the web UI, e.g. /admin
+	AdminAddr   string        // the admin's own listen address; "" = under the prefix on Addr
+	AdminPrefix string        // path prefix of the web UI, e.g. /admin; "" = the root of AdminAddr
+	PublicURL   string        // base of the catch URLs shown, e.g. https://hooks.example.com; "" = derived
 	AdminHosts  []string      // host names the UI answers to besides IPs and localhost
 	MaxWait     time.Duration // longest reply delay or timeout hold
 }
@@ -63,7 +66,9 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		{"max-body", "HOOKWITNESS_MAX_BODY", DefaultMaxBody, "largest request body to keep, in bytes or with KiB/MiB/GiB; a larger one is answered 413", &maxBody},
 		{"max-inflight", "HOOKWITNESS_MAX_INFLIGHT", "", "bytes of request bodies held at once, with KiB/MiB/GiB; over it a request is answered 503 (default: the larger of 256MiB and twice max-body)", &maxInFlight},
 		{"retention", "HOOKWITNESS_RETENTION", DefaultRetention, "requests kept per endpoint; the oldest are pruned", &retention},
-		{"admin-prefix", "HOOKWITNESS_ADMIN_PREFIX", DefaultAdminPrefix, "path prefix of the web UI; requests under it are never caught", &c.AdminPrefix},
+		{"admin-addr", "HOOKWITNESS_ADMIN_ADDR", "", "listen address (host:port) of the web UI, REST API and MCP; empty: they live under -admin-prefix on -addr", &c.AdminAddr},
+		{"admin-prefix", "HOOKWITNESS_ADMIN_PREFIX", DefaultAdminPrefix, "path prefix of the web UI; requests under it are never caught; / (the root) only with -admin-addr", &c.AdminPrefix},
+		{"public-url", "HOOKWITNESS_PUBLIC_URL", "", "base URL senders reach the catch listener at, shown in the UI and the API (for proxies and tunnels), e.g. https://hooks.example.com", &c.PublicURL},
 		{"admin-hosts", "HOOKWITNESS_ADMIN_HOSTS", "", "comma-separated host names the web UI answers to, besides IP addresses and localhost", &adminHosts},
 		{"max-wait", "HOOKWITNESS_MAX_WAIT", DefaultMaxWait, "longest reply delay or timeout hold an endpoint may use, e.g. 30s or 5m", &maxWait},
 	}
@@ -119,7 +124,14 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 			c.AdminHosts = append(c.AdminHosts, name)
 		}
 	}
-	return c, c.validate()
+	if err := c.validate(); err != nil {
+		return Config{}, err
+	}
+	c.PublicURL = strings.TrimSuffix(c.PublicURL, "/")
+	if c.AdminPrefix == "/" {
+		c.AdminPrefix = "" // the root of the admin's own port
+	}
+	return c, nil
 }
 
 var units = map[string]int64{"": 1, "B": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30}
@@ -146,15 +158,19 @@ func parseSize(s string) (int64, error) {
 var segment = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 
 func (c Config) validate() error {
-	host, port, err := net.SplitHostPort(c.Addr)
-	if err != nil {
-		return fmt.Errorf("invalid listen address %q: want host:port", c.Addr)
+	if err := checkAddr("listen address", c.Addr); err != nil {
+		return err
 	}
-	if host != "" && net.ParseIP(host) == nil && host != "localhost" {
-		return fmt.Errorf("invalid listen address %q: host must be an IP address or localhost", c.Addr)
+	if c.AdminAddr != "" {
+		if err := checkAddr("admin address", c.AdminAddr); err != nil {
+			return err
+		}
+		if sameListen(c.Addr, c.AdminAddr) {
+			return fmt.Errorf("invalid admin address %q: it is the same address as the listen address %q; leave it empty to keep the admin under the prefix there", c.AdminAddr, c.Addr)
+		}
 	}
-	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
-		return fmt.Errorf("invalid listen address %q: port must be 0-65535", c.Addr)
+	if err := checkPublicURL(c.PublicURL); err != nil {
+		return fmt.Errorf("invalid public URL %q: %w", c.PublicURL, err)
 	}
 	if c.DBPath == "" {
 		return errors.New("database path must not be empty")
@@ -164,8 +180,61 @@ func (c Config) validate() error {
 	default:
 		return fmt.Errorf("invalid log format %q: want text or json", c.LogFormat)
 	}
-	if err := checkPrefix(c.AdminPrefix); err != nil {
+	if c.AdminPrefix == "/" {
+		if c.AdminAddr == "" {
+			return errors.New(`invalid admin prefix "/": the admin can be at the root only on its own address (-admin-addr)`)
+		}
+	} else if err := checkPrefix(c.AdminPrefix); err != nil {
 		return fmt.Errorf("invalid admin prefix %q: %w", c.AdminPrefix, err)
+	}
+	return nil
+}
+
+func checkAddr(name, addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid %s %q: want host:port", name, addr)
+	}
+	if host != "" && net.ParseIP(host) == nil && host != "localhost" {
+		return fmt.Errorf("invalid %s %q: host must be an IP address or localhost", name, addr)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
+		return fmt.Errorf("invalid %s %q: port must be 0-65535", name, addr)
+	}
+	return nil
+}
+
+// sameListen reports whether two valid listen addresses would take the same
+// port: equal ports (other than 0, which picks a free one) on hosts that
+// overlap (equal, either one all interfaces, or localhost and a loopback
+// address).
+func sameListen(a, b string) bool {
+	ah, ap, _ := net.SplitHostPort(a)
+	bh, bp, _ := net.SplitHostPort(b)
+	if ap != bp || ap == "0" {
+		return false
+	}
+	all := func(h string) bool { ip := net.ParseIP(h); return h == "" || ip != nil && ip.IsUnspecified() }
+	loop := func(h string) bool { ip := net.ParseIP(h); return h == "localhost" || ip != nil && ip.IsLoopback() }
+	return ah == bh || all(ah) || all(bh) || (ah == "localhost" || bh == "localhost") && loop(ah) && loop(bh)
+}
+
+func checkPublicURL(s string) error {
+	if s == "" {
+		return nil
+	}
+	u, err := url.Parse(s)
+	switch {
+	case err != nil || !strings.Contains(s, "://"):
+		return errors.New("want an absolute URL such as https://hooks.example.com")
+	case u.Scheme != "http" && u.Scheme != "https":
+		return errors.New("want an http or https URL")
+	case u.User != nil:
+		return errors.New("want no user or password in it")
+	case u.Host == "":
+		return errors.New("want a host")
+	case u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.ContainsAny(s, "?#"):
+		return errors.New("want no query or fragment: endpoint paths are appended to it")
 	}
 	return nil
 }

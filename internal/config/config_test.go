@@ -81,7 +81,7 @@ func TestInvalid(t *testing.T) {
 		{[]string{"-max-wait", "2h"}, "1s to 1h"},
 		{[]string{"-retention", "many"}, "at least 1"},
 		{[]string{"-admin-prefix", "admin"}, "leading"},
-		{[]string{"-admin-prefix", "/"}, "leading"},
+		{[]string{"-admin-prefix", "/"}, "only on its own address (-admin-addr)"},
 		{[]string{"-admin-prefix", "/admin/"}, "trailing"},
 		{[]string{"-admin-prefix", "/a//b"}, "segment"},
 		{[]string{"-admin-prefix", "/a b"}, "segment"},
@@ -136,6 +136,78 @@ func TestBodyLimits(t *testing.T) {
 		got, err := Parse(c.args, env(nil), io.Discard)
 		if err != nil || got.MaxBody != c.body || got.MaxInFlight != c.in {
 			t.Errorf("%v: %d %d %v", c.args, got.MaxBody, got.MaxInFlight, err)
+		}
+	}
+}
+
+func TestAdminAddrAndPublicURL(t *testing.T) {
+	c, err := Parse(nil, env(map[string]string{
+		"HOOKWITNESS_ADMIN_ADDR": "127.0.0.1:8081",
+		"HOOKWITNESS_PUBLIC_URL": "https://hooks.example.com/",
+	}), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AdminAddr != "127.0.0.1:8081" || c.PublicURL != "https://hooks.example.com" {
+		t.Fatalf("env not applied: %+v", c)
+	}
+	c, err = Parse([]string{"-admin-addr", ":9001", "-public-url", "http://127.0.0.1:9000/hooks/"},
+		env(map[string]string{"HOOKWITNESS_ADMIN_ADDR": "127.0.0.1:8081"}), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AdminAddr != ":9001" || c.PublicURL != "http://127.0.0.1:9000/hooks" {
+		t.Fatalf("flags not applied: %+v", c)
+	}
+}
+
+// With its own address the admin may live at the root of its port: the
+// resolved prefix is then "".
+func TestAdminAtTheRoot(t *testing.T) {
+	c, err := Parse([]string{"-admin-addr", "127.0.0.1:8081", "-admin-prefix", "/"}, env(nil), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AdminPrefix != "" {
+		t.Fatalf("prefix = %q, want \"\"", c.AdminPrefix)
+	}
+	c, err = Parse([]string{"-admin-addr", "127.0.0.1:8081"}, env(nil), io.Discard)
+	if err != nil || c.AdminPrefix != "/admin" {
+		t.Fatalf("default prefix with an admin address: %q %v", c.AdminPrefix, err)
+	}
+}
+
+func TestAdminAddrInvalid(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-admin-addr", "8081"}, "invalid admin address \"8081\": want host:port"},
+		{[]string{"-admin-addr", "example.test:8081"}, "IP address or localhost"},
+		{[]string{"-admin-addr", "127.0.0.1:70000"}, "port must be"},
+		{[]string{"-addr", "127.0.0.1:8080", "-admin-addr", "127.0.0.1:8080"}, "the same address"},
+		{[]string{"-addr", ":8080", "-admin-addr", "127.0.0.1:8080"}, "the same address"},
+		{[]string{"-addr", "0.0.0.0:9000", "-admin-addr", "[::1]:9000"}, "the same address"},
+		{[]string{"-addr", "localhost:9000", "-admin-addr", "127.0.0.1:9000"}, "the same address"},
+		{[]string{"-public-url", "hooks.example.com"}, "invalid public URL"},
+		{[]string{"-public-url", "ftp://x"}, "http or https"},
+		{[]string{"-public-url", "https://x/?a=1"}, "no query"},
+		{[]string{"-public-url", "https://x/#f"}, "no query"},
+		{[]string{"-public-url", "https://user@x"}, "no user"},
+		{[]string{"-public-url", "https://"}, "a host"},
+	} {
+		_, err := Parse(tc.args, env(nil), io.Discard)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("Parse(%v) error = %v, want it to contain %q", tc.args, err, tc.want)
+		}
+	}
+	for _, args := range [][]string{
+		{"-addr", "127.0.0.1:0", "-admin-addr", "127.0.0.1:0"},
+		{"-addr", ":8080", "-admin-addr", ":8081"},
+		{"-addr", "127.0.0.1:8080", "-admin-addr", "127.0.0.2:8080"},
+	} {
+		if _, err := Parse(args, env(nil), io.Discard); err != nil {
+			t.Errorf("Parse(%v): %v", args, err)
 		}
 	}
 }
