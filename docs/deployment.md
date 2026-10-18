@@ -83,6 +83,7 @@ variable. In Docker, pass the variables: `-e HOOKWITNESS_RETENTION=5000`.
 | `-max-wait` | `HOOKWITNESS_MAX_WAIT` | `5m` | the longest reply delay or timeout hold, from 1s to 1h |
 | `-import` | `HOOKWITNESS_IMPORT` | none | a setup file applied at every start: its endpoints are created or their behaviour replaced, secrets keep their values ([Sharing a setup](sharing.md#known-endpoints-without-clicks)) |
 | `-replay-allow` | `HOOKWITNESS_REPLAY_ALLOW` | any target but link-local and cloud-metadata addresses | where caught requests may be replayed to: host names, `host:port`, addresses or CIDRs, comma-separated; `none` turns replay off ([Replaying a request](replay.md#which-targets)) |
+| `-mcp-max-sessions` | `HOOKWITNESS_MCP_MAX_SESSIONS` | `32` | MCP sessions open at once; one more is answered `503` at `initialize`, and a slot frees when a session closes or stays idle for 30 minutes; `0` for no limit ([MCP](agents.md#mcp)) |
 | `-trusted-proxies` | `HOOKWITNESS_TRUSTED_PROXIES` | none | reverse proxies (addresses or CIDRs, comma-separated) whose `X-Forwarded-For` names the client, for the login limit ([Users and login](access.md#behind-a-reverse-proxy)) |
 | — | `HOOKWITNESS_ADMIN_USER`, `HOOKWITNESS_ADMIN_PASSWORD_FILE` | none | the first admin, created at start on a database without users ([Users and login](access.md)) |
 | — | `HOOKWITNESS_API_TOKEN_FILE` | none | a file with a machine token for the API and MCP ([Users and login](access.md#a-machine-token)) |

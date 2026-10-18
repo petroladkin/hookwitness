@@ -205,7 +205,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, Separate: separate, PublicURL: cfg.PublicURL, CatchAddr: ln.Addr().String(),
 		MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
-		Access: auth, Proxies: cfg.TrustedProxies, Replay: replays,
+		Access: auth, Proxies: cfg.TrustedProxies, Replay: replays, MCPMaxSessions: cfg.MCPMaxSessions,
 	})
 	o := server.Options{DB: st, Log: log, AdminPrefix: cfg.AdminPrefix, Admin: ui, Catch: catcher}
 	if !separate {

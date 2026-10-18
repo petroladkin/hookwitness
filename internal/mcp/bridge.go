@@ -69,6 +69,9 @@ func Bridge(ctx context.Context, endpoint string, client *http.Client, in io.Rea
 	if strings.Contains(err.Error(), http.StatusText(http.StatusUnauthorized)) {
 		return fmt.Errorf("%w (the server has login on and wants a token: pass -token-file with a token from its account page)", err)
 	}
+	if strings.Contains(err.Error(), "sending \"initialize\": "+http.StatusText(http.StatusServiceUnavailable)) {
+		return fmt.Errorf("%w (the server's MCP session limit, -mcp-max-sessions, is reached: close another session or try again in %s)", err, RetryAfter)
+	}
 	return notFoundHint(endpoint, err)
 }
 

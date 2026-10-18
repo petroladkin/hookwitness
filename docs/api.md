@@ -50,8 +50,10 @@ host name: only the admin prefix is restricted.
 
 The same server answers MCP at `/admin/mcp` (Streamable HTTP), with the same
 access rules (with login on, a token: a login cookie is not enough); its
-tools are built on these routes and act as the token's owner. See
-[MCP](agents.md#mcp).
+tools are built on these routes and act as the token's owner. At most
+`-mcp-max-sessions` sessions (32 by default) are open at once: one more is
+refused at `initialize` with `503`, `Retry-After: 30` and a JSON-RPC error
+naming the limit. See [MCP](agents.md#mcp).
 
 ## Conventions and errors
 

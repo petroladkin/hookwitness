@@ -49,7 +49,7 @@ func TestBridge(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	a := api.New(st, live.New(), log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: make(chan struct{}), Version: "test"})
 	mux := http.NewServeMux()
-	mux.Handle("/admin/mcp", Handler(a, api.Base("/admin"), "test", log, nil))
+	mux.Handle("/admin/mcp", Handler(a, api.Base("/admin"), "test", log, nil, 0))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
