@@ -96,7 +96,11 @@ func (h *Handler) importSetup(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "bad_body", "the body could not be read", "")
 		return
 	}
-	res, status, err := h.ApplySetup(r, data, replace)
+	plan := setup.Plan{Replace: setup.Never}
+	if replace {
+		plan.Replace = setup.Always
+	}
+	res, status, err := h.ApplySetup(r, data, plan)
 	if err != nil {
 		code := "invalid_setup"
 		switch status {
@@ -116,12 +120,17 @@ func (h *Handler) importSetup(w http.ResponseWriter, r *http.Request) {
 // UI), logs what changed, and gives the status to answer: 201 when it
 // created an endpoint, 200 otherwise; on an error 422 (the file), 409 (a
 // taken path) or 500.
-func (h *Handler) ApplySetup(r *http.Request, data []byte, replace bool) ([]setup.Result, int, error) {
+func (h *Handler) ApplySetup(r *http.Request, data []byte, plan setup.Plan) ([]setup.Result, int, error) {
 	f, err := setup.Parse(data, h.setupOptions())
 	if err != nil {
 		return nil, http.StatusUnprocessableEntity, err
 	}
-	res, err := setup.Apply(r.Context(), h.store, f, replace, h.setupOptions())
+	return h.ApplyFile(r, f, plan)
+}
+
+// ApplyFile applies a parsed setup file, as ApplySetup.
+func (h *Handler) ApplyFile(r *http.Request, f setup.File, plan setup.Plan) ([]setup.Result, int, error) {
+	res, err := setup.Apply(r.Context(), h.store, f, plan, h.setupOptions())
 	var inv *setup.InvalidError
 	switch {
 	case errors.Is(err, store.ErrDuplicatePath):

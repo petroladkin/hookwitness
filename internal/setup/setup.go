@@ -232,13 +232,29 @@ type Result struct {
 	Unset  []string `json:"secrets_not_set"`
 }
 
-// Apply imports a parsed file, all of it or nothing. A path that is
-// already an endpoint fails with store.ErrDuplicatePath unless replace.
-func Apply(ctx context.Context, st Importer, f File, replace bool, o Options) ([]Result, error) {
+// Plan says how to apply a file.
+type Plan struct {
+	// Replace says whether an endpoint already at path gets the file's
+	// behaviour; false fails the import with store.ErrDuplicatePath.
+	Replace func(path string) bool
+	// Value gives a secret its value at import, already sealed (nil: none
+	// are given; ok false: this one is not).
+	Value func(path, name, kind string) (s emulate.Secret, ok bool)
+}
+
+// Always and Never are Replace for every path.
+func Always(string) bool { return true }
+func Never(string) bool  { return false }
+
+// Apply imports a parsed file, all of it or nothing.
+func Apply(ctx context.Context, st Importer, f File, p Plan, o Options) ([]Result, error) {
+	if p.Replace == nil {
+		p.Replace = Never
+	}
 	items := make([]store.ImportItem, 0, len(f.Endpoints))
 	stored := make([]emulate.Config, len(f.Endpoints))
 	for i, e := range f.Endpoints {
-		items = append(items, store.ImportItem{Path: e.Path, Replace: replace, Config: func(old string, exists bool) (string, error) {
+		items = append(items, store.ImportItem{Path: e.Path, Replace: p.Replace(e.Path), Config: func(old string, exists bool) (string, error) {
 			var have *emulate.Config
 			if exists {
 				c, err := emulate.Parse(old)
@@ -248,6 +264,13 @@ func Apply(ctx context.Context, st Importer, f File, replace bool, o Options) ([
 				have = &c
 			}
 			c := e.Config(have)
+			if p.Value != nil {
+				for j, s := range c.Secrets {
+					if v, ok := p.Value(e.Path, s.Name, s.Kind); ok {
+						c.Secrets[j] = v
+					}
+				}
+			}
 			if err := c.Validate(o.MaxWait); err != nil {
 				return "", &InvalidError{fmt.Errorf("endpoint %s with the secrets it has: %w", e.Path, err)}
 			}

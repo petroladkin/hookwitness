@@ -33,7 +33,7 @@ func importSetup(ctx context.Context, st *store.Store, path string, o setup.Opti
 		log.Error("cannot apply the setup file", "file", path, "err", err)
 		return false
 	}
-	res, err := setup.Apply(ctx, st, f, true, o)
+	res, err := setup.Apply(ctx, st, f, setup.Plan{Replace: setup.Always}, o)
 	if err != nil {
 		log.Error("cannot apply the setup file", "file", path, "err", err)
 		return false

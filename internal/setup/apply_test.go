@@ -22,7 +22,7 @@ func TestApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rs, err := Apply(ctx, st, f, false, opts)
+	rs, err := Apply(ctx, st, f, Plan{}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestApply(t *testing.T) {
 		t.Fatalf("first import %+v", rs)
 	}
 	// Taken paths: refused without replace, nothing changes.
-	if _, err := Apply(ctx, st, f, false, opts); !errors.Is(err, store.ErrDuplicatePath) {
+	if _, err := Apply(ctx, st, f, Plan{}, opts); !errors.Is(err, store.ErrDuplicatePath) {
 		t.Fatalf("taken: %v", err)
 	}
 	// Someone sets GH's value; the same file applied again keeps it.
@@ -41,7 +41,7 @@ func TestApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := st.Endpoint(ctx, rs[0].ID)
-	rs, err = Apply(ctx, st, f, true, opts)
+	rs, err = Apply(ctx, st, f, Plan{Replace: Always}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestApply(t *testing.T) {
 	changed := sample()
 	changed.Default.Status = 204
 	g, _ := Parse(Export(Source{Path: "/orders", Config: changed}).JSON(), opts)
-	rs, err = Apply(ctx, st, g, true, opts)
+	rs, err = Apply(ctx, st, g, Plan{Replace: Always}, opts)
 	if err != nil || rs[0].Result != Replaced {
 		t.Fatalf("changed import %+v %v", rs, err)
 	}
@@ -68,7 +68,7 @@ func TestApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	var inv *InvalidError
-	if _, err := Apply(ctx, st, h, true, opts); !errors.As(err, &inv) {
+	if _, err := Apply(ctx, st, h, Plan{Replace: Always}, opts); !errors.As(err, &inv) {
 		t.Fatalf("standard over a plain key: %v", err)
 	}
 }
