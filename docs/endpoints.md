@@ -36,6 +36,41 @@ curl -s -X POST http://127.0.0.1:8080/stripe/webhook -d '{}'   # 404: kept under
 
 ![The Unmatched register with one request to /stripe/webhook](images/unmatched.webp)
 
+## Turning an endpoint off
+
+On a server shared by several products, many endpoints are set up and only a
+few matter at a time. Turn the others **off** instead of deleting them. An
+endpoint that is off keeps its path (no other endpoint can take it), its
+behaviour, secrets, kept requests and the rules' counter, and catches
+nothing: a request to its path is answered `404` and kept under Unmatched,
+as for a path without an endpoint, tagged **endpoint off**. Like any
+unmatched request, only the first 64 KiB of its body is kept. A request
+already held by a timeout when you turn the endpoint off ends as scripted.
+
+The switch is on each row of the Endpoints page (rows that are off are
+dimmed) and next to **Clear** on the endpoint's register, which says while
+it is off where its requests go. When some endpoint is off, the
+**Endpoint** picker in the header lists the endpoints that are on and those
+that are off apart. Turn it **On** again and the next request is caught by
+the endpoint, with its rules counting on from where they stopped. A new
+endpoint is on. Scripts and agents use the API's `enabled`.
+
+<!-- docs-check: setup: stripe_endpoint -->
+```sh
+curl -s -X PATCH http://127.0.0.1:8080/admin/api/v1/endpoints/1 -H 'Content-Type: application/json' -d '{"enabled":false}' | jq -c '{path, enabled}'
+# {"path":"/stripe/webhooks","enabled":false}
+curl -s -X POST http://127.0.0.1:8080/stripe/webhooks -d '{}'   # 404: kept under Unmatched, tagged endpoint off
+curl -s -X PATCH http://127.0.0.1:8080/admin/api/v1/endpoints/1 -H 'Content-Type: application/json' -d '{"enabled":true}' | jq -c '{path, enabled}'
+# {"path":"/stripe/webhooks","enabled":true}
+curl -s -X POST http://127.0.0.1:8080/stripe/webhooks -d '{}'   # 200: caught by the endpoint again
+```
+
+![The Endpoints page with /stripe/webhooks switched off and dimmed](images/endpoints-off.webp)
+
+![The register of /stripe/webhooks while it is off, saying its requests go to Unmatched](images/register-off.webp)
+
+![An Unmatched request to /stripe/webhooks answered 404 because the endpoint is off](images/unmatched-off.webp)
+
 ## The register
 
 Click an endpoint to open its register: the endpoint's requests, newest on

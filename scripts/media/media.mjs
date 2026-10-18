@@ -210,6 +210,16 @@ for (const [i, e] of events.entries()) {
 }
 await shot("register", `${UI}/e/${gh}`);
 
+// docs/endpoints.md, "Turning an endpoint off": /stripe/webhooks off, one
+// delivery to it lands in Unmatched, then it is on again.
+await api("PATCH", `/endpoints/${stripe}`, { enabled: false });
+await send("/stripe/webhooks", JSON.stringify({ type: "invoice.paid", id: "evt_2" }), { "User-Agent": "curl/8.7.1" });
+await shot("endpoints-off", `${UI}/`);
+await shot("register-off", `${UI}/e/${stripe}`, { maxHeight: 520 });
+const offRow = (await api("GET", "/unmatched/requests?limit=1")).json.requests[0].id;
+await shot("unmatched-off", `${UI}/e/unmatched/r/${offRow}`, { maxHeight: 620 });
+await api("PATCH", `/endpoints/${stripe}`, { enabled: true });
+
 // docs/replies.md: /billing/notify fails every 3rd delivery, /billing/retry
 // fails the first two with Retry-After: 2, /slack/events echoes the
 // challenge.
@@ -453,7 +463,7 @@ if (!only.length || ["login-off", "login", "users", "token-new"].some((n) => onl
   if (!only.length || only.includes("login-off")) {
     if ((await api("GET", "/endpoints")).json.endpoints.length === 0) await api("POST", "/endpoints", { path: "/stripe/webhooks" });
   }
-  await shot("login-off", `${UI}/`, { maxHeight: 420 });
+  await shot("login-off", `${UI}/`, { maxHeight: 520 });
   await api("POST", "/users", { name: "ann", role: "admin", password: "correct-horse-battery" });
   const login = await fetch(`${UI}/login`, { method: "POST", redirect: "manual",
     headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "name=ann&password=correct-horse-battery" });

@@ -13,7 +13,9 @@ sqlite, also shipped as a Docker image.
 
 `hookwitness serve` catches webhooks: endpoints are exact paths managed in the
 web UI under the admin prefix (default `/admin`); every other path is caught
-into the Unmatched register with a 404. The UI shows each endpoint's requests
+into the Unmatched register with a 404. An endpoint can be turned off
+(`enabled`): it keeps everything, and its path is answered as unmatched
+(outcome source `off`) until it is on again. The UI shows each endpoint's requests
 live (SSE + HTMX) with the recorder strip and the request detail. Each
 endpoint's behaviour page scripts its answers: required-header checks, ordered
 rules (every Nth, first N, random p%) with reply / timeout / drop, a default
