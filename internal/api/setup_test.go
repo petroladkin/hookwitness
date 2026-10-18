@@ -21,10 +21,11 @@ const (
 func (e env) configured(t *testing.T) endpointJSON {
 	t.Helper()
 	ep := e.endpoint(t, "/orders")
-	for name, body := range map[string]string{
-		"GH":  `{"kind":"key","value":"` + testKey + `"}`,
-		"TOK": `{"kind":"token","value":"` + testToken + `"}`,
+	for _, sec := range [][2]string{ // in order: secrets keep the order they were added in
+		{"GH", `{"kind":"key","value":"` + testKey + `"}`},
+		{"TOK", `{"kind":"token","value":"` + testToken + `"}`},
 	} {
+		name, body := sec[0], sec[1]
 		if rec := e.do("PUT", fmt.Sprintf("/endpoints/%d/secrets/%s", ep.ID, name), body); rec.Code != 200 {
 			t.Fatalf("secret %s: %d %s", name, rec.Code, rec.Body)
 		}
