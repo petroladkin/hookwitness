@@ -119,6 +119,11 @@ curl -s -X POST http://127.0.0.1:8080/admin/mcp \
 # "name":"hookwitness"
 ```
 
+Each client holds a session, and the server keeps at most 32 open at once
+(`-mcp-max-sessions`). One more is refused at `initialize` with `503` and
+the error "too many MCP sessions (limit 32)". A session closed by its client
+frees its place at once; an idle one, after 30 minutes.
+
 The tools are task-shaped. Each result is a summary line, then compact JSON.
 
 | Tool | Does |

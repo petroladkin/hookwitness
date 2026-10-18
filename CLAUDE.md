@@ -196,7 +196,8 @@ that makes it false.
   `<prefix>/mcp`; `wait_for_request` and `expect` chain the API's long-polls
   and end on cancellation and at shutdown (a tool error); open sessions are
   tracked and closed on shutdown (`Streamable.CloseSessions`, called by
-  `StopStreams`); results are a summary line and compact JSON,
+  `StopStreams`) and capped (`-mcp-max-sessions`, default 32: a slot taken at
+  `initialize`, 503 over it); results are a summary line and compact JSON,
   bodies cut at 16 KiB; `Bridge` pipes stdio to Streamable HTTP.
 - `internal/send` — one HTTP/1.1 exchange written and read by hand (header
   lines in order and case, the body as is, the answer never decompressed,

@@ -39,6 +39,8 @@ type Config struct {
 	// ReplayAllow is where caught requests may be replayed to: by default
 	// anywhere but link-local and cloud-metadata addresses.
 	ReplayAllow send.Policy
+	// MCPMaxSessions caps the MCP sessions open at once; 0: no limit.
+	MCPMaxSessions int
 }
 
 // Defaults.
@@ -50,6 +52,7 @@ const (
 	DefaultRetention   = "1000"
 	DefaultAdminPrefix = "/admin"
 	DefaultMaxWait     = "5m"
+	DefaultMCPSessions = "32"
 
 	// MaxBodyLimit is the largest -max-body: sqlite stores a value of at
 	// most about 1e9 bytes, and a body is read whole before it is stored.
@@ -68,7 +71,7 @@ type setting struct {
 // getenv. Usage and errors from the flag package go to out.
 func Parse(args []string, getenv func(string) string, out io.Writer) (Config, error) {
 	var c Config
-	var maxBody, maxInFlight, retention, adminHosts, maxWait, proxies, replayAllow string
+	var maxBody, maxInFlight, retention, adminHosts, maxWait, proxies, replayAllow, mcpSessions string
 	settings := []setting{
 		{"addr", "HOOKWITNESS_ADDR", DefaultAddr, "listen address (host:port)", &c.Addr},
 		{"db", "HOOKWITNESS_DB", DefaultDBPath, "path to the sqlite database file", &c.DBPath},
@@ -83,6 +86,7 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		{"max-wait", "HOOKWITNESS_MAX_WAIT", DefaultMaxWait, "longest reply delay or timeout hold an endpoint may use, e.g. 30s or 5m", &maxWait},
 		{"import", "HOOKWITNESS_IMPORT", "", "a setup file (exported from hookwitness) applied at every start: its endpoints are created or their behaviour replaced; secrets keep the values they have", &c.Import},
 		{"trusted-proxies", "HOOKWITNESS_TRUSTED_PROXIES", "", "comma-separated addresses or CIDRs of reverse proxies whose X-Forwarded-For names the client (for the login limit); list only your own proxy", &proxies},
+		{"mcp-max-sessions", "HOOKWITNESS_MCP_MAX_SESSIONS", DefaultMCPSessions, "most MCP sessions open at once; a client over it is answered 503 at initialize; 0: no limit", &mcpSessions},
 		{"replay-allow", "HOOKWITNESS_REPLAY_ALLOW", "", "where caught requests may be replayed to: comma-separated host names, host:port, addresses or CIDRs, or none to turn replay off (default: anywhere but link-local and cloud-metadata addresses)", &replayAllow},
 	}
 
@@ -129,6 +133,9 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		return Config{}, fmt.Errorf("invalid retention %q: want a whole number of at least 1", retention)
 	}
 	c.Retention = n
+	if c.MCPMaxSessions, err = strconv.Atoi(mcpSessions); err != nil || c.MCPMaxSessions < 0 {
+		return Config{}, fmt.Errorf("invalid MCP max sessions %q: want a whole number, 0 for no limit", mcpSessions)
+	}
 	if c.MaxWait, err = time.ParseDuration(maxWait); err != nil || c.MaxWait < time.Second || c.MaxWait > time.Hour {
 		return Config{}, fmt.Errorf("invalid max wait %q: want a duration from 1s to 1h, e.g. 30s or 5m", maxWait)
 	}

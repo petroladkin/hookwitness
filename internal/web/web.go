@@ -96,6 +96,8 @@ type Options struct {
 	// Replay sends caught requests to targets; nil: the default policy
 	// without a -max-inflight budget (tests).
 	Replay *replay.Service
+	// MCPMaxSessions caps the MCP sessions open at once; 0: no limit.
+	MCPMaxSessions int
 }
 
 // New returns the UI.
@@ -175,7 +177,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	}
 	ao.Fonts, _ = fs.Sub(staticFS, "static")
 	h.api = api.New(st, broker, log, ao)
-	h.mcp = mcp.Handler(h.api, api.Base(prefix), version.String(), log, h.stop)
+	h.mcp = mcp.Handler(h.api, api.Base(prefix), version.String(), log, h.stop, o.MCPMaxSessions)
 	h.mcpAuthed = withMCPIdentity(h.mcp)
 	return h
 }

@@ -20,7 +20,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Config{Addr: DefaultAddr, DBPath: DefaultDBPath, LogFormat: DefaultLogFormat,
-		MaxBody: 10 << 20, MaxInFlight: 256 << 20, Retention: 1000, AdminPrefix: "/admin", MaxWait: 5 * time.Minute}
+		MaxBody: 10 << 20, MaxInFlight: 256 << 20, Retention: 1000, AdminPrefix: "/admin", MaxWait: 5 * time.Minute, MCPMaxSessions: 32}
 	if !reflect.DeepEqual(c, want) {
 		t.Fatalf("got %+v, want %+v", c, want)
 	}
@@ -28,19 +28,20 @@ func TestDefaults(t *testing.T) {
 
 func TestEnvOverridesDefault(t *testing.T) {
 	c, err := Parse(nil, env(map[string]string{
-		"HOOKWITNESS_ADDR":         "127.0.0.1:9000",
-		"HOOKWITNESS_DB":           "/tmp/x.db",
-		"HOOKWITNESS_LOG_FORMAT":   "json",
-		"HOOKWITNESS_MAX_BODY":     "512KiB",
-		"HOOKWITNESS_RETENTION":    "50",
-		"HOOKWITNESS_ADMIN_PREFIX": "/_hw/ui",
-		"HOOKWITNESS_ADMIN_HOSTS":  "hooks.example.test, ui.example.test,",
+		"HOOKWITNESS_ADDR":             "127.0.0.1:9000",
+		"HOOKWITNESS_DB":               "/tmp/x.db",
+		"HOOKWITNESS_LOG_FORMAT":       "json",
+		"HOOKWITNESS_MAX_BODY":         "512KiB",
+		"HOOKWITNESS_RETENTION":        "50",
+		"HOOKWITNESS_ADMIN_PREFIX":     "/_hw/ui",
+		"HOOKWITNESS_ADMIN_HOSTS":      "hooks.example.test, ui.example.test,",
+		"HOOKWITNESS_MCP_MAX_SESSIONS": "0",
 	}), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Addr != "127.0.0.1:9000" || c.DBPath != "/tmp/x.db" || c.LogFormat != "json" || len(c.AdminHosts) != 2 || c.AdminHosts[1] != "ui.example.test" ||
-		c.MaxBody != 512<<10 || c.Retention != 50 || c.AdminPrefix != "/_hw/ui" {
+		c.MaxBody != 512<<10 || c.Retention != 50 || c.AdminPrefix != "/_hw/ui" || c.MCPMaxSessions != 0 {
 		t.Fatalf("env not applied: %+v", c)
 	}
 }
@@ -83,6 +84,8 @@ func TestInvalid(t *testing.T) {
 		{[]string{"-replay-allow", "none,localhost"}, "invalid replay allow list"},
 		{[]string{"-replay-allow", "198.51.100.0/40"}, "invalid replay allow list"},
 		{[]string{"-retention", "many"}, "at least 1"},
+		{[]string{"-mcp-max-sessions", "-1"}, "0 for no limit"},
+		{[]string{"-mcp-max-sessions", "lots"}, "0 for no limit"},
 		{[]string{"-admin-prefix", "admin"}, "leading"},
 		{[]string{"-admin-prefix", "/"}, "only on its own address (-admin-addr)"},
 		{[]string{"-admin-prefix", "/admin/"}, "trailing"},
