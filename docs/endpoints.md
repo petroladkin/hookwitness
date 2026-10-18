@@ -182,3 +182,14 @@ replies stay as they were sent.
 Each endpoint keeps its newest 1000 requests (`-retention`), and so does the
 Unmatched register. Older ones are deleted as new ones arrive. See
 [Configuration and deployment](deployment.md).
+
+## Light or dark
+
+The UI follows your system's light or dark setting. To choose otherwise,
+use the **Auto · Light · Dark** switch at the top of every page, next to
+**Endpoints**. The choice belongs to this browser: it is kept in a cookie,
+so a phone and a laptop can differ, with or without login. **Auto** follows
+the system again. Reports downloaded as HTML follow the reader's own
+setting.
+
+![The register in Dark, chosen with the switch while the system is light](images/theme.webp)
