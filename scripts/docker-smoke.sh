@@ -36,10 +36,15 @@ edit() {
 }
 sig() { printf '%s' "$1" | openssl dgst -sha256 -hmac "$2" | sed 's/^.* //'; }
 status() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+# in_log PATTERN-ARGS: grep the container's whole log. Never `docker logs | grep -q`:
+# under pipefail grep -q ends the pipe early, docker logs dies of SIGPIPE and
+# the pipeline fails whether or not the line was there.
+in_log() { local log; log=$(docker logs $C 2>&1); grep -q "$@" <<<"$log"; }
 
 # AC-1 / AC-2: identity, user, shell, size, labels
-docker run --rm "$IMG" version | grep -q '^hookwitness ' || fail "version"
-ok "version: $(docker run --rm "$IMG" version)"
+v=$(docker run --rm "$IMG" version)
+grep -q '^hookwitness ' <<<"$v" || fail "version"
+ok "version: $v"
 [ "$(docker image inspect -f '{{.Config.User}}' "$IMG")" = 65532:65532 ] || fail "user is not 65532"
 ok "runs as 65532:65532"
 if docker run --rm --entrypoint sh "$IMG" -c true >/dev/null 2>&1; then fail "image has a shell"; fi
@@ -66,7 +71,8 @@ GOOD="X-Hub-Signature-256: sha256=$(sig "$BODY" smoke_test_secret)"
 [ "$(status -d "$BODY" -H "$GOOD" $B/hooks)" = 200 ] || fail "signed request"
 [ "$(status -d "$BODY" -H "X-Hub-Signature-256: sha256=$(sig "$BODY" wrong)" $B/hooks)" = 401 ] || fail "badly signed request"
 ok "signed 200, badly signed 401"
-docker cp $C:/data/hookwitness.db.key - | tar -tvf - | grep -q '^-rw------- .*65532' || fail "key file mode/owner"
+key=$(docker cp $C:/data/hookwitness.db.key - | tar -tvf -)
+grep -q '^-rw------- .*65532' <<<"$key" || fail "key file mode/owner"
 ok "key file 0600, owned by 65532"
 
 # AC-6: graceful stop within Docker's 10 s, while a request is held
@@ -101,8 +107,8 @@ ok "healthy with the admin on :8081 (the health check probes the catch port)"
 [ "$(status "$X/")" = 200 ] || fail "UI at the root of the admin port"
 [ "$(status -d '{}' $B/admin/x)" = 404 ] || fail "/admin/x on the catch port is not caught"
 [ "$(status $B/api/v1/endpoints)" = 404 ] || fail "the API answered on the catch port"
-curl -fsS "$X/api/v1/unmatched/requests" | grep -q '"path": "/admin/x"' || fail "/admin/x not in Unmatched"
-curl -fsS "$X/api/v1/endpoints" | grep -q "\"url\": \"$B/hooks\"" || fail "catch URL from HOOKWITNESS_PUBLIC_URL"
+got=$(curl -fsS "$X/api/v1/unmatched/requests") && grep -q '"path": "/admin/x"' <<<"$got" || fail "/admin/x not in Unmatched"
+got=$(curl -fsS "$X/api/v1/endpoints") && grep -q "\"url\": \"$B/hooks\"" <<<"$got" || fail "catch URL from HOOKWITNESS_PUBLIC_URL"
 ok "catch port: /admin/x and /api/v1/endpoints caught into Unmatched; admin and API on :8081; catch URL $B/hooks"
 stop
 [ "$code" = 0 ] || fail "exit code $code after docker stop"
@@ -115,7 +121,7 @@ printf 'smoke-admin-password\n' > "$PW"; chmod 644 "$PW"   # the image's user mu
 LOGIN=(-p 127.0.0.1:$APORT:8081 -e HOOKWITNESS_ADMIN_ADDR=:8081 -e HOOKWITNESS_ADMIN_PREFIX=/ -e HOOKWITNESS_PUBLIC_URL=$B
   -e HOOKWITNESS_ADMIN_USER=root -e HOOKWITNESS_ADMIN_PASSWORD_FILE=/run/secrets/admin_password -v "$PW:/run/secrets/admin_password:ro")
 start "${LOGIN[@]}"
-docker logs $C 2>&1 | grep -q 'admin user created' || fail "no bootstrap line"
+in_log 'admin user created' || fail "no bootstrap line"
 [ "$(status "$X/")" = 303 ] && [ "$(status "$X/api/v1/endpoints")" = 401 ] || fail "the admin is open with a user"
 [ "$(status $B/healthz)" = 200 ] || fail "healthz with login on"
 J=$(mktemp)
@@ -133,9 +139,9 @@ grep -q 'hookwitness_session=\[hookwitness session\]' <<<"$got" && ! grep -q "$S
 ok "the session cookie's value is never kept in a caught request"
 stop
 start "${LOGIN[@]}"
-docker logs $C 2>&1 | grep -q 'admin bootstrap skipped' || fail "no skipped line on the second start"
+in_log 'admin bootstrap skipped' || fail "no skipped line on the second start"
 [ "$(status -d name=root -d password=smoke-admin-password "$X/login")" = 303 ] || fail "login after a restart"
-docker logs $C 2>&1 | grep -q -e smoke-admin-password -e "$TOKEN" -e "$SID" && fail "a secret value in the log"
+! in_log -e smoke-admin-password -e "$TOKEN" -e "$SID" || fail "a secret value in the log"
 ok "restart: bootstrap skipped, the same password works, no secret value in the log"
 rm -f "$J"
 stop
