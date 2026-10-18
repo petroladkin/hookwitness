@@ -125,6 +125,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("GET "+p+"/e/{reg}", h.registerPage)
 	mux.HandleFunc("GET "+p+"/e/{reg}/r/{id}", h.registerPage)
 	mux.HandleFunc("GET "+p+"/e/{reg}/rows", h.olderRows)
+	mux.HandleFunc("GET "+p+"/e/{reg}/marks", h.marks)
 	mux.HandleFunc("GET "+p+"/e/{reg}/events", h.events)
 	mux.HandleFunc("POST "+p+"/e/{reg}/clear", h.clear)
 	mux.HandleFunc("POST "+p+"/e/{reg}/delete", h.deleteEndpoint)

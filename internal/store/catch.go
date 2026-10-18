@@ -393,6 +393,23 @@ func (s *Store) DeleteEndpoint(ctx context.Context, id int64) error {
 	return nil
 }
 
+// KeptFrom is when the oldest kept request of a register arrived, when
+// requests older than it are no longer kept (pruned past the retention, or
+// cleared): before it, the register cannot say what arrived. ok is false
+// while the register still holds its first request, or nothing.
+func (s *Store) KeptFrom(ctx context.Context, endpointID int64) (time.Time, bool, error) {
+	var no, at int64
+	err := s.db.QueryRowContext(ctx, `SELECT no, received_at FROM requests WHERE endpoint_id IS ? ORDER BY id LIMIT 1`,
+		register(endpointID)).Scan(&no, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("oldest request: %w", err)
+	}
+	return fromMillis(at), no > 1, nil
+}
+
 // ClearRequests removes every request of a register. Numbering continues.
 func (s *Store) ClearRequests(ctx context.Context, endpointID int64) error {
 	s.wmu.Lock()
