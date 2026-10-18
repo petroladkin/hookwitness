@@ -400,3 +400,16 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 .import-item legend{text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);overflow-wrap:anywhere}
 .unset{font:600 10px/1.3 var(--f-data);letter-spacing:.08em;text-transform:uppercase;color:var(--alarm)}
 .eps td .unset{display:block;margin-top:3px}
+/* Replays: the request sent again, newest first, each with its answer. */
+.row .ev .replayed{color:var(--ink-soft);font:600 10px/1 var(--f-data);letter-spacing:.06em;text-transform:uppercase;margin-left:6px;white-space:nowrap}
+ol.replays{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.replay{border-left:3px solid var(--ink);padding:2px 0 2px 12px}
+.replay:has(.rstamp.bad){border-left-color:var(--alarm)}
+.replay summary{cursor:pointer;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding:4px 0;list-style-position:outside}
+.replay summary .rurl{font:400 12.5px/1.4 var(--f-data);color:var(--text);word-break:break-all;min-width:0;flex:1 1 16ch}
+.replay summary .rmeta{font:400 11px/1.3 var(--f-data);color:var(--muted)}
+.rstamp{font:400 12px/1 var(--f-stamp);letter-spacing:.12em;text-transform:uppercase;color:var(--ink);border:1.5px solid currentColor;padding:4px 7px 3px;white-space:nowrap}
+.rstamp.bad{color:var(--alarm)}
+.replay h3{font:600 10px/1 var(--f-data);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:14px 0 6px}
+.replay pre.line{border-left-color:var(--ink-soft);padding-block:8px}
+.modal ul.help{margin:6px 0 0;padding-left:18px}
