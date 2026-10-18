@@ -444,7 +444,11 @@ func (p *pdfWriter) setup(h *Head) {
 	part("Variables", rows, "None.")
 	rows = nil
 	for _, sc := range s.Secrets {
-		rows = append(rows, [2]string{sc.Name, sc.Kind + " · " + sc.State + " · used by: " + sc.Use})
+		use := sc.Use
+		if use != "not used" {
+			use = "used by " + use
+		}
+		rows = append(rows, [2]string{sc.Name, sc.Kind + " · " + sc.State + " · " + use})
 	}
 	part("Secrets · named, never shown", rows, "None.")
 }
