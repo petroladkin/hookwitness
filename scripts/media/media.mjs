@@ -493,8 +493,9 @@ if (!only.length || ["replay-dialog", "replay-answer"].some((n) => only.includes
   const target = `http://localhost:${hport}/webhooks/github`;
   await shot("replay-dialog", `${UI}/e/${gh}/r/${delivery}?replay`, { selector: dialog, maxHeight: 1000, step: type("url", target) });
   await api("POST", `/requests/${delivery}/replays`, { url: target });
-  // The exhibit scrolls on its own: bring its Replays to the top.
-  await shot("replay-answer", `${UI}/e/${gh}/r/${delivery}`, { maxHeight: 800,
+  // Wide, the exhibit scrolls on its own: bring its Replays to the top.
+  // Narrow, the page scrolls: shoot the section itself.
+  await shot("replay-answer", `${UI}/e/${gh}/r/${delivery}`, WIDTH < 821 ? { selector: "#replays", maxHeight: 1600 } : { maxHeight: 800,
     step: `(() => { const x = document.getElementById("exhibit"), r = document.getElementById("replays");
       if (x.scrollHeight > x.clientHeight) x.scrollTop = r.offsetTop - x.offsetTop - 12; else r.scrollIntoView(); })()` });
   handler.close();
