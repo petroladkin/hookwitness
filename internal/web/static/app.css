@@ -376,3 +376,15 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 .sub{font:600 11px/1 var(--f-data);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:32px 0 6px}
 .login .card{max-width:420px}
 .secret-once{font-family:var(--f-data);width:100%}
+
+/* An endpoint's on/off switch, and an endpoint that is off. */
+.switch{display:inline-flex;align-items:center;gap:7px;font:600 11px/1 var(--f-data);letter-spacing:.08em;text-transform:uppercase;color:var(--ink);background:transparent;border:1px solid var(--ink);padding:3px 9px 3px 4px;cursor:pointer;white-space:nowrap;min-width:5.6em}
+.switch i{flex:none;width:26px;height:14px;border-radius:7px;background:var(--ink);position:relative}
+.switch i::after{content:"";position:absolute;top:2px;left:14px;width:10px;height:10px;border-radius:50%;background:var(--paper)}
+.switch[aria-checked="false"]{color:var(--muted);border-color:var(--grid-major)}
+.switch[aria-checked="false"] i{background:var(--grid-major)}
+.switch[aria-checked="false"] i::after{left:2px}
+.switch:hover{border-color:var(--ink);color:var(--ink)}
+.eps tr.off td:first-child a,.eps tr.off .url,.eps tr.off .num{color:var(--muted)}
+.eps tr.off td:first-child a{text-decoration-style:dashed}
+.off-note{margin:0 14px 10px 0}

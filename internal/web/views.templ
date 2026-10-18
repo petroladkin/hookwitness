@@ -63,8 +63,25 @@ templ mastNav(nav navView) {
 				if nav.Current < 0 {
 					<option value="" selected>Choose…</option>
 				}
-				for _, e := range nav.Endpoints {
-					<option value={ nav.registerURL(e.ID) } selected?={ nav.Current == e.ID }>{ e.Path }</option>
+				if nav.someOff() {
+					<optgroup label="On">
+						for _, e := range nav.Endpoints {
+							if e.Enabled {
+								<option value={ nav.registerURL(e.ID) } selected?={ nav.Current == e.ID }>{ e.Path }</option>
+							}
+						}
+					</optgroup>
+					<optgroup label="Off">
+						for _, e := range nav.Endpoints {
+							if !e.Enabled {
+								<option value={ nav.registerURL(e.ID) } selected?={ nav.Current == e.ID }>{ e.Path } · off</option>
+							}
+						}
+					</optgroup>
+				} else {
+					for _, e := range nav.Endpoints {
+						<option value={ nav.registerURL(e.ID) } selected?={ nav.Current == e.ID }>{ e.Path }</option>
+					}
 				}
 				<option value={ nav.registerURL(store.Unmatched) } selected?={ nav.Current == store.Unmatched }>Unmatched · { strconv.Itoa(nav.Unmatched) }</option>
 			</select>
@@ -115,12 +132,13 @@ templ endpointsPage(nav navView, creating bool, formPath, formErr string) {
 						</thead>
 						<tbody>
 							for _, e := range nav.Endpoints {
-								<tr>
+								<tr class={ templ.KV("off", !e.Enabled) }>
 									<td><a href={ templ.SafeURL(nav.registerURL(e.ID)) }>{ e.Path }</a></td>
 									<td class="url">{ nav.Catch }{ e.Path }</td>
 									<td class="num">{ strconv.Itoa(e.Count) }</td>
 									<td class="when">{ lastSeen(e.LastAt) }</td>
 									<td class="acts">
+										@switchForm(nav.registerURL(e.ID), e.Path, e.Enabled, nav.Prefix+"/")
 										<a class="btn quiet" href={ templ.SafeURL(nav.registerURL(e.ID) + "/behaviour") }>Behaviour</a>
 										@clearForm(nav, e.ID, nav.Prefix+"/", e.Path)
 										<form method="post" action={ templ.SafeURL(nav.registerURL(e.ID) + "/delete") } data-confirm={ "Delete " + e.Path + " and its " + strconv.Itoa(e.Count) + " requests?" }>
@@ -173,6 +191,33 @@ templ endpointsPage(nav navView, creating bool, formPath, formErr string) {
 	}
 }
 
+// switchForm turns an endpoint off or on; the switch shows its state.
+templ switchForm(base, path string, enabled bool, next string) {
+	<form method="post" action={ templ.SafeURL(base + "/switch") }>
+		<input type="hidden" name="enabled" value={ strconv.FormatBool(!enabled) }/>
+		<input type="hidden" name="next" value={ next }/>
+		<button
+			class="switch"
+			type="submit"
+			role="switch"
+			aria-checked={ strconv.FormatBool(enabled) }
+			aria-label={ "Catching at " + path }
+			if enabled {
+				title="On: catching. Turn off to send this path's requests to Unmatched."
+			} else {
+				title="Off: requests go to Unmatched. Turn on to catch them here again."
+			}
+		>
+			<i aria-hidden="true"></i>
+			if enabled {
+				On
+			} else {
+				Off
+			}
+		</button>
+	</form>
+}
+
 templ clearForm(nav navView, regID int64, next, what string) {
 	<form method="post" action={ templ.SafeURL(nav.registerURL(regID) + "/clear") } data-confirm={ "Clear every request kept for " + what + "?" }>
 		<input type="hidden" name="next" value={ next }/>
@@ -196,6 +241,7 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 					if reg.ID == store.Unmatched {
 						@clearForm(nav, reg.ID, reg.Base, "Unmatched")
 					} else {
+						@switchForm(reg.Base, reg.Path, reg.Enabled, reg.Base)
 						@clearForm(nav, reg.ID, reg.Base, reg.Path)
 						<a class="btn" href={ templ.SafeURL(reg.Base + "/behaviour") }>Behaviour</a>
 					}
@@ -204,6 +250,13 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 						<a class="btn" href={ templ.SafeURL(reg.Base + "?draft") }>Draft schema</a>
 					}
 				</div>
+				if !reg.Enabled {
+					<p class="banner off-note" role="status">
+						Off: requests to this path are answered 404 and kept under
+						<a href={ templ.SafeURL(nav.registerURL(store.Unmatched)) }>Unmatched</a>. Its behaviour, secrets,
+						requests and counter stay as they are; turn it on to catch here again.
+					</p>
+				}
 				if reg.Verdicts.On {
 					<div class="verdict-counts">
 						<span>Verdicts</span>
