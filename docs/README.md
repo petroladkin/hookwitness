@@ -24,6 +24,8 @@ by task: what to click and what happens. [Українською](uk/README.md).
    the MCP server.
 10. [Users, login and tokens](access.md): turning login on, roles, tokens for
     scripts and MCP, a lost password.
+11. [Sharing an endpoint's setup](sharing.md): export to a file, import it
+    on another instance, secrets without values, endpoints at start.
 
 Reference: the [REST API](api.md) (English only), and its OpenAPI 3.1
 description served at `/admin/api/v1/openapi.json`.

@@ -81,6 +81,7 @@ variable. In Docker, pass the variables: `-e HOOKWITNESS_RETENTION=5000`.
 | `-public-url` | `HOOKWITNESS_PUBLIC_URL` | none | the URL senders reach the catch paths at, such as `https://hooks.example.com`: the catch URLs the UI and the API show are built on it (behind a proxy, a tunnel or remapped ports) |
 | `-admin-hosts` | `HOOKWITNESS_ADMIN_HOSTS` | none | host names the UI and the API answer to, comma-separated |
 | `-max-wait` | `HOOKWITNESS_MAX_WAIT` | `5m` | the longest reply delay or timeout hold, from 1s to 1h |
+| `-import` | `HOOKWITNESS_IMPORT` | none | a setup file applied at every start: its endpoints are created or their behaviour replaced, secrets keep their values ([Sharing a setup](sharing.md#known-endpoints-without-clicks)) |
 | `-trusted-proxies` | `HOOKWITNESS_TRUSTED_PROXIES` | none | reverse proxies (addresses or CIDRs, comma-separated) whose `X-Forwarded-For` names the client, for the login limit ([Users and login](access.md#behind-a-reverse-proxy)) |
 | — | `HOOKWITNESS_ADMIN_USER`, `HOOKWITNESS_ADMIN_PASSWORD_FILE` | none | the first admin, created at start on a database without users ([Users and login](access.md)) |
 | — | `HOOKWITNESS_API_TOKEN_FILE` | none | a file with a machine token for the API and MCP ([Users and login](access.md#a-machine-token)) |

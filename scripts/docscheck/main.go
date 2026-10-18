@@ -5,7 +5,8 @@
 //
 // Every ```sh block is run with bash (needs curl, jq, openssl), each page
 // against its own fresh server; 127.0.0.1:8080 and localhost:8080 in a
-// block are replaced by that server's address. A block is checked through
+// block are replaced by that server's address, and the binary is on PATH
+// as hookwitness (for commands such as hookwitness apply). A block is checked through
 // comments the reader sees anyway:
 //
 //   - a command ending in `# pass`, `# fail: <reason>`, `# n/v: <reason>` or
@@ -66,6 +67,9 @@ func main() {
 	flag.Parse()
 	setup, err := filepath.Abs("scripts/docscheck/setup.sh")
 	if err != nil {
+		fatal(err)
+	}
+	if binDir, err = filepath.Abs(filepath.Dir(*bin)); err != nil {
 		fatal(err)
 	}
 	failed, ran, skipped := 0, 0, 0
@@ -223,6 +227,9 @@ __output() { # line expected-file
 }
 `
 
+// binDir holds the binary, put first on each block's PATH.
+var binDir string
+
 type expectation struct {
 	line             int
 	kind, arg, extra string
@@ -237,6 +244,9 @@ func run(b block, s *server, setup string) []string {
 	defer os.RemoveAll(dir)
 	var src strings.Builder
 	fmt.Fprintf(&src, "__api=http://%s/admin/api/v1\n__log=%s\n__out=%s\n", s.addr, filepath.Join(dir, "log"), filepath.Join(dir, "out"))
+	if binDir != "" {
+		fmt.Fprintf(&src, "PATH=%q:\"$PATH\"\n", binDir)
+	}
 	src.WriteString(prelude)
 	fmt.Fprintf(&src, "source %q\nHW=http://%s\n", setup, s.addr)
 	for _, name := range b.setups {

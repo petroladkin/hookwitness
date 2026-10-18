@@ -139,4 +139,25 @@ docker logs $C 2>&1 | grep -q -e smoke-admin-password -e "$TOKEN" -e "$SID" && f
 ok "restart: bootstrap skipped, the same password works, no secret value in the log"
 rm -f "$J"
 stop
+
+# A setup file applied at every start (docs/sharing.md): its endpoint is
+# there without clicks, and a restart with the same file changes nothing.
+SETUP=$(mktemp); trap 'cleanup; rm -f "$PW" "$SETUP"' EXIT
+cat > "$SETUP" <<'JSON'
+{"hookwitness": 1, "endpoints": [{"path": "/payments/webhooks", "default": {"status": 200},
+  "rules": [{"when": {"kind": "first", "n": 2}, "do": "reply", "reply": {"status": 503}}],
+  "checks": [{"kind": "stripe", "enforce": true, "secret": "STRIPE_SECRET"}],
+  "secrets": [{"name": "STRIPE_SECRET", "kind": "key"}]}]}
+JSON
+chmod 644 "$SETUP"
+start "${LOGIN[@]}" -e HOOKWITNESS_IMPORT=/setup.json -v "$SETUP:/setup.json:ro"
+docker logs $C 2>&1 | grep -q '"endpoint created from a setup file"\|msg="endpoint created from a setup file"' || fail "no import line"
+[ "$(status -d '{}' $B/payments/webhooks)" = 503 ] || fail "the imported rule"
+stop
+start "${LOGIN[@]}" -e HOOKWITNESS_IMPORT=/setup.json -v "$SETUP:/setup.json:ro"
+docker logs $C 2>&1 | grep -q 'created=0 replaced=0 unchanged=1' || fail "a restart changed the imported endpoint"
+[ "$(status -d '{}' $B/payments/webhooks)" = 503 ] || fail "the counter after a restart"
+[ "$(status -d '{}' $B/payments/webhooks)" = 200 ] || fail "the counter after a restart (third delivery)"
+ok "HOOKWITNESS_IMPORT: the endpoint at start, unchanged on a restart, its counter kept"
+stop
 echo "smoke: all passed"
