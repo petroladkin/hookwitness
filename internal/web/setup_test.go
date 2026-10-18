@@ -122,7 +122,7 @@ func TestImportSetupDialog(t *testing.T) {
 		t.Fatalf("secrets %+v", c.Secrets)
 	}
 	page = e.do("GET", loc, nil).Body.String()
-	if !strings.Contains(page, "Imported: created /orders/v2, created /refunds.") || !strings.Contains(page, "1 secret has no value yet") ||
+	if !strings.Contains(page, "Imported: created /orders/v2, created /refunds.") || !strings.Contains(page, "1 secret has no value yet: the checks that use it give n/v") ||
 		!strings.Contains(page, "1 secret not set</a>") {
 		t.Fatalf("after the import:\n%s", page)
 	}

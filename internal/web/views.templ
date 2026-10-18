@@ -130,7 +130,7 @@ templ endpointsPage(nav navView, d endpointsDialog) {
 				<p class="saved banner" role="status">
 					Imported: { strings.Join(d.Imported, ", ") }.
 					if d.Unset > 0 {
-						{ plural(d.Unset, "secret has", "secrets have") } no value yet: checks that use them give n/v until you set them on the endpoint's Behaviour → Secrets.
+						{ plural(d.Unset, "secret has no value yet: the checks that use it give n/v until you set it", "secrets have no value yet: the checks that use them give n/v until you set them") } on the endpoint's Behaviour → Secrets.
 					}
 				</p>
 			}
@@ -335,8 +335,8 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 				}
 				if reg.Unset > 0 {
 					<p class="banner off-note" role="status">
-						{ plural(reg.Unset, "secret of this endpoint has", "secrets of this endpoint have") } no value yet, so the checks that use them give n/v:
-						<a href={ templ.SafeURL(reg.Base + "/behaviour?tab=secrets") }>set them on the Secrets tab</a>.
+						{ plural(reg.Unset, "secret of this endpoint has no value yet, so the checks that use it give n/v:", "secrets of this endpoint have no value yet, so the checks that use them give n/v:") }
+						<a href={ templ.SafeURL(reg.Base + "/behaviour?tab=secrets") }>set { pick(reg.Unset == 1, "it", "them") } on the Secrets tab</a>.
 					</p>
 				}
 				if reg.Verdicts.On {

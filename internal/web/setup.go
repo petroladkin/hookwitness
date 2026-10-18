@@ -258,3 +258,11 @@ func plural(n int, one, many string) string {
 	}
 	return strconv.Itoa(n) + " " + many
 }
+
+// pick is a when cond, else b.
+func pick(cond bool, a, b string) string {
+	if cond {
+		return a
+	}
+	return b
+}
