@@ -244,7 +244,7 @@ templ importDialog(nav navView, v importView) {
 						}
 						for _, s := range it.Secrets {
 							<label>
-								{ s.Name } · { secretKindTitle(s.Kind) }
+								{ s.Name } · { emulate.SecretKindTitle(s.Kind) }
 								<input type="password" name={ "secret_" + strconv.Itoa(it.I) + "_" + s.Name } value="" autocomplete="new-password" spellcheck="false" placeholder="value (optional)"/>
 							</label>
 						}
@@ -929,7 +929,7 @@ templ ruleList(b behaviourView) {
 			for i, rule := range b.Config.Rules {
 				<li id={ "rule-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "rule-"+strconv.Itoa(i)) }>
 					<span class="no">{ strconv.Itoa(i + 1) }</span>
-					<span class="what"><b>{ rule.When.Label() }</b> → { ruleAction(rule) }</span>
+					<span class="what"><b>{ rule.When.Label() }</b> → { rule.Action() }</span>
 					@rowActions(b, "rule", i, len(b.Config.Rules), true)
 				</li>
 			}
@@ -948,13 +948,13 @@ templ checkList(b behaviourView) {
 					<span class="no">{ strconv.Itoa(i + 1) }</span>
 					if ch.GivesVerdict() {
 						<span class="what">
-							<b>{ ch.Label() }</b> · { checkSummary(ch) }
+							<b>{ ch.Label() }</b> · { ch.Summary() }
 							if sc, ok := b.Config.SecretByName(ch.Secret); ok && ch.Kind != emulate.KindSchema && !sc.Set() {
 								· <a class="unset" href={ templ.SafeURL(b.Base + "/behaviour?tab=secrets") }>{ ch.Secret } not set: n/v</a>
 							}
 						</span>
 					} else {
-						<span class="what"><b>{ ch.Header }</b> { checkSummary(ch) }</span>
+						<span class="what"><b>{ ch.Header }</b> { ch.Summary() }</span>
 					}
 					@rowActions(b, "check", i, len(b.Config.Checks), false)
 				</li>
@@ -988,7 +988,7 @@ templ secretList(b behaviourView) {
 				<li id={ "secret-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "secret-"+strconv.Itoa(i)) }>
 					<span class="no">{ strconv.Itoa(i + 1) }</span>
 					<span class="what">
-						<b>{ sc.Name }</b> · { secretKindTitle(sc.Kind) } ·
+						<b>{ sc.Name }</b> · { emulate.SecretKindTitle(sc.Kind) } ·
 						if sc.Set() {
 							fingerprint <code>{ sc.Fingerprint }</code> · 
 						} else {
@@ -1044,7 +1044,7 @@ templ replySummary(r emulate.Reply) {
 		<dt>Status</dt>
 		<dd>{ strconv.Itoa(r.Status) }</dd>
 		<dt>Delay</dt>
-		<dd>{ delayLabel(r) }</dd>
+		<dd>{ r.DelayLabel() }</dd>
 		<dt>Headers</dt>
 		<dd>
 			if len(r.Headers) == 0 {
@@ -1239,7 +1239,7 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 			<select name="secret">
 				<option value="">choose…</option>
 				for _, sc := range b.Config.Secrets {
-					<option value={ sc.Name } selected?={ ch.Secret == sc.Name }>{ sc.Name } ({ secretKindTitle(sc.Kind) })</option>
+					<option value={ sc.Name } selected?={ ch.Secret == sc.Name }>{ sc.Name } ({ emulate.SecretKindTitle(sc.Kind) })</option>
 				}
 			</select>
 		</label>
@@ -1288,9 +1288,9 @@ templ secretFields(e *editor) {
 		</div>
 	} else {
 		if e.Secret.Set() {
-			<p class="note"><b>{ e.Secret.Name }</b> · { secretKindTitle(e.Secret.Kind) } · now <code>{ e.Secret.Fingerprint }</code>. The new value replaces it; the checks that use it keep working with the new one.</p>
+			<p class="note"><b>{ e.Secret.Name }</b> · { emulate.SecretKindTitle(e.Secret.Kind) } · now <code>{ e.Secret.Fingerprint }</code>. The new value replaces it; the checks that use it keep working with the new one.</p>
 		} else {
-			<p class="note"><b>{ e.Secret.Name }</b> · { secretKindTitle(e.Secret.Kind) } · not set. Until it has a value, the checks that use it give n/v and refuse nothing.</p>
+			<p class="note"><b>{ e.Secret.Name }</b> · { emulate.SecretKindTitle(e.Secret.Kind) } · not set. Until it has a value, the checks that use it give n/v and refuse nothing.</p>
 		}
 	}
 	<label>Value <input type="password" name="value" value="" required autocomplete="new-password" spellcheck="false"/></label>
