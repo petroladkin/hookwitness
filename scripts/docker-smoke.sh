@@ -5,6 +5,7 @@
 set -euo pipefail
 IMG=${1:?usage: docker-smoke.sh <image>}
 PORT=${SMOKE_PORT:-18080}
+APORT=${SMOKE_ADMIN_PORT:-18081}
 B=http://127.0.0.1:$PORT
 A=$B/admin
 VOL=hw-smoke-$$
@@ -90,4 +91,20 @@ n=$(curl -fsS "$A/e/1" | grep -o 'id="req-' | wc -l | tr -d ' ')
 [ "$n" -ge 4 ] || fail "requests lost after recreate ($n rows)"
 ok "recreated read-only on the same volume: endpoint, $n requests and the sealed secret are there"
 stop
+
+# The admin on its own port, at its root: the catch port catches every path
+# but /healthz, the admin answers only on its port.
+X=http://127.0.0.1:$APORT
+start -p 127.0.0.1:$APORT:8081 -e HOOKWITNESS_ADMIN_ADDR=:8081 -e HOOKWITNESS_ADMIN_PREFIX=/ -e HOOKWITNESS_PUBLIC_URL=$B
+ok "healthy with the admin on :8081 (the health check probes the catch port)"
+[ "$(status $B/healthz)" = 200 ] && [ "$(status $X/healthz)" = 200 ] || fail "healthz on both ports"
+[ "$(status "$X/")" = 200 ] || fail "UI at the root of the admin port"
+[ "$(status -d '{}' $B/admin/x)" = 404 ] || fail "/admin/x on the catch port is not caught"
+[ "$(status $B/api/v1/endpoints)" = 404 ] || fail "the API answered on the catch port"
+curl -fsS "$X/api/v1/unmatched/requests" | grep -q '"path": "/admin/x"' || fail "/admin/x not in Unmatched"
+curl -fsS "$X/api/v1/endpoints" | grep -q "\"url\": \"$B/hooks\"" || fail "catch URL from HOOKWITNESS_PUBLIC_URL"
+ok "catch port: /admin/x and /api/v1/endpoints caught into Unmatched; admin and API on :8081; catch URL $B/hooks"
+stop
+[ "$code" = 0 ] || fail "exit code $code after docker stop"
+ok "docker stop: exit 0 with two listeners"
 echo "smoke: all passed"
