@@ -137,7 +137,7 @@ await cdp("Emulation.setEmulatedMedia", { media: "", features: [{ name: "prefers
 // shot navigates, optionally runs a step (a click, a choice), and captures
 // the page down to its last element, at most maxHeight CSS pixels; with a
 // selector, only that element (a dialog) with a margin.
-async function shot(name, url, { step, maxHeight = 800, selector } = {}) {
+async function shot(name, url, { step, maxHeight = 800, selector, pad = 16 } = {}) {
   if (only.length && !only.includes(name)) return;
   await cdp("Page.navigate", { url });
   await sleep(900);
@@ -152,7 +152,7 @@ async function shot(name, url, { step, maxHeight = 800, selector } = {}) {
   if (selector) {
     const r = JSON.parse(await js(`(() => { const b = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
       return JSON.stringify({ x: b.x, y: b.y + scrollY, width: b.width, height: b.height }); })()`));
-    clip = { x: Math.max(0, r.x - 16), y: Math.max(0, r.y - 16), width: Math.min(WIDTH, r.width + 32), height: Math.min(r.height + 32, maxHeight), scale: 1 };
+    clip = { x: Math.max(0, r.x - pad), y: Math.max(0, r.y - pad), width: Math.min(WIDTH, r.width + 2 * pad), height: Math.min(r.height + 2 * pad, maxHeight), scale: 1 };
   }
   const { data } = await cdp("Page.captureScreenshot", { format: "webp", quality: 88, captureBeyondViewport: true, clip });
   const file = join(outDir, `${name}.webp`);
@@ -324,7 +324,7 @@ if (!only.length || only.includes("strip")) {
   await at(67); await send("/payments/webhooks", b, auth);
   await at(72); await send("/payments/webhooks", b, auth);         // the same body again
   await at(73);
-  await shot("strip", `${UI}/e/${pay}`, { selector: "section.strip", step: "new Promise((r) => setTimeout(r, 300))" });
+  await shot("strip", `${UI}/e/${pay}`, { selector: "section.strip", pad: 0, step: "new Promise((r) => setTimeout(r, 300))" });
 }
 
 // README.md, the demo: a GIF of one real run. Webhooks arrive live, every

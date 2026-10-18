@@ -33,7 +33,7 @@ change the API or the flags, and the [changelog](CHANGELOG.md) says how.
 | | |
 |---|---|
 | ![The register of /github/webhooks with its strip and verdicts](docs/images/register.webp) | ![A request whose bearer token failed, with the reason](docs/images/auth-fail.webp) |
-| **The register.** Requests arrive live, with their answer and verdict; the strip shows the last two minutes. | **A request in full.** Headers in the order sent, the body, the answer, and why a check failed. |
+| **The register.** Requests arrive live, with their answer and verdict; the strip shows the last two minutes, or up to six hours. | **A request in full.** Headers in the order sent, the body, the answer, and why a check failed. |
 | ![The Rules tab with the rule every 3rd → 500](docs/images/behaviour-rules.webp) | ![A request whose body failed its JSON Schema, problems marked](docs/images/schema-fail.webp) |
 | **Behaviour.** Checks, rules, the default reply, variables, secrets and schemas, one tab each. | **JSON Schema.** The problems listed and marked in the body. |
 

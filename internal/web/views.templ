@@ -303,9 +303,18 @@ templ clearForm(nav navView, regID int64, next, what string) {
 
 templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 	@layout(nav, title(reg)) {
-		<section class="strip" aria-label="Arrivals over the last two minutes">
-			<canvas id="trace" aria-hidden="true"></canvas>
-			<div class="legend"><b>Last 2 min</b> · height = body size · red: not 2xx · dashed: timeout · ×: dropped · red bar under the line: a failed check · same body bracketed</div>
+		<section class="strip" aria-label="Arrivals over the last 2 min">
+			<canvas id="trace" aria-hidden="true" data-marks={ reg.Base + "/marks" }></canvas>
+			<div class="legend">
+				<span class="spans" role="group" aria-label="Range of the strip">
+					<b>Last</b>
+					<button type="button" data-span="2m" aria-pressed="true">2 min</button>
+					<button type="button" data-span="10m" aria-pressed="false">10 min</button>
+					<button type="button" data-span="1h" aria-pressed="false">1 h</button>
+					<button type="button" data-span="6h" aria-pressed="false">6 h</button>
+				</span>
+				<span>height = body size · red: not 2xx · dashed: timeout · ×: dropped · red bar under the line: a failed check · same body bracketed · hatched: not kept</span>
+			</div>
 		</section>
 		<main class="desk">
 			<section class="register" aria-label="Caught requests">

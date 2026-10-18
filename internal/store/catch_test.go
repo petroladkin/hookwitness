@@ -580,3 +580,51 @@ func TestListByContent(t *testing.T) {
 		t.Fatalf("Match asked %d times for a limit of 1 (%v)", asked, err)
 	}
 }
+
+// KeptFrom is where a register's kept requests begin when older ones are
+// gone (pruned past the retention, or cleared): the strip shades the time
+// before it as not kept.
+func TestKeptFrom(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	ep, err := s.CreateEndpoint(ctx, "/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.KeptFrom(ctx, ep.ID); err != nil || ok {
+		t.Fatalf("empty register: %v %v", ok, err)
+	}
+	at := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
+	add := func(reg int64, i int) {
+		r := sample(reg, "x")
+		r.ReceivedAt = at.Add(time.Duration(i) * time.Minute)
+		if err := s.AddRequest(ctx, r, 3, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 3 {
+		add(ep.ID, i)
+	}
+	if _, ok, _ := s.KeptFrom(ctx, ep.ID); ok {
+		t.Fatal("nothing pruned yet")
+	}
+	add(ep.ID, 3) // the 4th prunes the 1st
+	from, ok, err := s.KeptFrom(ctx, ep.ID)
+	if err != nil || !ok || !from.Equal(at.Add(time.Minute)) {
+		t.Fatalf("after pruning: %v %v %v", from, ok, err)
+	}
+	if err := s.ClearRequests(ctx, ep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.KeptFrom(ctx, ep.ID); ok {
+		t.Fatal("a cleared register has no kept requests to begin")
+	}
+	add(ep.ID, 10)
+	if from, ok, _ := s.KeptFrom(ctx, ep.ID); !ok || !from.Equal(at.Add(10*time.Minute)) {
+		t.Fatalf("after a clear: %v %v", from, ok)
+	}
+	add(Unmatched, 0)
+	if _, ok, _ := s.KeptFrom(ctx, Unmatched); ok {
+		t.Fatal("Unmatched: its first request")
+	}
+}
