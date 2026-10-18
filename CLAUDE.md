@@ -229,6 +229,7 @@ that makes it false.
   of `docs/` has its twin in `docs/uk/` (except `api.md`) with the same `sh`
   blocks, relative links and anchors resolve, every image is used.
 - `scripts/hooks` — git hooks; `scripts/notices.sh` — notices generator;
+  `scripts/dco.sh` — every commit of a range signed off by its author;
   `scripts/docker-smoke.sh` — the container scenario (README's `docker run`,
   health, persistence of data and sealed secrets, graceful stop, read-only);
   `scripts/api-smoke.sh` — the API scenario (the Basic-credentials recipe
@@ -251,7 +252,8 @@ that makes it false.
 - `Dockerfile`, `.dockerignore` — two-stage image: cross-compiling build
   stage through `make build`, distroless static nonroot final stage; the
   build context is an allowlist.
-- `.github/workflows/ci.yml` — `make check`, then the amd64 image and its
+- `.github/workflows/ci.yml` — the sign-off of every PR commit
+  (`scripts/dco.sh`), `make check`, `js-test`, `make docs-check`, then the amd64 image and its
   container and API smoke tests (job `image`, read-only) on every PR and push
   to `dev` or `main`; on a push to `dev` (`:edge`) or a release tag
   (`vX.Y.Z`, `vX.Y.Z-rc.N`; other tags start nothing) the job `publish`,
@@ -259,7 +261,9 @@ that makes it false.
   with SBOM and provenance attestations attached as referrers (not in the
   image index); a release candidate gets only its own tag. Actions are
   pinned to commit SHAs; `.github/dependabot.yml` updates them, the Go modules
-  and the base images weekly.
+  and the base images weekly. `.github/ISSUE_TEMPLATE/` (bug, feature, no
+  blank issues, security reported privately) and the PR template carry the
+  issue-first rule and the sign-off.
 
 ## Commands
 

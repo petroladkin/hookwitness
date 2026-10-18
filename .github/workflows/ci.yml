@@ -19,11 +19,21 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the pull request's commits, for the sign-off check
+      # Every commit of a pull request signed off by its author (DCO).
+      - if: github.event_name == 'pull_request'
+        run: scripts/dco.sh "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - run: make check
       - run: make js-test
+      # Every shell example of the README and docs/ against a fresh build,
+      # with the outputs the text promises.
+      - run: |
+          curl --version | head -1; jq --version; openssl version
+          make docs-check
 
   # The amd64 image and the scenarios users follow, on every PR and push;
   # read-only.
