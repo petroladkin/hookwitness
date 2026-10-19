@@ -125,11 +125,15 @@ func (s *Streamable) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	c := &creating{}
 	s.sdk.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), creatingKey{}, c)))
-	// The slot goes with the session made; none made (a failed initialize)
-	// gives it back now.
+	// The slot goes with the session made; none made, or one that never
+	// initialized (a failed initialize; a client probing a newer protocol
+	// first), gives it back now, before the client's next request.
 	held := false
 	if c.srv != nil {
 		for ss := range c.srv.Sessions() {
+			if ss.InitializeParams() == nil {
+				break
+			}
 			held = true
 			go func() { ss.Wait(); s.give() }()
 			break
