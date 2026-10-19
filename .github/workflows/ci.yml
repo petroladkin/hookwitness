@@ -77,6 +77,27 @@ jobs:
       - run: scripts/docker-smoke.sh hookwitness:smoke
       - run: scripts/api-smoke.sh --image hookwitness:smoke
 
+  # The release archives on every PR and push: built twice, compared byte
+  # for byte (reproducible), checked against SHA256SUMS and run; read-only.
+  dist:
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # git describe needs the tags
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: |
+          make dist
+          mv dist dist.first
+          make dist
+          for f in dist/*; do cmp "$f" "dist.first/${f#dist/}"; done
+          (cd dist && sha256sum -c SHA256SUMS)
+          mkdir run && tar -xzf dist/hookwitness_*_linux_amd64.tar.gz -C run --strip-components 1
+          run/hookwitness version
+
   # Both platforms pushed to GHCR, from dev (:edge) and release tags only;
   # the one job that may write packages and attestations.
   publish:
@@ -143,3 +164,45 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+  # The release archives of a release tag on a draft Release (a prerelease
+  # for an rc), attested; the release step writes the notes and publishes
+  # it. The one job that may write contents, and only on a release tag.
+  binaries:
+    needs: [image, dist]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: make dist VERSION="$VERSION" COMMIT="$COMMIT"
+        env:
+          VERSION: ${{ needs.image.outputs.version }}
+          COMMIT: ${{ needs.image.outputs.commit }}
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+      # A Release already published is never changed; a draft left by an
+      # earlier run of this tag gets the assets again.
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          draft=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq '.[] | select(.tag_name == env.TAG) | .draft')
+          case "$draft" in
+            false) echo "::error::the Release of $TAG is already published; its assets are left as they are"; exit 1 ;;
+            true) gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --clobber -R "$GITHUB_REPOSITORY" ;;
+            *)
+              pre=
+              case "$TAG" in *-rc.*) pre=--prerelease ;; esac
+              gh release create "$TAG" --draft $pre --verify-tag --title "$TAG" \
+                --notes "Draft made by CI: the release step writes the notes and publishes it." \
+                -R "$GITHUB_REPOSITORY" dist/*.tar.gz dist/SHA256SUMS ;;
+          esac
