@@ -521,8 +521,17 @@ func (s *Store) RequestsChanged(ctx context.Context, endpointID, upToID, afterSe
 	return reqs, seq, nil
 }
 
-// DeleteEndpoint removes an endpoint and every request it caught.
+// DeleteEndpoint removes an endpoint and every request it caught, and
+// gives the space back (Reclaim).
 func (s *Store) DeleteEndpoint(ctx context.Context, id int64) error {
+	if err := s.deleteEndpoint(ctx, id); err != nil {
+		return err
+	}
+	_, err := s.Reclaim(ctx, 0)
+	return err
+}
+
+func (s *Store) deleteEndpoint(ctx context.Context, id int64) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM endpoints WHERE id = ?`, id)
@@ -552,8 +561,17 @@ func (s *Store) KeptFrom(ctx context.Context, endpointID int64) (time.Time, bool
 	return fromMillis(at), no > 1, nil
 }
 
-// ClearRequests removes every request of a register. Numbering continues.
+// ClearRequests removes every request of a register and gives the space
+// back (Reclaim). Numbering continues.
 func (s *Store) ClearRequests(ctx context.Context, endpointID int64) error {
+	if err := s.clearRequests(ctx, endpointID); err != nil {
+		return err
+	}
+	_, err := s.Reclaim(ctx, 0)
+	return err
+}
+
+func (s *Store) clearRequests(ctx context.Context, endpointID int64) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
 	if endpointID != Unmatched {

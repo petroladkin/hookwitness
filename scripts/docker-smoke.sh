@@ -167,5 +167,17 @@ grep -q 'created=0 replaced=0 unchanged=1' <<<"$LOG" || { echo "$LOG" >&2; fail 
 [ "$(status -d '{}' $B/payments/webhooks)" = 503 ] || fail "the counter after a restart"
 [ "$(status -d '{}' $B/payments/webhooks)" = 200 ] || fail "the counter after a restart (third delivery)"
 ok "HOOKWITNESS_IMPORT: the endpoint at start, unchanged on a restart, its counter kept"
+
+# Compacting the database (docs/deployment.md): refused while the server
+# runs; with it stopped, done in a read-only container on the same volume,
+# and the server starts on the result with its data.
+if out=$(docker run --rm --read-only -v $VOL:/data "$IMG" db compact 2>&1); then fail "compact ran beside a running server: $out"; fi
+grep -q 'stop it first' <<<"$out" || fail "compact beside a running server: $out"
+stop
+out=$(docker run --rm --read-only -v $VOL:/data "$IMG" db compact 2>&1) || fail "compact: $out"
+grep -q '/data/hookwitness.db compacted: ' <<<"$out" || fail "compact output: $out"
+start "${LOGIN[@]}"
+[ "$(status -d '{}' $B/payments/webhooks)" = 200 ] || fail "the imported endpoint after compacting"
+ok "db compact: refused beside the server; read-only, then the data is there ($out)"
 stop
 echo "smoke: all passed"
