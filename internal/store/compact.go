@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -23,7 +25,8 @@ var compactTemp = func(dbPath string) string { return dbPath + ".compact" }
 // incremental auto-vacuum, so that from then on clearing and pruning give
 // space back (Reclaim). Nothing else may have the database open: a server
 // or another command using it gives ErrInUse, and nothing can open it while
-// this runs.
+// this runs. A server older than the lock (0.1) holds none and is not
+// noticed: the caller must have stopped it.
 //
 // The new file is written next to the database (it needs free space for the
 // data the database holds), checked (integrity, the same rows in every
@@ -111,15 +114,66 @@ func Compact(ctx context.Context, dbPath string, keepOld bool) (CompactResult, e
 			return unchanged(fmt.Errorf("keep the old file: %w", err))
 		}
 	}
+	// Durable across a power loss: the copy's bytes reach the disk before
+	// the rename makes it the database (VACUUM INTO is not relied on to
+	// sync), and the directory after it, so the rename and the -keep-old
+	// link survive too.
+	if err := syncFile(tmp); err != nil {
+		if keepOld {
+			os.Remove(old)
+		}
+		return unchanged(fmt.Errorf("sync %s: %w", tmp, err))
+	}
+	step("rename")
 	if err := os.Rename(tmp, dbPath); err != nil {
 		if keepOld {
 			os.Remove(old)
 		}
 		return unchanged(err)
 	}
+	if err := syncDir(filepath.Dir(dbPath)); err != nil {
+		return res, fmt.Errorf("the database is compacted, but its directory could not be synced (a power loss now could undo it): %w", err)
+	}
 	res.After = sizeWithWAL(dbPath)
 	res.Took = time.Since(start)
 	return res, nil
+}
+
+// compactStep, when set (by tests), is told each durability step in order:
+// "sync file", "rename", "sync dir".
+var compactStep func(string)
+
+func step(name string) {
+	if compactStep != nil {
+		compactStep(name)
+	}
+}
+
+// syncFile flushes a file's contents to the disk.
+func syncFile(path string) error {
+	step("sync file")
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
+// syncDir flushes a directory's entries (a rename, a link) to the disk.
+// Platforms that cannot sync a directory (EINVAL, unsupported) are left as
+// they are.
+func syncDir(dir string) error {
+	step("sync dir")
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) && !errors.Is(err, errors.ErrUnsupported) {
+		return err
+	}
+	return nil
 }
 
 func sizeWithWAL(path string) int64 {

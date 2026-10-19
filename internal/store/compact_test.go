@@ -121,6 +121,21 @@ func TestCompactConvertsAndShrinks(t *testing.T) {
 	}
 }
 
+// TestCompactSyncsBeforeTheRename: the copy reaches the disk before it
+// becomes the database, and the directory after.
+func TestCompactSyncsBeforeTheRename(t *testing.T) {
+	p := oldDatabase(t)
+	var steps []string
+	compactStep = func(s string) { steps = append(steps, s) }
+	defer func() { compactStep = nil }()
+	if _, err := Compact(context.Background(), p, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(steps, ", "); got != "sync file, rename, sync dir" {
+		t.Fatalf("steps %q", got)
+	}
+}
+
 func TestCompactKeepsTheOldFile(t *testing.T) {
 	ctx := context.Background()
 	p := oldDatabase(t)

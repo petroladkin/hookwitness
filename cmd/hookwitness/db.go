@@ -15,8 +15,9 @@ import (
 const dbUsage = `Usage: hookwitness db compact [-db PATH] [-keep-old]
 
 Rewrites the database without its free space and so that from then on
-clearing and pruning give space back to the file system. Run it with the
-server stopped (it refuses while anything has the database open). It needs
+clearing and pruning give space back to the file system. Stop the server
+first: it refuses while a server of this version or another hookwitness
+command has the database open, but cannot tell a running 0.1 server. It needs
 free disk for the data the database holds; on any failure the database is
 left as it was. -keep-old keeps the old file as <db>.before-compact.
 

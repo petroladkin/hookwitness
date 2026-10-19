@@ -133,7 +133,9 @@ docker start hookwitness
 ```
 
 Without Docker, run `hookwitness db compact -db <path>` with the server
-stopped. It refuses while anything has the database open.
+stopped. Always stop the server first: the command refuses while a server
+of this version (or another `hookwitness` command) has the database open,
+but it cannot tell a running 0.1 server, which holds no lock.
 
 - It writes a new copy next to the database, so it needs free disk for the
   data the database holds. It checks the copy and only then puts it in place.
