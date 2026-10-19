@@ -550,6 +550,28 @@ if (!only.length || ["login-off", "login", "users", "token-new"].some((n) => onl
   await shot("users", `${UI}/users`, { maxHeight: 900 });
   await shot("token-new", `${UI}/account?dialog=token`, { selector: dialog, step: steps(
     type("name", "agent"), "document.querySelector('dialog[open] form').submit()") });
+  // Logged in as an admin the masthead is at its longest: no page may
+  // scroll sideways, and the page under the masthead ends where it ends.
+  const ep = (await api("GET", "/endpoints", undefined, as)).json.endpoints[0]?.id
+    ?? (await api("POST", "/endpoints", { path: "/stripe/webhooks" }, as)).json.id;
+  const bad = [];
+  for (const w of [390, 1280, 2000]) {
+    await cdp("Emulation.setDeviceMetricsOverride", { width: w, height: 800, deviceScaleFactor: 1, mobile: w < 600 });
+    for (const page of ["/", `/e/${ep}`, `/e/${ep}/behaviour`, "/users", "/account"]) {
+      await cdp("Page.navigate", { url: `${UI}${page}` });
+      await sleep(700);
+      // Against the width set, not innerWidth: a phone zooms out to fit
+      // what overflows, and innerWidth grows with it.
+      const m = JSON.parse(await js(`JSON.stringify({ scroll: document.documentElement.scrollWidth, view: ${w},
+        mast: document.querySelector(".mast").getBoundingClientRect().right,
+        page: document.querySelector("main").getBoundingClientRect().right })`));
+      if (m.scroll > m.view) bad.push(`${page} at ${w} px scrolls sideways: ${m.scroll} > ${m.view}`);
+      if (Math.abs(m.mast - m.page) > 1) bad.push(`${page} at ${w} px: the page ends at ${m.page}, the masthead at ${m.mast}`);
+    }
+  }
+  await cdp("Emulation.setDeviceMetricsOverride", { width: WIDTH, height: 800, deviceScaleFactor: 2, mobile: WIDTH < 600 });
+  if (bad.length) throw new Error(`layout:\n  ${bad.join("\n  ")}`);
+  console.log("layout: no sideways scroll, pages line up with the masthead");
 }
 ws.close();
 process.exit(0);
