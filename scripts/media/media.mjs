@@ -446,8 +446,9 @@ if (!only.length || only.includes("social")) {
   h1{margin:0;font:400 116px/1 "Saira Stencil One",sans-serif;letter-spacing:.04em;color:#24308C;text-transform:uppercase}
   p{margin:0;font:400 42px/1.25 "Atkinson Hyperlegible",sans-serif;color:#17201B}
   small{font:400 21px/1.4 "Martian Mono",monospace;color:#58695F}
-  /* the strip shot carries a margin of its neighbours: show the strip only */
-  div{position:absolute;left:0;bottom:28px;width:1280px;height:150px;overflow:hidden}
+  /* the strip shot carries a margin of its neighbours and the range buttons
+     under the axis: show the strip and its axis labels only */
+  div{position:absolute;left:0;bottom:46px;width:1280px;height:132px;overflow:hidden}
   img{display:block;width:1280px;margin:-17px 0 0 0}
 </style>
 <main><h1>Hookwitness</h1>
@@ -523,7 +524,7 @@ if (!only.length || ["login-off", "login", "users", "token-new"].some((n) => onl
   if (!only.length || only.includes("login-off")) {
     if ((await api("GET", "/endpoints")).json.endpoints.length === 0) await api("POST", "/endpoints", { path: "/stripe/webhooks" });
   }
-  await shot("login-off", `${UI}/`, { maxHeight: 520 });
+  await shot("login-off", `${UI}/`, { maxHeight: 230 });
   await api("POST", "/users", { name: "ann", role: "admin", password: "correct-horse-battery" });
   const login = await fetch(`${UI}/login`, { method: "POST", redirect: "manual",
     headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "name=ann&password=correct-horse-battery" });
