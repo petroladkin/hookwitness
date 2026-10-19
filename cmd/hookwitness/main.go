@@ -41,6 +41,7 @@ Commands:
   mcp       bridge an MCP client on stdio to a server's /mcp (hookwitness mcp -url http://127.0.0.1:8080)
   apply     create or replace the endpoints of a setup file on a running server (hookwitness apply -h)
   user      add, change, remove and list who may log in (hookwitness user -h)
+  db        compact the database with the server stopped (hookwitness db compact -h)
   version   print the version and exit
 `
 
@@ -71,6 +72,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return apply(ctx, args[1:], stdout, stderr)
 	case "user":
 		return userCmd(ctx, args[1:], getenv, stdout, stderr)
+	case "db":
+		return dbCmd(ctx, args[1:], getenv, stdout, stderr)
 	case "version", "--version", "-version":
 		fmt.Fprintln(stdout, "hookwitness", version.String())
 		return 0
@@ -104,6 +107,24 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 		return 1
 	}
 	defer st.Close()
+	if mode, err := st.AutoVacuum(ctx); err == nil && mode != "incremental" {
+		log.Warn("the database file does not shrink after clearing or pruning (made by an older version): stop the server and run hookwitness db compact", "db", cfg.DBPath)
+	}
+	// Space freed by pruning goes back to the file system once a minute;
+	// stopped before the database closes.
+	hkCtx, hkStop := context.WithCancel(ctx)
+	hkDone := make(chan struct{})
+	go func() {
+		defer close(hkDone)
+		st.Housekeep(hkCtx, time.Minute, func(freed int64, err error) {
+			if err != nil {
+				log.Warn("could not give free space back", "err", err)
+				return
+			}
+			log.Info("free space given back to the file system", "bytes", freed)
+		})
+	}()
+	defer func() { hkStop(); <-hkDone }()
 
 	// Endpoint secrets are sealed or hashed with this key; a database copied
 	// without it reveals none of them.

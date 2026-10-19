@@ -26,7 +26,9 @@ Release candidates (`:0.1.0-rc.1`) have only their own tag.
 
 Everything Hookwitness keeps (endpoints, their behaviour, secrets, caught
 requests) is in `/data`: the database and, unless `HOOKWITNESS_SECRET_KEY` is
-set, the key that seals the secrets (`/data/hookwitness.db.key`).
+set, the key that seals the secrets (`/data/hookwitness.db.key`). An empty
+`/data/hookwitness.db.lock` tells a running server from a stopped one (see
+[The database's size](#the-databases-size)).
 
 **Always mount `/data`.** Without `-v hookwitness:/data`, the data lives in
 the container's own layer: `docker rm` followed by a new `docker run` (an
@@ -112,6 +114,41 @@ Keep the key with the database when you move it. A database opened with
 another key keeps everything except the secrets: signing keys cannot be
 decrypted (their checks give **n/v**) and stored tokens never match. The
 server warns about it at startup; see [Troubleshooting](troubleshooting.md).
+
+### The database's size
+
+Clearing a register or deleting an endpoint gives its space back to the
+file system at once. Space freed by pruning past `-retention` goes back once
+a minute, when more than 8 MiB is free.
+
+A database made by version 0.1 keeps its largest size instead, and the
+server says so at startup. To convert it, stop the server and compact the
+database once:
+
+<!-- docs-check: skip: needs the server stopped and a container; tested by the store and command tests -->
+```sh
+docker stop hookwitness
+docker run --rm -v hookwitness:/data ghcr.io/petroladkin/hookwitness:0.1 db compact -db /data/hookwitness.db
+docker start hookwitness
+```
+
+Without Docker, run `hookwitness db compact -db <path>` with the server
+stopped. It refuses while anything has the database open.
+
+- It writes a new copy next to the database, so it needs free disk for the
+  data the database holds. It checks the copy and only then puts it in place.
+  On any failure, such as a full disk, the database stays as it was and the
+  command says why.
+- `-keep-old` keeps the old file as `<db>.before-compact`. Remove that file
+  when you are done, or its space stays used.
+- It prints the size before and after.
+
+To roll back, stop the server and do one of these:
+- put the old file back: `mv <db>.before-compact <db>`;
+- turn the conversion off with SQLite's shell:
+  `sqlite3 <db> 'PRAGMA auto_vacuum = NONE; VACUUM;'`.
+
+Version 0.1 opens a compacted database as it is.
 
 ## Reaching it from other machines
 

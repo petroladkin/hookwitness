@@ -99,7 +99,7 @@ that makes it false.
   setup file before listening), `health`, `mcp` (the stdio bridge,
   `-token-file`), `apply` (a setup file through the API, `-url`,
   `-token-file`), `user` (add / passwd / rm / list on the database, exit
-  codes 0-4), `version`; the first admin from the
+  codes 0-4), `db compact` (server stopped), `version`; the first admin from the
   environment; signal handling; logger setup; wiring of the parts below.
 - `internal/access` — who may use the admin: names, passwords, tokens
   (format, minting), sessions (ids hashed with SHA-256, lifetimes, the
@@ -110,7 +110,12 @@ that makes it false.
   (the admin's own address and the public URL validated with the rest).
 - `internal/store` — sqlite (modernc.org/sqlite, no cgo): pragmas, embedded
   migrations in `internal/store/migrations/NNNN_name.sql`, applied in order and
-  recorded in `schema_migrations`; a newer database schema is refused.
+  recorded in `schema_migrations`; a newer database schema is refused. New
+  databases have incremental auto-vacuum: clearing and deleting give space
+  back at once, pruning by a housekeeping tick (`vacuum.go`, steps of 1024
+  pages); `Compact` (`hookwitness db compact`, server stopped: a shared
+  lock on `<db>.lock` while open, exclusive while compacting) converts an
+  older database through a checked copy renamed into place.
   Users, sessions and tokens (`access.go`; the last admin guarded inside the
   write transaction).
   Endpoints and requests (`catch.go`); imports (`import.go`: all or none); `endpoint_id` NULL is the Unmatched
