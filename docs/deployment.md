@@ -148,8 +148,6 @@ To roll back, stop the server and do one of these:
 - turn the conversion off with SQLite's shell:
   `sqlite3 <db> 'PRAGMA auto_vacuum = NONE; VACUUM;'`.
 
-Version 0.1 opens a compacted database as it is.
-
 ## Reaching it from other machines
 
 Until it has a user, the admin (the UI, the API and MCP) has **no login**:
