@@ -691,6 +691,53 @@ func (s *Store) Request(ctx context.Context, id int64) (Request, error) {
 	return r, err
 }
 
+// DeliveryNumbers is Deliveries for every request of reqs (a page of a
+// register, the requests a live feed sends) in one query, by id.
+func (s *Store) DeliveryNumbers(ctx context.Context, reqs []Request) (map[int64]int, error) {
+	out := make(map[int64]int, len(reqs))
+	hashes := map[int64][]any{} // per register, each hash once
+	seen := map[string]bool{}
+	var ids []any
+	for _, r := range reqs {
+		out[r.ID] = 1 // without a body: a first delivery
+		if len(r.BodySHA256) == 0 {
+			continue
+		}
+		ids = append(ids, r.ID)
+		if k := fmt.Sprint(r.EndpointID) + string(r.BodySHA256); !seen[k] {
+			seen[k] = true
+			hashes[r.EndpointID] = append(hashes[r.EndpointID], r.BodySHA256)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	marks := func(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
+	var where []string
+	var args []any
+	for reg, hs := range hashes {
+		where = append(where, `(endpoint_id IS ? AND body_sha256 IN (`+marks(len(hs))+`))`)
+		args = append(append(args, register(reg)), hs...)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, n FROM (
+		SELECT id, ROW_NUMBER() OVER (PARTITION BY endpoint_id, body_sha256 ORDER BY id) AS n
+		FROM requests WHERE `+strings.Join(where, " OR ")+`
+	) WHERE id IN (`+marks(len(ids))+`)`, append(args, ids...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 // Deliveries counts the requests in r's register, up to and including r, that
 // carry the same body: 1 for a first delivery, 2 for the first retry and so
 // on. Requests without a body count as first deliveries.

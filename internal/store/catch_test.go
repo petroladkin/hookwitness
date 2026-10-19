@@ -273,6 +273,43 @@ func TestDeliveries(t *testing.T) {
 	}
 }
 
+// TestDeliveryNumbers: the numbers of a whole page from one query are the
+// ones Deliveries gives row by row, across registers sharing a body.
+func TestDeliveryNumbers(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	a, _ := s.CreateEndpoint(ctx, "/a")
+	b, _ := s.CreateEndpoint(ctx, "/b")
+	var rs []Request
+	for i := range 120 {
+		reg := a.ID
+		switch i % 5 {
+		case 3:
+			reg = b.ID
+		case 4:
+			reg = Unmatched
+		}
+		r := sample(reg, []string{"evt-1", "evt-2", "", "evt-3", "evt-1", "evt-1"}[i%6])
+		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+			t.Fatal(err)
+		}
+		rs = append(rs, *r)
+	}
+	got, err := s.DeliveryNumbers(ctx, rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rs {
+		want, _ := s.Deliveries(ctx, r)
+		if got[r.ID] != want {
+			t.Fatalf("request %d: %d, Deliveries says %d", r.ID, got[r.ID], want)
+		}
+	}
+	if n, err := s.DeliveryNumbers(ctx, nil); err != nil || len(n) != 0 {
+		t.Fatalf("no requests: %v %v", n, err)
+	}
+}
+
 // TestConcurrentAdds is AC-9 at the storage level: 100 concurrent writers to
 // one endpoint, every request stored with a distinct number.
 func TestConcurrentAdds(t *testing.T) {
