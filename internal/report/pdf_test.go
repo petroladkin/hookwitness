@@ -171,3 +171,16 @@ func TestPDFFooterFits(t *testing.T) {
 		}
 	}
 }
+
+// TestPDFRepeatNote: a verdict's note (the same signature as an earlier
+// request's) is drawn under it.
+func TestPDFRepeatNote(t *testing.T) {
+	var drawn []string
+	pdfTextHook = func(_, _, _ float64, s string) { drawn = append(drawn, s) }
+	defer func() { pdfTextHook = nil }()
+	render(t, PDF, goldenOptions(), fixture(t))
+	all := strings.Join(drawn, "\n")
+	if !strings.Contains(all, "same signature as #1: a replay, or a") {
+		t.Fatalf("the note is not drawn:\n%s", all)
+	}
+}
