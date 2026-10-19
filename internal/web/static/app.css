@@ -131,6 +131,7 @@ code{font:400 .9em/1 var(--f-data)}
 .row .t{font:400 11px/1.2 var(--f-data);color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
 .row .ev{grid-column:2 / 4;font:400 13px/1.3 var(--f-body);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row .ev .retry{color:var(--ink);font:600 10px/1 var(--f-data);letter-spacing:.06em;text-transform:uppercase;margin-left:6px}
+.row .m .repeat{color:var(--ink);font:600 10px/1 var(--f-data);letter-spacing:.06em;text-transform:uppercase;margin-left:6px;white-space:nowrap}
 .row.bad .no,.row.bad .m{color:var(--alarm)}
 .row .ev .tag{font:600 10px/1 var(--f-data);letter-spacing:.06em;text-transform:uppercase;margin-left:6px;color:var(--alarm)}
 .row .ev .tag.mark-ok{color:var(--ink)}
@@ -326,6 +327,7 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 .verdict{border-left:3px solid var(--ink);padding:2px 0 2px 12px}
 .verdict.verdict-fail{border-left-color:var(--alarm)}
 .verdict.verdict-nv{border-left:3px dashed var(--muted)}
+.verdict .note.repeat{color:var(--ink);font-weight:600}
 .vstamp{font:400 13px/1.2 var(--f-stamp);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
 .verdict-fail .vstamp{color:var(--alarm)}
 .verdict-nv .vstamp{color:var(--muted)}

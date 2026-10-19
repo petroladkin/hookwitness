@@ -25,7 +25,7 @@ func TestChangeSeqOrdersUpdates(t *testing.T) {
 	if err := s.UpdateOutcome(ctx, b.ID, 504, `{"action":"timeout"}`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetVerdicts(ctx, a.ID, "fail", `[{"result":"fail"}]`); err != nil {
+	if err := s.SetVerdicts(ctx, a.ID, "fail", `[{"result":"fail"}]`, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	// The clocks disagree with the commit order: a's change is stamped
@@ -77,7 +77,7 @@ func TestChangeSeqConcurrentWriters(t *testing.T) {
 			if i%2 == 0 {
 				s.UpdateOutcome(ctx, r.ID, 200, `{}`)
 			} else {
-				s.SetVerdicts(ctx, r.ID, "pass", `[]`)
+				s.SetVerdicts(ctx, r.ID, "pass", `[]`, nil, nil)
 			}
 		}()
 	}

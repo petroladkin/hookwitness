@@ -333,7 +333,11 @@ One request adds:
   1-based position), `label`, `result`, `reason`, `at`; a failed schema check
   adds `problems` (up to 20 of `{path, keyword, message}`, `path` a JSON
   pointer into the body) and `total`; a schema check that declares images
-  adds `images` (see below).
+  adds `images` (see below); a signature check adds `expected` and
+  `received`, and `note` when the signature passed and repeats one an
+  earlier kept request of the endpoint carried ("same signature as #N: a
+  replay, or a redelivery of the same signed request"; the result is not
+  changed by it).
 - `images` lists the pictures in the body: those a schema declares
   (`source: "schema"`), `data:image/...` strings no schema declares
   (`"data URL"`), and a body that is itself an image (`"body"`, `path` "").

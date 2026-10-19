@@ -131,6 +131,7 @@ func (s Secret) Set() bool { return s.Sealed != "" || s.Hash != "" }
 type Keyring interface {
 	Open(sealed string) (string, error)
 	MatchToken(record, value string) (bool, error) // an error: could not compare now
+	Digest(value string) string                    // a keyed digest of a received value
 }
 
 // SecretByName finds a secret.

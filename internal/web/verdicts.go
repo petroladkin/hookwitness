@@ -148,3 +148,28 @@ func verdictClass(v string) string {
 	}
 	return v
 }
+
+// repeatShort is a repeat note for a register row, where room is short:
+// "same sig #N" (the row's title has the whole note).
+func repeatShort(note string) string {
+	short, _, _ := strings.Cut(note, ":")
+	return strings.Replace(short, "same signature as", "same sig", 1)
+}
+
+// repeatNote is the first note on a request's verdicts (the same signature
+// as an earlier request's), or "".
+func repeatNote(verdicts string) string {
+	if !strings.Contains(verdicts, `"note":`) {
+		return ""
+	}
+	var vs []auth.Verdict
+	if json.Unmarshal([]byte(verdicts), &vs) != nil {
+		return ""
+	}
+	for _, v := range vs {
+		if v.Note != "" {
+			return v.Note
+		}
+	}
+	return ""
+}

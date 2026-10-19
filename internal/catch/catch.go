@@ -206,6 +206,7 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy, off bool) *plan
 	// body was not kept (those that need it say "not verifiable").
 	verdicts, f := cfg.Verify(er, req.ReceivedAt, !req.TooLarge, h.Keys)
 	req.Verdict, req.Verdicts = emulate.Overall(verdicts), emulate.VerdictsJSON(verdicts)
+	req.Signatures, req.Repeated = signatures(verdicts, h.Keys), repeated(verdicts)
 	if busy {
 		pl.out = busyOutcome()
 		req.Status, req.Outcome = pl.out.Status, pl.out.String()

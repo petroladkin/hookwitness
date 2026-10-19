@@ -117,7 +117,10 @@ that makes it false.
   register; request ids are never reused (they are the SSE event ids);
   every outcome or verdict change takes the next value of one change
   sequence (`requests.change_seq`, in commit order), from which the live
-  feed resumes (`Last-Event-ID: <request id>.<seq>`).
+  feed resumes (`Last-Event-ID: <request id>.<seq>`); the signatures kept
+  requests carried, as keyed digests (`signature_seen`), so a passing
+  signature that repeats an earlier kept request's gets a note (the
+  result unchanged).
 - `internal/setup` — setup files: `Export` (secret names and kinds only),
   `Parse` (format marker and version, unknown fields refused, paths and
   behaviours validated), `Endpoint.Config` (a replace keeps the values of

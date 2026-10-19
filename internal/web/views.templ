@@ -717,6 +717,9 @@ templ row(r rowView) {
 				if r.Verdict != "" {
 					<span class={ "tag", "verdict-" + verdictClass(r.Verdict) }>checks { r.Verdict }</span>
 				}
+				if r.Repeat != "" {
+					<span class="repeat" title={ r.Repeat }>{ repeatShort(r.Repeat) }</span>
+				}
 			</span>
 			<span class="t">{ clock(r.At) }</span>
 			<span class="ev">
@@ -931,6 +934,9 @@ templ verdicts(x exhibitView) {
 				<div class={ "verdict", "verdict-" + verdictClass(string(v.Result)) }>
 					<div class="vstamp">{ vstamp(v) }</div>
 					<p class="note">{ v.Reason }<span class="when">{ " · check " + strconv.Itoa(v.Check) + " · checked " + fullTime(v.At) }</span></p>
+					if v.Note != "" {
+						<p class="note repeat">{ v.Note }</p>
+					}
 					if len(v.Problems) > 0 {
 						<div class="scroll">
 							<table class="kv problems">

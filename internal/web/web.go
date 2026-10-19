@@ -648,6 +648,7 @@ func (h *Handler) row(req store.Request, n int, fresh bool) rowView {
 		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
 		Verdict:  req.Verdict,
 		Replays:  req.Replays,
+		Repeat:   repeatNote(req.Verdicts),
 	}
 	if len(req.BodySHA256) > 0 {
 		v.Group = hex.EncodeToString(req.BodySHA256[:6])
