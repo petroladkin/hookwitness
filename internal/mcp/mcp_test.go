@@ -394,3 +394,14 @@ func TestWaitEndsAtShutdown(t *testing.T) {
 		t.Fatalf("after the shutdown: %s, %d long-polls", a.text, e.polls.Load())
 	}
 }
+
+// TestDescribeNotes: a repeated signature's note reaches the summary line
+// in short.
+func TestDescribeNotes(t *testing.T) {
+	r := map[string]any{"no": float64(2), "method": "POST", "path": "/gh", "status": float64(200), "verdict": "pass",
+		"verdicts": []any{map[string]any{"label": "GitHub signature", "result": "pass", "reason": "signature matches",
+			"note": "same signature as #1: a replay, or a redelivery of the same signed request"}}}
+	if got := describe(r); got != "#2 POST /gh answered 200, verdict pass; same signature as #1" {
+		t.Fatalf("%q", got)
+	}
+}

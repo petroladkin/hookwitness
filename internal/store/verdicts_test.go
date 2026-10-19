@@ -52,7 +52,7 @@ func TestSetVerdictsLeavesTheAnswer(t *testing.T) {
 	r.Status, r.Outcome, r.Verdict = 202, `{"action":"reply"}`, "pass"
 	s.AddRequest(ctx, r, 10, nil)
 	before, _ := s.ChangeSeq(ctx)
-	if err := s.SetVerdicts(ctx, r.ID, "fail", `[{"result":"fail"}]`); err != nil {
+	if err := s.SetVerdicts(ctx, r.ID, "fail", `[{"result":"fail"}]`, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Request(ctx, r.ID)

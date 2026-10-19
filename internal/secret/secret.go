@@ -47,6 +47,7 @@ var ErrBusy = errors.New("too many token checks at once")
 type Key struct {
 	aead     cipher.AEAD
 	finger   []byte // subkey of fingerprints
+	digest   []byte // subkey of digests
 	tokenKey []byte // subkey of token hashes
 
 	mu      sync.Mutex
@@ -80,7 +81,7 @@ func Load(env, path string) (*Key, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Key{aead: aead, finger: sub("fingerprint"), tokenKey: sub("token"), notes: notes,
+	return &Key{aead: aead, finger: sub("fingerprint"), digest: sub("digest"), tokenKey: sub("token"), notes: notes,
 		matched: map[[32]byte]bool{}, slots: make(chan struct{}, max(1, runtime.GOMAXPROCS(0)/2))}, nil
 }
 
@@ -234,6 +235,15 @@ func (k *Key) Fingerprint(value string) string {
 	m := hmac.New(sha256.New, k.finger)
 	m.Write([]byte(value))
 	return hex.EncodeToString(m.Sum(nil))[:8]
+}
+
+// Digest identifies a value received in a request (a signature) so that
+// a repeat can be told without storing the value: keyed, and long enough
+// (64 hex characters) that two different values never share one.
+func (k *Key) Digest(value string) string {
+	m := hmac.New(sha256.New, k.digest)
+	m.Write([]byte(value))
+	return hex.EncodeToString(m.Sum(nil))
 }
 
 // Check is a value that identifies the key without revealing it, stored

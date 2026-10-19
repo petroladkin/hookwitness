@@ -46,6 +46,25 @@ func TestExhibitVerdicts(t *testing.T) {
 	}
 }
 
+// TestRepeatNoteShown: a repeated signature's note shows under its verdict
+// and, in short, on the register row.
+func TestRepeatNoteShown(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/gh")
+	note := "same signature as #1: a replay, or a redelivery of the same signed request"
+	vs := `[{"check":1,"label":"GitHub signature","result":"pass","reason":"signature matches","note":"` + note + `","at":"2026-10-11T20:13:02Z"}]`
+	r := e.add(t, ep.ID, "{}", func(r *store.Request) { r.Verdict, r.Verdicts = "pass", vs })
+	page := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(r.ID), nil).Body.String()
+	for _, want := range []string{
+		`<p class="note repeat">` + note + `</p>`,
+		`<span class="repeat" title="` + note + `">same sig #1</span>`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+}
+
 func signGitHub(secret, body string) string {
 	m := hmac.New(sha256.New, []byte(secret))
 	m.Write([]byte(body))
@@ -153,7 +172,7 @@ func TestLiveCounts(t *testing.T) {
 		t.Fatalf("after a request %v", c)
 	}
 	// A re-check turns the failed one into a pass: an update, then counts.
-	e.st.SetVerdicts(context.Background(), failed.ID, "pass", `[]`)
+	e.st.SetVerdicts(context.Background(), failed.ID, "pass", `[]`, nil, nil)
 	e.lv.Publish(ep.ID)
 	if c := next("for an update"); c["pass"] != 2 || c["fail"] != 0 || c["kept"] != 3 {
 		t.Fatalf("after an update %v", c)

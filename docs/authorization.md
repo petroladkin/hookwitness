@@ -152,6 +152,20 @@ Stripe and Standard Webhooks sign a timestamp. Hookwitness judges it against
 the time the request arrived, with a tolerance of 300 s by default. When you
 replay captured requests, tick **Accept any timestamp (replayed captures)**.
 
+### The same signature again
+
+A signature that passes and repeats one an earlier kept request of the
+endpoint carried gets a note under its verdict, for example "same signature
+as #1: a replay, or a redelivery of the same signed request". The register
+row shows "same sig #1". The verdict stays a pass: GitHub's own
+redeliveries send the same signature, and a receiver should accept them.
+Stripe and Standard Webhooks sign each retry again with a new timestamp, so
+their retries get no note; a note there means the same request was sent
+twice. A request that is no longer kept (pruned or cleared) is not compared.
+Hookwitness keeps only a keyed digest of each signature for this. A re-check
+works the notes out again. Bearer tokens and Basic credentials repeat on
+every request and are never noted.
+
 ## Enforce
 
 With **Enforce** off, a check only records its verdict, and the request gets

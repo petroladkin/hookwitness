@@ -632,6 +632,9 @@ func (p *pdfWriter) item(it Item) error {
 			if v.Received != "" || v.Expected != "" {
 				top = append(top, p.monoLines(margin+10, contentW-10, 7, cMuted, false, "received "+v.Received+" · expected "+v.Expected)...)
 			}
+			if v.Note != "" {
+				top = append(top, p.monoLines(margin+10, contentW-10, 7, cText, false, v.Note)...)
+			}
 			for _, pr := range v.Problems {
 				top = append(top, p.monoLines(margin+10, contentW-10, 7, cText, false, pointer(pr)+"  "+pr.Keyword+"  "+pr.Message)...)
 			}

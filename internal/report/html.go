@@ -239,7 +239,7 @@ const htmlSource = `{{define "head" -}}
 {{if .Verdicts}}<section class="verdicts">
 <h3>Verdicts</h3>
 <ul>
-{{range .Verdicts}}<li class="v-{{lower (printf "%s" .Result)}}"><b>{{.Label}}: {{.Result}}</b>{{if .Reason}} — {{.Reason}}{{end}}{{if or .Received .Expected}}<div class="sig">received <code>{{.Received}}</code> · expected <code>{{.Expected}}</code></div>{{end}}{{if .Problems}}
+{{range .Verdicts}}<li class="v-{{lower (printf "%s" .Result)}}"><b>{{.Label}}: {{.Result}}</b>{{if .Reason}} — {{.Reason}}{{end}}{{if or .Received .Expected}}<div class="sig">received <code>{{.Received}}</code> · expected <code>{{.Expected}}</code></div>{{end}}{{if .Note}}<div class="note">{{.Note}}</div>{{end}}{{if .Problems}}
 <table class="problems">{{range .Problems}}<tr><th>{{pointer .}}</th><td><code>{{.Keyword}}</code></td><td>{{.Message}}</td></tr>{{end}}</table>{{if gt .Total (len .Problems)}}<div class="more">and {{sub .Total (len .Problems)}} more</div>{{end}}{{end}}</li>
 {{end}}</ul>
 </section>
@@ -363,6 +363,7 @@ th,td{text-align:left;padding:4px 12px 4px 0;border-bottom:1px solid var(--rule)
 .problems{margin-top:4px}
 .problems th{font:400 12px var(--f-data)}
 .more{font-size:12px;color:var(--muted)}
+.verdicts .note{font-size:12px;font-weight:600}
 .note{font:400 12px/1.4 var(--f-data);text-transform:none;letter-spacing:0;color:var(--muted);overflow-wrap:anywhere}
 pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var(--rule);font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .json .k{color:var(--ink)}.json .s{color:var(--text)}.json .n{color:var(--ink-soft)}

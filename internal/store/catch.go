@@ -66,6 +66,20 @@ type Request struct {
 	Verdict    string // overall authorization verdict: pass, fail, n/v, or "" without checks
 	Verdicts   string // per check, as JSON (internal/auth.Verdict)
 	Replays    int    // replays kept of it
+
+	// Written only: the signatures it carried (keyed digests), and with
+	// them Repeated, which gets each check's earliest earlier kept request
+	// of the endpoint that carried the same one (check → its number) and
+	// returns the verdicts to store instead.
+	Signatures []Signature
+	Repeated   func(earlier map[int]int64) (verdicts string)
+}
+
+// Signature is a signature a request carried, as the keyed digest of the
+// value a check read.
+type Signature struct {
+	Check  int
+	Digest string
 }
 
 // Decide is called by AddRequest inside its transaction with the request's
@@ -248,10 +262,19 @@ func (s *Store) UpdateOutcome(ctx context.Context, id int64, status int, outcome
 }
 
 // changeRequest runs the update of request id, whose query ends in
-// "change_seq = ? WHERE id = ?" (args are the ones before), in one
-// transaction with the next value of the change sequence: one writer at a
-// time, so the sequence orders changes as they were committed.
+// "change_seq = ? WHERE id = ?" (args are the ones before), with the next
+// value of the change sequence.
 func (s *Store) changeRequest(ctx context.Context, id int64, query string, args ...any) error {
+	return s.changeRequestTx(ctx, id, func(tx *sql.Tx, seq int64) error {
+		_, err := tx.ExecContext(ctx, query, append(args, seq, id)...)
+		return err
+	})
+}
+
+// changeRequestTx runs fn, a change to one request, in one transaction with
+// the next value of the change sequence: one writer at a time, so the
+// sequence orders changes as they were committed.
+func (s *Store) changeRequestTx(ctx context.Context, id int64, fn func(tx *sql.Tx, seq int64) error) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -264,7 +287,7 @@ func (s *Store) changeRequest(ctx context.Context, id int64, query string, args 
 		WHERE key = 'feed.change_seq' RETURNING CAST(value AS INTEGER)`).Scan(&seq); err != nil {
 		return fmt.Errorf("change sequence: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, query, append(args, seq, id)...); err != nil {
+	if err := fn(tx, seq); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -306,10 +329,60 @@ func (s *Store) KeyCheck(ctx context.Context, check string) (same bool, err erro
 }
 
 // SetVerdicts replaces a stored request's verdicts (a re-check); the status
-// and outcome, what the sender saw, stay as they are.
-func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts string) error {
-	return s.changeRequest(ctx, id, `UPDATE requests SET verdict = ?, verdicts = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
-		verdict, verdicts, millis(time.Now()))
+// and outcome, what the sender saw, stay as they are. Its signatures are
+// replaced by sigs, and repeated (when given) notes the verdicts against the
+// earlier kept requests, as AddRequest does.
+func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts string, sigs []Signature, repeated func(map[int]int64) string) error {
+	return s.changeRequestTx(ctx, id, func(tx *sql.Tx, seq int64) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM signature_seen WHERE request_id = ?`, id); err != nil {
+			return err
+		}
+		var endpoint int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(endpoint_id, 0) FROM requests WHERE id = ?`, id).Scan(&endpoint); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil // gone meanwhile
+			}
+			return err
+		}
+		if v, err := noteRepeats(ctx, tx, endpoint, id, sigs, repeated); err != nil {
+			return err
+		} else if v != nil {
+			verdicts = *v
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE requests SET verdict = ?, verdicts = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
+			verdict, verdicts, millis(time.Now()), seq, id)
+		return err
+	})
+}
+
+// noteRepeats records request id's signatures and, when an earlier kept
+// request of the endpoint carried one of them, returns the verdicts
+// repeated gives for them (nil: none repeated).
+func noteRepeats(ctx context.Context, tx *sql.Tx, endpoint, id int64, sigs []Signature, repeated func(map[int]int64) string) (*string, error) {
+	if endpoint == Unmatched || len(sigs) == 0 {
+		return nil, nil
+	}
+	earlier := map[int]int64{}
+	for _, sg := range sigs {
+		var no int64
+		err := tx.QueryRowContext(ctx, `SELECT r.no FROM signature_seen s JOIN requests r ON r.id = s.request_id
+			WHERE s.endpoint_id = ? AND s.digest = ? AND s.request_id < ? ORDER BY s.request_id LIMIT 1`,
+			endpoint, sg.Digest, id).Scan(&no)
+		if err == nil {
+			earlier[sg.Check] = no
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("earlier signatures: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO signature_seen (request_id, endpoint_id, check_no, digest) VALUES (?, ?, ?, ?)`,
+			id, endpoint, sg.Check, sg.Digest); err != nil {
+			return nil, fmt.Errorf("record signatures: %w", err)
+		}
+	}
+	if len(earlier) == 0 || repeated == nil {
+		return nil, nil
+	}
+	v := repeated(earlier)
+	return &v, nil
 }
 
 // VerdictCounts counts an endpoint's kept requests by overall verdict;
@@ -582,6 +655,15 @@ func (s *Store) AddRequest(ctx context.Context, r *Request, keep int, decide Dec
 		SELECT id FROM requests WHERE endpoint_id IS ? ORDER BY id DESC LIMIT 1 OFFSET ?)`,
 		register(r.EndpointID), register(r.EndpointID), keep); err != nil {
 		return fmt.Errorf("prune requests: %w", err)
+	}
+	// After the prune: a request no longer kept is not named.
+	if v, err := noteRepeats(ctx, tx, r.EndpointID, id, r.Signatures, r.Repeated); err != nil {
+		return err
+	} else if v != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE requests SET verdicts = ? WHERE id = ?`, *v, id); err != nil {
+			return fmt.Errorf("note repeated signatures: %w", err)
+		}
+		r.Verdicts = *v
 	}
 	if err := tx.Commit(); err != nil {
 		return err

@@ -89,6 +89,7 @@
 **Verdicts**
 
 - GitHub signature: pass — signature matches
+  - same signature as #1: a replay, or a redelivery of the same signed request
 - JSON Schema by /type: pass — matches OrderPaid
 
 **Headers**

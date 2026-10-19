@@ -66,6 +66,7 @@ type rowView struct {
 	Outcome  emulate.Outcome
 	Verdict  string // overall authorization verdict, "" without checks
 	Replays  int    // replays kept of it
+	Repeat   string // the note of a signature an earlier request carried
 }
 
 // exhibitView is one request in full.

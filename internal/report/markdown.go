@@ -182,6 +182,9 @@ func (m *mdWriter) item(it Item) error {
 			if v.Received != "" || v.Expected != "" {
 				m.p("  - received ", mdCode(v.Received), ", expected ", mdCode(v.Expected), "\n")
 			}
+			if v.Note != "" {
+				m.p("  - ", mdText(v.Note), "\n")
+			}
 			for _, pr := range v.Problems {
 				m.p("  - ", mdCode(pointer(pr)), " ", mdCode(pr.Keyword), " ", mdText(pr.Message), "\n")
 			}

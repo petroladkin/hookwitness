@@ -3,6 +3,7 @@ package catch
 import (
 	"context"
 
+	"github.com/petroladkin/hookwitness/internal/auth"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
@@ -21,7 +22,28 @@ func Recheck(ctx context.Context, st *store.Store, ep store.Endpoint, keys emula
 	err = st.EachRequest(ctx, ep.ID, func(req store.Request) error {
 		vs, _ := cfg.Verify(toEmulate(req), req.ReceivedAt, !req.TooLarge, keys)
 		n++
-		return st.SetVerdicts(ctx, req.ID, emulate.Overall(vs), emulate.VerdictsJSON(vs))
+		// Oldest first: a request's repeats are told against the earlier
+		// requests' signatures as this re-check recorded them.
+		return st.SetVerdicts(ctx, req.ID, emulate.Overall(vs), emulate.VerdictsJSON(vs), signatures(vs, keys), repeated(vs))
 	})
 	return n, err
+}
+
+// signatures are the digests of the signatures the verdicts read, as the
+// store keeps them.
+func signatures(vs []auth.Verdict, keys emulate.Keyring) []store.Signature {
+	var out []store.Signature
+	for _, sg := range emulate.Signatures(vs, keys) {
+		out = append(out, store.Signature{Check: sg.Check, Digest: sg.Digest})
+	}
+	return out
+}
+
+// repeated notes the verdicts against the earlier requests the store found
+// with the same signatures.
+func repeated(vs []auth.Verdict) func(map[int]int64) string {
+	return func(earlier map[int]int64) string {
+		emulate.NoteRepeats(vs, earlier)
+		return emulate.VerdictsJSON(vs)
+	}
 }

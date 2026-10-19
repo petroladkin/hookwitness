@@ -765,8 +765,26 @@ func describe(r map[string]any) string {
 		if rs := reasons(r); len(rs) > 0 {
 			s += " (" + strings.Join(rs, "; ") + ")"
 		}
+		for _, n := range notes(r) {
+			s += "; " + n
+		}
 	}
 	return s
+}
+
+// notes are the verdicts' notes in short ("same signature as #1"); the
+// result keeps them whole.
+func notes(r map[string]any) []string {
+	var out []string
+	vs, _ := r["verdicts"].([]any)
+	for _, v := range vs {
+		vm, _ := v.(map[string]any)
+		if n, _ := vm["note"].(string); n != "" {
+			short, _, _ := strings.Cut(n, ":")
+			out = append(out, short)
+		}
+	}
+	return out
 }
 
 // ---- setup files -------------------------------------------------------------

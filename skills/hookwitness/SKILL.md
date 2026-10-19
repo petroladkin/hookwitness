@@ -79,6 +79,9 @@ PUT: `"schemas":[{"name":"OrderPaid","text":"<schema JSON as a string>"}]`,
 `"select":{"from":"body","key":"/type","map":[{"value":"order.paid","schema":"OrderPaid"}],"default":"V1"}`
 (`default`, one name or a list, covers unmapped or missing values; without it they are `n/c`).
 A failed schema verdict lists `problems` (`path`, `keyword`, `message`).
+A passing signature that repeats an earlier kept request's carries `note`
+("same signature as #N: …"): a sender that re-signs its retries (Stripe,
+Standard Webhooks) should never get one; GitHub's redeliveries do.
 No schema yet? Catch one real delivery, then
 `POST $API/endpoints/$ID/schema-draft` with `{"requests":[<id>]}` returns a draft
 (`name`, `text`; nothing stored) to review and PUT into `schemas`.
