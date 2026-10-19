@@ -4,15 +4,22 @@
 MODULE  := github.com/petroladkin/hookwitness
 VERSION ?= $(shell git describe --tags --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+# Every archive entry's time: the commit's, so archives are reproducible.
+SOURCE_DATE_EPOCH ?= $(shell git log -1 --format=%ct 2>/dev/null || echo 0)
 LDFLAGS := -s -w -X $(MODULE)/internal/version.Version=$(VERSION) -X $(MODULE)/internal/version.Commit=$(COMMIT)
 
 IMAGE   ?= hookwitness:dev
 
-.PHONY: build image image-smoke api-smoke docs-check media js-test check generate templ-check vet fmt-check staticcheck test notices hooks clean
+.PHONY: build dist image image-smoke api-smoke docs-check media js-test check generate templ-check vet fmt-check staticcheck test notices hooks clean
 
 ## build: one static binary in bin/ (no cgo)
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/hookwitness ./cmd/hookwitness
+
+## dist: the release archives for linux and darwin x amd64 and arm64, and SHA256SUMS, in dist/ (reproducible)
+dist:
+	rm -rf dist
+	go run ./scripts/dist -version "$(VERSION)" -commit "$(COMMIT)" -time "$(SOURCE_DATE_EPOCH)" -ldflags "$(LDFLAGS)" -out dist
 
 ## image: the container image for this machine's platform (needs Docker)
 image:

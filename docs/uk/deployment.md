@@ -202,6 +202,38 @@ docker run -d --name hookwitness -p 8080:8080 -p 127.0.0.1:8081:8081 \
 під префікс на порт для вебхуків, вона перекриє такий ендпоінт, і він нічого
 не ловитиме; сервер називає такі ендпоінти в попередженні під час запуску.
 
+## Завантажити бінарник
+
+Починаючи з 1.0, кожен реліз має архів для Linux і macOS на amd64 та arm64,
+`hookwitness_<version>_<os>_<arch>.tar.gz`, і файл `SHA256SUMS`. Архів
+розпаковується в теку з тією самою назвою, де лежать бінарник, `LICENSE`,
+`THIRD-PARTY-NOTICES.md` і `README.md`. Бінарник статичний (зібраний без
+cgo) і нічого іншого не потребує.
+
+<!-- docs-check: skip: downloads from a published release -->
+```sh
+v=1.0.0 os=linux arch=amd64   # os: linux or darwin; arch: amd64 or arm64
+base=https://github.com/petroladkin/hookwitness/releases/download/v$v
+curl -fsSLO "$base/hookwitness_${v}_${os}_${arch}.tar.gz"
+curl -fsSLO "$base/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS   # macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
+gh attestation verify "hookwitness_${v}_${os}_${arch}.tar.gz" --owner petroladkin
+tar -xzf "hookwitness_${v}_${os}_${arch}.tar.gz"
+"hookwitness_${v}_${os}_${arch}/hookwitness" version
+```
+
+`SHA256SUMS` показує, що файл завантажився цілим. `gh attestation verify`
+([GitHub CLI](https://cli.github.com/)) показує, що архів зібрав CI цього
+репозиторію з тегу релізу. `version` друкує тег і його коміт, `v1.0.0 (…)`.
+Далі покладіть бінарник у `PATH` і запустіть `hookwitness serve`, як у
+розділі [Збірка з вихідного коду](#збірка-з-вихідного-коду).
+
+Бінарник для macOS не підписаний Apple. `curl` не позначає завантажене,
+тож бінарник вище запускається одразу; завантажений браузером потрапляє в
+карантин, і macOS відмовляється його відкрити. Зніміть позначку один раз:
+`xattr -d com.apple.quarantine hookwitness`. Походження бінарника доводить
+атестація.
+
 ## Збірка з вихідного коду
 
 Потрібен Go 1.27 або новіший. Без клону `go install

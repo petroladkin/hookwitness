@@ -202,6 +202,38 @@ An endpoint may now use a path under `/admin`. If the admin later moves back
 under the prefix on the catch port, it covers such an endpoint, which then
 catches nothing; the server names those endpoints in a warning at start.
 
+## Download a binary
+
+From 1.0 on, every release carries an archive for Linux and macOS on amd64
+and arm64, `hookwitness_<version>_<os>_<arch>.tar.gz`, and a `SHA256SUMS`
+file. An archive unpacks into a directory of the same name holding the
+binary, `LICENSE`, `THIRD-PARTY-NOTICES.md` and `README.md`. The binary is
+static (built without cgo) and needs nothing else.
+
+<!-- docs-check: skip: downloads from a published release -->
+```sh
+v=1.0.0 os=linux arch=amd64   # os: linux or darwin; arch: amd64 or arm64
+base=https://github.com/petroladkin/hookwitness/releases/download/v$v
+curl -fsSLO "$base/hookwitness_${v}_${os}_${arch}.tar.gz"
+curl -fsSLO "$base/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS   # macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
+gh attestation verify "hookwitness_${v}_${os}_${arch}.tar.gz" --owner petroladkin
+tar -xzf "hookwitness_${v}_${os}_${arch}.tar.gz"
+"hookwitness_${v}_${os}_${arch}/hookwitness" version
+```
+
+`SHA256SUMS` shows the download is whole. `gh attestation verify` (the
+[GitHub CLI](https://cli.github.com/)) shows the archive was built by this
+repository's CI from the release tag. `version` prints the tag and its
+commit, `v1.0.0 (…)`. Then put the binary on your `PATH` and run
+`hookwitness serve`, as in [Build from source](#build-from-source).
+
+The macOS binary is not signed by Apple. `curl` does not mark what it
+downloads, so the binary above runs as is; one downloaded with a browser is
+quarantined and macOS refuses to open it. Remove the mark once:
+`xattr -d com.apple.quarantine hookwitness`. The attestation is what proves
+where the binary came from.
+
 ## Build from source
 
 Requires Go 1.27 or newer. Without a clone, `go install

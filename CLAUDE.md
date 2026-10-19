@@ -88,6 +88,9 @@ on/off state and the values of same-named secrets) through the import dialog
 `hookwitness apply`; a secret without its value is "not set": its checks give
 n/v "secret NAME not set" and never refuse. A container image (distroless, non-root, data
 in the `/data` volume) is built, smoke-tested and published to GHCR by CI.
+Release tags also get binaries: archives for linux and darwin × amd64 and
+arm64 with `SHA256SUMS` and a provenance attestation, on a draft Release
+the release step publishes (`make dist`).
 Released: 0.1.0 (`CHANGELOG.md`); the documentation tells users to run the
 image `:0.1` (`TestDocsImageTag`), and `main` holds the tagged releases.
 This section must describe what is true now — update it in the same change
@@ -243,6 +246,9 @@ that makes it false.
   assets (web vendor files and report fonts); the documentation: every page
   of `docs/` has its twin in `docs/uk/` (except `api.md`) with the same `sh`
   blocks, relative links and anchors resolve, every image is used.
+- `scripts/dist` — `make dist`: cross-builds and packs the release archives
+  reproducibly (fixed entry time from the commit, owner 0, sorted entries,
+  no gzip name or time) and writes `SHA256SUMS`.
 - `scripts/hooks` — git hooks; `scripts/notices.sh` — notices generator;
   `scripts/dco.sh` — every commit of a range signed off by its author;
   `scripts/docker-smoke.sh` — the container scenario (README's `docker run`,
@@ -274,7 +280,12 @@ that makes it false.
   (`vX.Y.Z`, `vX.Y.Z-rc.N`; other tags start nothing) the job `publish`,
   the only one with write permissions, pushes the amd64+arm64 image to GHCR
   with SBOM and provenance attestations attached as referrers (not in the
-  image index); a release candidate gets only its own tag. Actions are
+  image index); a release candidate gets only its own tag. The job `dist`
+  (read-only, every PR and push) runs `make dist` twice and compares the
+  archives; on a release tag only, the job `binaries` (the only one with
+  `contents: write`) attests the archives and puts them with `SHA256SUMS`
+  on a draft Release of the tag (a prerelease for an rc), never changing a
+  published one. Actions are
   pinned to commit SHAs; `.github/dependabot.yml` updates them, the Go modules
   and the base images weekly. `.github/ISSUE_TEMPLATE/` (bug, feature, no
   blank issues, security reported privately) and the PR template carry the
@@ -290,6 +301,10 @@ that makes it false.
 - `make notices` — regenerate `THIRD-PARTY-NOTICES.md` after a dependency
   or vendored-asset change; only permissive licenses are accepted.
 - `make hooks` — enable the git hooks.
+- `make dist` — the release archives in `dist/` (linux and darwin × amd64
+  and arm64, `hookwitness_<version>_<os>_<arch>.tar.gz` with the binary,
+  `LICENSE`, `THIRD-PARTY-NOTICES.md`, `README.md`) and `SHA256SUMS`;
+  reproducible: run twice on one commit, the archives are byte-identical.
 - `make image` — the container image `hookwitness:dev` (Docker); `make
   image-smoke` — the container scenario against it (Docker, curl, openssl).
 - `make api-smoke` — the API scenario against a freshly built binary (curl,
@@ -333,7 +348,12 @@ Go, sqlite, templ, HTMX, Server-Sent Events, Docker.
   `:X.Y` there, never on `dev` before the image exists; `CHANGELOG.md` gets
   the version's entry, curated from `feat`/`fix`/`perf` commits), a
   `vX.Y.Z-rc.N` tag checked first, then the merge into `main`, the tag
-  `vX.Y.Z` on it, and the merge back into `dev`. A fix to a release is a
+  `vX.Y.Z` on it, and the merge back into `dev`. Each tag's CI leaves a draft
+  Release; before publishing it (`gh release edit <tag> --draft=false
+  --notes-file …`, an rc as a prerelease) check its assets: four archives
+  and `SHA256SUMS`, `sha256sum -c SHA256SUMS` passes, `gh attestation verify
+  <archive> --owner petroladkin` passes, and the linux/amd64 and
+  darwin/arm64 binaries' `version` print the tag. A fix to a release is a
   `hotfix/*` branch from `main`, released as the next patch. A pushed tag is
   never moved or deleted: fix forward.
 - Tests that measure wall-clock time assert only what runner load cannot
