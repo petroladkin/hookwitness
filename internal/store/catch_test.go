@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"strings"
 	"testing"
 	"time"
 )
@@ -307,6 +308,51 @@ func TestDeliveryNumbers(t *testing.T) {
 	}
 	if n, err := s.DeliveryNumbers(ctx, nil); err != nil || len(n) != 0 {
 		t.Fatalf("no requests: %v %v", n, err)
+	}
+}
+
+// TestEachSelectedPagesByBytes: bodies are read in pages of about
+// PageBytes (at least one request), and every request is visited once, in
+// order.
+func TestEachSelectedPagesByBytes(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	ep, _ := s.CreateEndpoint(ctx, "/big")
+	var ids []int64
+	for i := range 10 {
+		r := sample(ep.ID, strings.Repeat(string(rune('a'+i)), 400))
+		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, r.ID)
+	}
+	big := sample(ep.ID, strings.Repeat("z", 5000)) // over the budget alone
+	if err := s.AddRequest(ctx, big, 1000, nil); err != nil {
+		t.Fatal(err)
+	}
+	ids = append(ids, big.ID)
+	oldBytes, oldHook := PageBytes, pageHook
+	t.Cleanup(func() { PageBytes, pageHook = oldBytes, oldHook })
+	PageBytes = 1000
+	var pages []int
+	// A page ends with the request that reaches the budget: 3 × 400 bytes,
+	// and the 5000-byte one ends the page it joins.
+	pageHook = func(rows, _ int) { pages = append(pages, rows) }
+	var seen []int64
+	if err := s.EachRequest(ctx, ep.ID, func(r Request) error { seen = append(seen, r.ID); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(seen) != fmt.Sprint(ids) {
+		t.Fatalf("visited %v, want %v", seen, ids)
+	}
+	if fmt.Sprint(pages) != "[3 3 3 2 0]" {
+		t.Fatalf("pages %v", pages)
+	}
+	// Without bodies the pages are by count only.
+	pages = nil
+	s.EachSelected(ctx, ep.ID, Selection{}, false, func(Request) error { return nil })
+	if fmt.Sprint(pages) != "[11]" {
+		t.Fatalf("pages without bodies %v", pages)
 	}
 }
 

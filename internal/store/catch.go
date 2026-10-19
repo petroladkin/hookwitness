@@ -312,8 +312,16 @@ type Selection struct {
 	Through  int64 // no request with a larger id; 0: no bound
 }
 
+// PageBytes bounds the bodies EachSelected holds at once: a page ends once
+// its bodies reach it (at least one request a page). A variable for tests.
+var PageBytes = 64 << 20
+
+// pageHook, when set (by tests), is told each page's size.
+var pageHook func(rows, bodyBytes int)
+
 // EachSelected calls fn for the selected requests of a register, oldest
-// first, reading them in pages so that a long register is never held whole;
+// first, reading them in pages so that a long register is never held whole
+// (at most 200 requests and, with bodies, about PageBytes of them a page);
 // withBody reads the bodies too.
 func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selection, withBody bool, fn func(Request) error) error {
 	const page = 200
@@ -348,6 +356,7 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 			return fmt.Errorf("read requests: %w", err)
 		}
 		var batch []Request
+		held, cut := 0, false
 		for rows.Next() {
 			r, err := scanRequest(rows, withBody)
 			if err != nil {
@@ -355,11 +364,18 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 				return err
 			}
 			batch = append(batch, r)
+			if held += len(r.Body); held >= PageBytes {
+				cut = true // the rest of the page in the next query
+				break
+			}
 		}
 		err = rows.Err()
 		rows.Close()
 		if err != nil {
 			return err
+		}
+		if pageHook != nil {
+			pageHook(len(batch), held)
 		}
 		for _, r := range batch {
 			if err := fn(r); err != nil {
@@ -367,7 +383,7 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 			}
 			args[1] = r.ID
 		}
-		if len(batch) < page {
+		if len(batch) < page && !cut {
 			return nil
 		}
 	}
