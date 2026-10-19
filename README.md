@@ -23,10 +23,12 @@ docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
 - **Evidence for the ticket.** A Markdown, HTML or PDF report of what arrived
   and what was answered.
 
-Self-hosted: a container image, or one binary built from source. **Status:
-0.1, the first release.** The catcher, scripted replies, verdicts, reports,
-the REST API and the MCP server work; until 1.0, a minor version (0.2) may
-change the API or the flags, and the [changelog](CHANGELOG.md) says how.
+Self-hosted: a container image, or one binary
+([download](docs/deployment.md#download-a-binary) for Linux or macOS, or
+build it from source). **Status: 0.1, the first release.** The catcher,
+scripted replies, verdicts, reports, the REST API and the MCP server work;
+until 1.0, a minor version (0.2) may change the API or the flags, and the
+[changelog](CHANGELOG.md) says how.
 
 ## A short tour
 
