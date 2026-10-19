@@ -91,7 +91,8 @@ code{font:400 .9em/1 var(--f-data)}
 .endpoint label{font:600 10px/1 var(--f-data);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 .endpoint select{font:400 14px/1.2 var(--f-data);color:var(--text);background:transparent;border:0;border-bottom:1px solid var(--grid-major);padding:4px 18px 4px 0;max-width:min(60vw,420px);cursor:pointer}
 .endpoint select option{background:var(--paper);color:var(--text)}
-.status{margin-left:auto;display:flex;align-items:center;gap:14px;font:400 12px/1 var(--f-data);color:var(--muted)}
+/* The status row wraps on a narrow screen, staying right-aligned. */
+.status{margin-left:auto;display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:10px 14px;max-width:100%;font:400 12px/1 var(--f-data);color:var(--muted)}
 .rec{display:inline-flex;align-items:center;gap:7px;color:var(--ink);font-weight:600;letter-spacing:.08em;text-transform:uppercase;font-size:11px}
 .rec i{width:8px;height:8px;border-radius:50%;background:var(--muted)}
 .rec[data-state="live"] i{background:var(--alarm);animation:blink 1.6s steps(2,start) infinite}
@@ -174,7 +175,9 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
 .too{border:1px dashed var(--alarm);color:var(--alarm);padding:14px 16px;font:400 13px/1.5 var(--f-body);max-width:72ch}
 
 /* endpoints page */
-.sheet{max-width:980px;padding-block:24px 64px;border-top:1px solid var(--grid-major)}
+/* A sheet spans the masthead's column, its rule under the masthead too;
+   text and forms inside keep their own reading widths. */
+.sheet{padding-block:24px 64px;border-top:1px solid var(--grid-major)}
 .title{font:400 40px/1 var(--f-stamp);color:var(--ink);margin:6px 0 12px;text-wrap:balance}
 .lede{max-width:64ch;color:var(--muted);margin:0 0 24px}
 /* One toolbar per list page: what the list is on the left, its one main
@@ -387,7 +390,8 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 .theme button:hover{color:var(--ink)}
 .theme button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
 .sub{font:600 11px/1 var(--f-data);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:32px 0 6px}
-.login .card{max-width:420px}
+/* The login form stands alone, centred in the column. */
+.login>*{max-width:420px;margin-inline:auto}
 .secret-once{font-family:var(--f-data);width:100%}
 
 /* An endpoint's on/off switch, and an endpoint that is off. */
