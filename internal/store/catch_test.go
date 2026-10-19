@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
