@@ -243,11 +243,50 @@ func (s *Store) updateEndpoint(ctx context.Context, query string, args ...any) e
 // UpdateOutcome replaces a stored request's outcome once the action has run
 // (measured delay, how long a sender waited, a render error).
 func (s *Store) UpdateOutcome(ctx context.Context, id int64, status int, outcome string) error {
+	return s.changeRequest(ctx, id, `UPDATE requests SET status = ?, outcome = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
+		status, outcome, millis(time.Now()))
+}
+
+// changeRequest runs the update of request id, whose query ends in
+// "change_seq = ? WHERE id = ?" (args are the ones before), in one
+// transaction with the next value of the change sequence: one writer at a
+// time, so the sequence orders changes as they were committed.
+func (s *Store) changeRequest(ctx context.Context, id int64, query string, args ...any) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
-	_, err := s.db.ExecContext(ctx, `UPDATE requests SET status = ?, outcome = ?, changed_at = ? WHERE id = ?`,
-		status, outcome, millis(time.Now()), id)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var seq int64
+	if err := tx.QueryRowContext(ctx, `UPDATE settings SET value = CAST(value AS INTEGER) + 1
+		WHERE key = 'feed.change_seq' RETURNING CAST(value AS INTEGER)`).Scan(&seq); err != nil {
+		return fmt.Errorf("change sequence: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, query, append(args, seq, id)...); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ChangeSeq is the newest value of the change sequence: a page rendered
+// now has seen every change up to it.
+func (s *Store) ChangeSeq(ctx context.Context) (int64, error) {
+	return changeSeq(ctx, s.db)
+}
+
+type queryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func changeSeq(ctx context.Context, q queryer) (int64, error) {
+	var v int64
+	err := q.QueryRowContext(ctx, `SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'feed.change_seq'`).Scan(&v)
+	if err != nil {
+		return 0, fmt.Errorf("change sequence: %w", err)
+	}
+	return v, nil
 }
 
 // KeyCheck records the check value of the secret key the first time and
@@ -269,11 +308,8 @@ func (s *Store) KeyCheck(ctx context.Context, check string) (same bool, err erro
 // SetVerdicts replaces a stored request's verdicts (a re-check); the status
 // and outcome, what the sender saw, stay as they are.
 func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts string) error {
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
-	_, err := s.db.ExecContext(ctx, `UPDATE requests SET verdict = ?, verdicts = ?, changed_at = ? WHERE id = ?`,
-		verdict, verdicts, millis(time.Now()), id)
-	return err
+	return s.changeRequest(ctx, id, `UPDATE requests SET verdict = ?, verdicts = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
+		verdict, verdicts, millis(time.Now()))
 }
 
 // VerdictCounts counts an endpoint's kept requests by overall verdict;
@@ -390,10 +426,26 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 }
 
 // RequestsChanged lists a register's requests up to upToID whose outcome
-// was updated at or after since (unix ms), oldest first, without bodies.
-func (s *Store) RequestsChanged(ctx context.Context, endpointID, upToID, since int64) ([]Request, error) {
-	return s.listRequests(ctx, `SELECT `+requestColumns+` FROM requests
-		WHERE endpoint_id IS ? AND id <= ? AND changed_at >= ? ORDER BY id`, register(endpointID), upToID, since)
+// or verdicts changed after the change sequence value afterSeq, oldest
+// first, without bodies, and the value they are complete up to: the
+// sequence is read first, so every change up to it is committed and listed;
+// a later one is left for the next call (also when it changed a listed row
+// again).
+func (s *Store) RequestsChanged(ctx context.Context, endpointID, upToID, afterSeq int64) ([]Request, int64, error) {
+	seq, err := s.ChangeSeq(ctx)
+	if err != nil {
+		return nil, afterSeq, err
+	}
+	if seq <= afterSeq { // nothing new; a value from another database is pulled back
+		return nil, seq, nil
+	}
+	reqs, err := s.listRequests(ctx, `SELECT `+requestColumns+` FROM requests
+		WHERE endpoint_id IS ? AND id <= ? AND change_seq > ? AND change_seq <= ? ORDER BY id`,
+		register(endpointID), upToID, afterSeq, seq)
+	if err != nil {
+		return nil, afterSeq, err
+	}
+	return reqs, seq, nil
 }
 
 // DeleteEndpoint removes an endpoint and every request it caught.
