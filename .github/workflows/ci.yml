@@ -89,14 +89,17 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      # The first result goes outside the clone: an untracked file there
+      # would mark the second build's binaries as built from a changed tree.
       - run: |
           make dist
-          mv dist dist.first
+          mv dist "$RUNNER_TEMP/first"
           make dist
-          for f in dist/*; do cmp "$f" "dist.first/${f#dist/}"; done
+          for f in dist/*; do cmp "$f" "$RUNNER_TEMP/first/${f#dist/}"; done
           (cd dist && sha256sum -c SHA256SUMS)
-          mkdir run && tar -xzf dist/hookwitness_*_linux_amd64.tar.gz -C run --strip-components 1
-          run/hookwitness version
+          mkdir "$RUNNER_TEMP/run"
+          tar -xzf dist/hookwitness_*_linux_amd64.tar.gz -C "$RUNNER_TEMP/run" --strip-components 1
+          "$RUNNER_TEMP/run/hookwitness" version
 
   # Both platforms pushed to GHCR, from dev (:edge) and release tags only;
   # the one job that may write packages and attestations.
