@@ -201,7 +201,7 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy, off bool) *plan
 		cfg = emulate.DefaultConfig()
 	}
 	pl.cfg = cfg
-	er := EmulateRequest(*req)
+	er := toEmulate(*req)
 	// Every authorization check gives its verdict, also on a request whose
 	// body was not kept (those that need it say "not verifiable").
 	verdicts, f := cfg.Verify(er, req.ReceivedAt, !req.TooLarge, h.Keys)
@@ -244,8 +244,9 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy, off bool) *plan
 	return pl
 }
 
-// EmulateRequest is what checks and templates see of a stored request.
-func EmulateRequest(r store.Request) emulate.Request {
+// toEmulate is what checks and templates see of a stored request: one
+// conversion for catching, re-checking and drafting.
+func toEmulate(r store.Request) emulate.Request {
 	er := emulate.Request{Method: r.Method, Path: r.Path, RawQuery: r.RawQuery, Body: r.Body}
 	for _, hd := range r.Headers {
 		er.Headers = append(er.Headers, emulate.Header{Name: hd.Name, Value: hd.Value})

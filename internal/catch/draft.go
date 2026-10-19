@@ -13,6 +13,22 @@ import (
 // MaxDraftRequests bounds how many requests one schema draft reads.
 const MaxDraftRequests = 100
 
+// MaxDraftBytes bounds the bodies one schema draft holds at once (a
+// variable for tests).
+var MaxDraftBytes = 64 << 20
+
+// DraftBytesMessage says why a draft over MaxDraftBytes is refused.
+func DraftBytesMessage() string {
+	return fmt.Sprintf("at most %s of bodies at a time", sizeText(MaxDraftBytes))
+}
+
+func sizeText(n int) string {
+	if n >= 1<<20 && n%(1<<20) == 0 {
+		return fmt.Sprintf("%d MiB", n>>20)
+	}
+	return fmt.Sprintf("%d bytes", n)
+}
+
 // SchemaDraft is a JSON Schema drafted from an endpoint's requests, with
 // what the person needs to save it: a name, the discriminator check that
 // could map to it, and, when a schema of that name exists, how the draft
@@ -34,6 +50,13 @@ func DraftSchema(cfg emulate.Config, path string, reqs []store.Request) (SchemaD
 	}
 	if len(reqs) > MaxDraftRequests {
 		return SchemaDraft{}, fmt.Errorf("at most %d requests at a time", MaxDraftRequests)
+	}
+	held := 0
+	for _, r := range reqs {
+		held += len(r.Body)
+	}
+	if held > MaxDraftBytes {
+		return SchemaDraft{}, errors.New(DraftBytesMessage())
 	}
 	var bodies [][]byte
 	var ers []emulate.Request
@@ -77,6 +100,7 @@ func DraftRequests(ctx context.Context, st *store.Store, endpointID int64, ids [
 	if len(ids) > MaxDraftRequests {
 		return nil, fmt.Sprintf("at most %d requests at a time", MaxDraftRequests), nil
 	}
+	held := 0
 	for _, id := range ids {
 		r, err := st.Request(ctx, id)
 		if errors.Is(err, store.ErrNotFound) || (err == nil && r.EndpointID != endpointID) {
@@ -85,17 +109,12 @@ func DraftRequests(ctx context.Context, st *store.Store, endpointID int64, ids [
 		if err != nil {
 			return nil, "", err
 		}
+		if held += len(r.Body); held > MaxDraftBytes {
+			return nil, DraftBytesMessage(), nil
+		}
 		reqs = append(reqs, r)
 	}
 	return reqs, "", nil
-}
-
-func toEmulate(r store.Request) emulate.Request {
-	er := emulate.Request{Method: r.Method, Path: r.Path, RawQuery: r.RawQuery, Body: r.Body}
-	for _, hd := range r.Headers {
-		er.Headers = append(er.Headers, emulate.Header{Name: hd.Name, Value: hd.Value})
-	}
-	return er
 }
 
 // DiscriminatorValue is the value a request carries for the endpoint's

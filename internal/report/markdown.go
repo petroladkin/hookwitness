@@ -310,7 +310,7 @@ func mdCell(s string) string {
 // mdText escapes the characters that would start Markdown or HTML.
 func mdText(s string) string {
 	var sb strings.Builder
-	for _, r := range s {
+	for _, r := range spaceBreaks.Replace(s) {
 		switch r {
 		case '\\', '`', '*', '_', '[', ']', '<', '>', '~':
 			sb.WriteByte('\\')
@@ -325,3 +325,7 @@ func oneLine(s string) string {
 }
 
 var lineBreaks = strings.NewReplacer("\r\n", " ⏎ ", "\n", " ⏎ ", "\r", " ⏎ ")
+
+// spaceBreaks keeps a line of running text on one line: a break inside it
+// would end a list item or a paragraph.
+var spaceBreaks = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")

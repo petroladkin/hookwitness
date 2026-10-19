@@ -155,6 +155,9 @@ that makes it false.
   by digest);
   finding them in a request (schema verdicts, data:image strings, an image
   body) and reading one by JSON pointer.
+- `internal/jsonptr` — JSON pointers (RFC 6901): parse, format, resolve;
+  array indexes without a sign or a leading zero. Every lookup at a pointer
+  (schema selection, problem paths, the `json=` filter, images) uses it.
 - `internal/payload` — a body and a query prepared for people: JSON
   pretty-printed with tokens tagged (class, JSON pointer; indentation capped
   at 32 levels, no pointer past 128, so deep bodies stay small), the text test, the

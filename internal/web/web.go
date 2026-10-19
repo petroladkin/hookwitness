@@ -609,22 +609,23 @@ func (h *Handler) rows(ctx context.Context, reqs []store.Request) ([]rowView, bo
 	if more {
 		reqs = reqs[:pageSize]
 	}
+	nums, err := deliveryNumbers(h.store, ctx, reqs)
+	if err != nil {
+		return nil, false, err
+	}
 	out := make([]rowView, 0, len(reqs))
 	for _, req := range reqs {
-		v, err := h.row(ctx, req, false)
-		if err != nil {
-			return nil, false, err
-		}
-		out = append(out, v)
+		out = append(out, h.row(req, nums[req.ID], false))
 	}
 	return out, more, nil
 }
 
-func (h *Handler) row(ctx context.Context, req store.Request, fresh bool) (rowView, error) {
-	n, err := h.store.Deliveries(ctx, req)
-	if err != nil {
-		return rowView{}, err
-	}
+// deliveryNumbers numbers the deliveries of a page of rows in one query (a
+// seam for the test that counts them).
+var deliveryNumbers = (*store.Store).DeliveryNumbers
+
+// row is one request of a register; n is its delivery number.
+func (h *Handler) row(req store.Request, n int, fresh bool) rowView {
 	v := rowView{
 		ID:       req.ID,
 		No:       req.No,
@@ -654,7 +655,7 @@ func (h *Handler) row(ctx context.Context, req store.Request, fresh bool) (rowVi
 			v.Detail = "?" + req.RawQuery + "  " + v.Detail
 		}
 	}
-	return v, nil
+	return v
 }
 
 func contentType(hs []store.Header) string {
@@ -783,11 +784,8 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	// since: outcomes updated from then on are sent again (as "update"
 	// events, without an id) so rows show what was finally done.
 	since := time.Now().UnixMilli()
-	writeRow := func(req store.Request, event string) bool {
-		v, err := h.row(r.Context(), req, event == "request")
-		if err != nil {
-			return false
-		}
+	writeRow := func(req store.Request, n int, event string) bool {
+		v := h.row(req, n, event == "request")
 		var buf bytes.Buffer
 		if err := row(v).Render(r.Context(), &buf); err != nil {
 			return false
@@ -824,21 +822,28 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 		now := time.Now().UnixMilli()
 		wrote := false
 		reqs, err := h.store.RequestsAfter(r.Context(), reg, last)
+		var changed []store.Request
 		if err == nil && last > 0 {
-			var changed []store.Request
 			changed, err = h.store.RequestsChanged(r.Context(), reg, last, since)
-			for _, req := range changed {
-				if !writeRow(req, "update") {
-					return false
-				}
-				wrote = true
+		}
+		var nums map[int64]int
+		if err == nil && len(changed)+len(reqs) > 0 {
+			nums, err = deliveryNumbers(h.store, r.Context(), append(changed[:len(changed):len(changed)], reqs...))
+		}
+		for _, req := range changed {
+			if err != nil {
+				break
 			}
+			if !writeRow(req, nums[req.ID], "update") {
+				return false
+			}
+			wrote = true
 		}
 		for _, req := range reqs {
 			if err != nil {
 				break
 			}
-			if !writeRow(req, "request") {
+			if !writeRow(req, nums[req.ID], "request") {
 				return false
 			}
 			last, wrote = req.ID, true

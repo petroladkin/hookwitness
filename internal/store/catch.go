@@ -312,8 +312,16 @@ type Selection struct {
 	Through  int64 // no request with a larger id; 0: no bound
 }
 
+// PageBytes bounds the bodies EachSelected holds at once: a page ends once
+// its bodies reach it (at least one request a page). A variable for tests.
+var PageBytes = 64 << 20
+
+// pageHook, when set (by tests), is told each page's size.
+var pageHook func(rows, bodyBytes int)
+
 // EachSelected calls fn for the selected requests of a register, oldest
-// first, reading them in pages so that a long register is never held whole;
+// first, reading them in pages so that a long register is never held whole
+// (at most 200 requests and, with bodies, about PageBytes of them a page);
 // withBody reads the bodies too.
 func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selection, withBody bool, fn func(Request) error) error {
 	const page = 200
@@ -348,6 +356,7 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 			return fmt.Errorf("read requests: %w", err)
 		}
 		var batch []Request
+		held, cut := 0, false
 		for rows.Next() {
 			r, err := scanRequest(rows, withBody)
 			if err != nil {
@@ -355,11 +364,18 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 				return err
 			}
 			batch = append(batch, r)
+			if held += len(r.Body); held >= PageBytes {
+				cut = true // the rest of the page in the next query
+				break
+			}
 		}
 		err = rows.Err()
 		rows.Close()
 		if err != nil {
 			return err
+		}
+		if pageHook != nil {
+			pageHook(len(batch), held)
 		}
 		for _, r := range batch {
 			if err := fn(r); err != nil {
@@ -367,7 +383,7 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 			}
 			args[1] = r.ID
 		}
-		if len(batch) < page {
+		if len(batch) < page && !cut {
 			return nil
 		}
 	}
@@ -689,6 +705,53 @@ func (s *Store) Request(ctx context.Context, id int64) (Request, error) {
 		return Request{}, ErrNotFound
 	}
 	return r, err
+}
+
+// DeliveryNumbers is Deliveries for every request of reqs (a page of a
+// register, the requests a live feed sends) in one query, by id.
+func (s *Store) DeliveryNumbers(ctx context.Context, reqs []Request) (map[int64]int, error) {
+	out := make(map[int64]int, len(reqs))
+	hashes := map[int64][]any{} // per register, each hash once
+	seen := map[string]bool{}
+	var ids []any
+	for _, r := range reqs {
+		out[r.ID] = 1 // without a body: a first delivery
+		if len(r.BodySHA256) == 0 {
+			continue
+		}
+		ids = append(ids, r.ID)
+		if k := fmt.Sprint(r.EndpointID) + string(r.BodySHA256); !seen[k] {
+			seen[k] = true
+			hashes[r.EndpointID] = append(hashes[r.EndpointID], r.BodySHA256)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	marks := func(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
+	var where []string
+	var args []any
+	for reg, hs := range hashes {
+		where = append(where, `(endpoint_id IS ? AND body_sha256 IN (`+marks(len(hs))+`))`)
+		args = append(append(args, register(reg)), hs...)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, n FROM (
+		SELECT id, ROW_NUMBER() OVER (PARTITION BY endpoint_id, body_sha256 ORDER BY id) AS n
+		FROM requests WHERE `+strings.Join(where, " OR ")+`
+	) WHERE id IN (`+marks(len(ids))+`)`, append(args, ids...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
 }
 
 // Deliveries counts the requests in r's register, up to and including r, that

@@ -85,6 +85,13 @@ func TestSchemaCheckDiscriminator(t *testing.T) {
 	if v, _ := verifyOne(t, nested, `{"data":[{"kind":7}],"order_id":1,"amount":1}`, true); v.Result != auth.Pass {
 		t.Fatalf("nested pointer to a number: %+v", v)
 	}
+	// RFC 6901: an index with a leading zero or a sign names nothing.
+	for _, key := range []string{"/data/00/kind", "/data/+0/kind", "/data/-0/kind"} {
+		bad := schemaConfig(Check{Kind: KindSchema, Select: &Select{From: FromBody, Key: key, Map: []Mapping{{Value: "7", Schema: "OrderPaid"}}}})
+		if v, _ := verifyOne(t, bad, `{"data":[{"kind":7}],"order_id":1,"amount":1}`, true); v.Result != auth.NotChecked {
+			t.Fatalf("%s picked a schema: %+v", key, v)
+		}
+	}
 	hdr := schemaConfig(Check{Kind: KindSchema, Select: &Select{From: FromHeader, Key: "X-Event", Map: []Mapping{{Value: "order.paid", Schema: "OrderPaid"}}}})
 	if v, _ := verifyOne(t, hdr, `{"order_id":1,"amount":5}`, true, Header{Name: "x-event", Value: "order.paid"}); v.Result != auth.Pass {
 		t.Fatalf("header discriminator: %+v", v)
@@ -148,6 +155,7 @@ func TestSchemaCheckValidation(t *testing.T) {
 		{schemaConfig(Check{Kind: KindSchema}), "choose the schema"},
 		{schemaConfig(Check{Kind: KindSchema, Schema: "Nope"}), `no schema named "Nope"`},
 		{schemaConfig(Check{Kind: KindSchema, Select: &Select{From: FromBody, Key: "type", Map: byType().Map}}), "JSON pointer"},
+		{schemaConfig(Check{Kind: KindSchema, Select: &Select{From: FromBody, Key: "/a~2b", Map: byType().Map}}), "JSON pointer"},
 		{schemaConfig(Check{Kind: KindSchema, Select: &Select{From: FromHeader, Key: "X Bad", Map: byType().Map}}), "not a valid HTTP header name"},
 		{schemaConfig(Check{Kind: KindSchema, Select: &Select{From: "query", Key: "/t", Map: byType().Map}}), "by the body or a header"},
 		{schemaConfig(Check{Kind: KindSchema, Select: &Select{From: FromBody, Key: "/t"}}), "at least one value"},

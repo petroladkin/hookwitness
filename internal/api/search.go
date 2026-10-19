@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/petroladkin/hookwitness/internal/jsonptr"
 )
 
 // stamp is a time in an answer: RFC 3339 in UTC with exactly three
@@ -42,11 +44,11 @@ func parseJSONMatch(s string) (jsonMatch, bool) {
 	if !ok || !strings.HasPrefix(ptr, "/") {
 		return jsonMatch{}, false
 	}
-	m := jsonMatch{value: value}
-	for _, tok := range strings.Split(ptr[1:], "/") {
-		m.tokens = append(m.tokens, strings.NewReplacer("~1", "/", "~0", "~").Replace(tok))
+	toks, err := jsonptr.Parse(ptr)
+	if err != nil {
+		return jsonMatch{}, false
 	}
-	return m, true
+	return jsonMatch{tokens: toks, value: value}, true
 }
 
 // matchAll reports a body that is JSON and satisfies every match.
@@ -68,24 +70,9 @@ func matchAll(ms []jsonMatch) func(body []byte) bool {
 }
 
 func (m jsonMatch) matches(doc any) bool {
-	v := doc
-	for _, tok := range m.tokens {
-		switch c := v.(type) {
-		case map[string]any:
-			next, ok := c[tok]
-			if !ok {
-				return false
-			}
-			v = next
-		case []any:
-			i, err := strconv.Atoi(tok)
-			if err != nil || i < 0 || i >= len(c) || (len(tok) > 1 && tok[0] == '0') {
-				return false
-			}
-			v = c[i]
-		default:
-			return false
-		}
+	v, ok := jsonptr.Get(doc, m.tokens)
+	if !ok {
+		return false
 	}
 	switch x := v.(type) {
 	case string:
