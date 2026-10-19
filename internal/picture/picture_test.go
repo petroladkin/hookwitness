@@ -148,7 +148,7 @@ func TestFindAndAt(t *testing.T) {
 			t.Fatalf("At %s: %v", p, err)
 		}
 	}
-	for _, p := range []string{"/nope", "/list/9", "/a", "a"} {
+	for _, p := range []string{"/nope", "/list/9", "/a", "a", "/list/01", "/list/+1", "/a/x~2y"} {
 		if _, err := At(body, p); err == nil {
 			t.Fatalf("At %s: no error", p)
 		}

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
+	"github.com/petroladkin/hookwitness/internal/jsonptr"
 )
 
 // Found is an image a request carries, wherever it was found.
@@ -137,7 +138,7 @@ func dataURLs(body []byte, fn func(path, s string)) {
 	}
 }
 
-func escape(k string) string { return strings.NewReplacer("~", "~0", "/", "~1").Replace(k) }
+func escape(k string) string { return jsonptr.Escape(k) }
 
 // At returns the decoded bytes of the image at a JSON pointer in a body
 // (Body for the body itself).
@@ -145,7 +146,8 @@ func At(body []byte, path string) ([]byte, error) {
 	if path == Body {
 		return body, nil
 	}
-	if !strings.HasPrefix(path, "/") {
+	toks, err := jsonptr.Parse(path)
+	if err != nil || path == "" {
 		return nil, errors.New("not a JSON pointer")
 	}
 	var v any
@@ -154,24 +156,9 @@ func At(body []byte, path string) ([]byte, error) {
 	if err := dec.Decode(&v); err != nil {
 		return nil, errors.New("the body is not JSON")
 	}
-	for _, tok := range strings.Split(path[1:], "/") {
-		tok = strings.NewReplacer("~1", "/", "~0", "~").Replace(tok)
-		switch c := v.(type) {
-		case map[string]any:
-			next, ok := c[tok]
-			if !ok {
-				return nil, errors.New("no value at " + path)
-			}
-			v = next
-		case []any:
-			i, err := strconv.Atoi(tok)
-			if err != nil || i < 0 || i >= len(c) {
-				return nil, errors.New("no value at " + path)
-			}
-			v = c[i]
-		default:
-			return nil, errors.New("no value at " + path)
-		}
+	v, found := jsonptr.Get(v, toks)
+	if !found {
+		return nil, errors.New("no value at " + path)
 	}
 	s, ok := v.(string)
 	if !ok {

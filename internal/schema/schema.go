@@ -24,6 +24,7 @@ import (
 	"golang.org/x/text/message"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
+	"github.com/petroladkin/hookwitness/internal/jsonptr"
 )
 
 // Base is the base URI of an endpoint's schemas: the schema named Order is
@@ -278,27 +279,15 @@ func compareToken(a, b string) int {
 	return strings.Compare(a, b)
 }
 
-// tokens splits a JSON pointer into its tokens.
+// tokens splits a problem's path into its tokens (the validator writes
+// well-formed pointers).
 func tokens(ptr string) []string {
-	if ptr == "" {
-		return nil
-	}
-	out := strings.Split(ptr[1:], "/")
-	for i, t := range out {
-		out[i] = strings.NewReplacer("~1", "/", "~0", "~").Replace(t)
-	}
+	out, _ := jsonptr.Parse(ptr)
 	return out
 }
 
 // pointer is a JSON pointer (RFC 6901) from path tokens.
-func pointer(tokens []string) string {
-	var sb strings.Builder
-	for _, t := range tokens {
-		sb.WriteByte('/')
-		sb.WriteString(strings.NewReplacer("~", "~0", "/", "~1").Replace(t))
-	}
-	return sb.String()
-}
+func pointer(tokens []string) string { return jsonptr.Format(tokens) }
 
 // The compiled sets of recent configurations: compiling on every request
 // would cost more than validating.
