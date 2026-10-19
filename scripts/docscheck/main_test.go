@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,5 +91,36 @@ func TestRunChecksABlock(t *testing.T) {
 	}
 	if p := run(block{text: []string{"echo hi"}}, srv, setup); len(p) != 1 || !strings.Contains(p[0], "nothing is checked") {
 		t.Fatalf("a block without checks: %v", p)
+	}
+}
+
+// TestRunNoRequestForTheLine: a checked command after which nothing new
+// was caught (curl failed before sending) is reported as such with its exit
+// status, not judged against the request an earlier line sent.
+func TestRunNoRequestForTheLine(t *testing.T) {
+	setup := filepath.Join(t.TempDir(), "setup.sh")
+	os.WriteFile(setup, nil, 0o600)
+	// Request 1 is already caught when the block starts; nothing else ever is.
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/admin/api/v1/requests/1" {
+			w.Write([]byte(`{"id":1,"status":200,"verdict":"pass","verdicts":[]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer api.Close()
+	srv := &server{addr: strings.TrimPrefix(api.URL, "http://")}
+	b := block{file: "p.md", line: 1, text: []string{
+		"curl -s -o /dev/null --max-time 5 http://127.0.0.1:1/hooks   # 200",
+		"curl -s -o /dev/null --max-time 5 http://127.0.0.1:1/hooks   # pass",
+	}}
+	p := run(b, srv, setup)
+	if len(p) != 2 {
+		t.Fatalf("problems %v, want one per line", p)
+	}
+	for i, want := range []string{"line 2: no request was caught for this line (the command exited 7)", "line 3: no request was caught for this line (the command exited 7)"} {
+		if p[i] != want {
+			t.Errorf("problem %d is %q, want %q", i, p[i], want)
+		}
 	}
 }

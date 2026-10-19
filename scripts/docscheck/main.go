@@ -10,11 +10,14 @@
 // comments the reader sees anyway:
 //
 //   - a command ending in `# pass`, `# fail: <reason>`, `# n/v: <reason>` or
-//     `# n/c: <reason>`: the newest caught request has that verdict (pass:
+//     `# n/c: <reason>`: the request the command sent has that verdict (pass:
 //     the request's overall verdict; otherwise one of its verdicts has that
 //     result and a reason containing <reason>, a trailing … dropped);
 //   - a command ending in `# 200` (any three-digit status, words may follow):
-//     the newest caught request was answered with that status;
+//     the request the command sent was answered with that status;
+//   - a checked command after which no new request was caught (curl failed
+//     before sending, a wrong URL) is reported as such, with its exit
+//     status, never judged against an earlier line's request;
 //   - comment lines right after a command without such a comment: the
 //     command's output, line by line; a line ending in … matches a prefix.
 //
@@ -218,8 +221,13 @@ __hw_last=0
 __newest() {
   while curl -fs -o /dev/null "$__api/requests/$((__hw_last + 1))"; do __hw_last=$((__hw_last + 1)); done
 }
-__expect() { # line kind arg
+__expect() { # line kind arg; $? is the checked command's exit status
+  local rc=$? before=$__hw_last
   __newest
+  if [ "$__hw_last" = "$before" ]; then # nothing arrived for this line
+    printf '%s\t%s\t%s\t{"none":true,"exit":%d}\n' "$1" "$2" "$3" "$rc" >> "$__log"
+    return
+  fi
   printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$(curl -fs "$__api/requests/$__hw_last" | jq -c . 2>/dev/null)" >> "$__log"
 }
 __output() { # line expected-file
@@ -358,6 +366,8 @@ func isExit(err error) bool {
 }
 
 type caught struct {
+	None     bool   `json:"none"` // no request arrived for the line
+	Exit     int    `json:"exit"` // then the command's exit status
 	ID       int64  `json:"id"`
 	Status   int    `json:"status"`
 	Verdict  string `json:"verdict"`
@@ -386,6 +396,9 @@ func judge(e expectation) string {
 	}
 	var r caught
 	if err := json.Unmarshal([]byte(e.extra), &r); err != nil || r.ID == 0 {
+		if r.None {
+			return fmt.Sprintf("no request was caught for this line (the command exited %d)", r.Exit)
+		}
 		return "no request was caught"
 	}
 	switch e.kind {
