@@ -5,8 +5,9 @@
 
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  // The newest request already on the page; a feed (re)opened from scratch
-  // starts after it. A browser's own reconnect sends Last-Event-ID instead.
+  // The newest request already on the page and the change sequence the
+  // page has seen; a feed (re)opened from scratch starts after them. A
+  // browser's own reconnect sends Last-Event-ID ("<id>.<seq>") instead.
   function newestShown() {
     let max = 0;
     document.querySelectorAll("#register > li[data-id]").forEach((li) => {
@@ -18,6 +19,8 @@
     htmx.createEventSource = function (url) {
       const u = new URL(url, location.href);
       u.searchParams.set("after", String(newestShown()));
+      const reg = document.getElementById("register");
+      if (reg && reg.dataset.seq) u.searchParams.set("seq", reg.dataset.seq);
       return new EventSource(u.toString());
     };
   }
@@ -59,7 +62,7 @@
       markSelected();
       return;
     }
-    const id = ev.lastEventId;
+    const id = String(ev.lastEventId || "").split(".")[0];
     if (id && document.getElementById("req-" + id)) e.preventDefault();
   });
   document.addEventListener("htmx:sseMessage", (e) => {
@@ -89,6 +92,10 @@
     // The login of this page ended: reload onto the login page.
     src.addEventListener("login", () => location.reload());
     src.addEventListener("counts", (m) => {
+      // The pass's last event: the change sequence the page has now seen.
+      const seq = String(m.lastEventId || "").split(".")[1];
+      const reg = document.getElementById("register");
+      if (seq && reg) reg.dataset.seq = seq;
       let c;
       try { c = JSON.parse(m.data); } catch { return; }
       document.querySelectorAll("[data-count]").forEach((el) => {

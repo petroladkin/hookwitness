@@ -114,7 +114,10 @@ that makes it false.
   Users, sessions and tokens (`access.go`; the last admin guarded inside the
   write transaction).
   Endpoints and requests (`catch.go`); imports (`import.go`: all or none); `endpoint_id` NULL is the Unmatched
-  register; request ids are never reused (they are the SSE event ids).
+  register; request ids are never reused (they are the SSE event ids);
+  every outcome or verdict change takes the next value of one change
+  sequence (`requests.change_seq`, in commit order), from which the live
+  feed resumes (`Last-Event-ID: <request id>.<seq>`).
 - `internal/setup` — setup files: `Export` (secret names and kinds only),
   `Parse` (format marker and version, unknown fields refused, paths and
   behaviours validated), `Endpoint.Config` (a replace keeps the values of

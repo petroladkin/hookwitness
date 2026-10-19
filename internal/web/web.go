@@ -542,6 +542,13 @@ func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64, ep store.Endpoint, ex *exhibitView, export *exportView,
 	draft *draftDialogView, replay *replayDialogView, status int) {
 	ctx := r.Context()
+	// The change sequence before the rows: the page shows every change up
+	// to it, and its feed sends the ones after.
+	seq, err := h.store.ChangeSeq(ctx)
+	if err != nil {
+		h.fail(w, "register", err)
+		return
+	}
 	reqs, err := h.store.Requests(ctx, reg, 0, pageSize+1)
 	if err != nil {
 		h.fail(w, "register", err)
@@ -578,6 +585,7 @@ func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64
 		Rows:     rows,
 		More:     more,
 		Newest:   newest,
+		Seq:      seq,
 		Base:     h.regPath(reg),
 		Selected: selectedID(ex),
 		Keep:     h.keep,
@@ -758,17 +766,31 @@ func (h *Handler) downloadBody(w http.ResponseWriter, r *http.Request) {
 }
 
 // events is the live feed of one register as Server-Sent Events. It first
-// sends what the client missed (after the Last-Event-ID header, or the
-// "after" parameter the page was rendered with), then each new request once.
+// sends what the client missed, then each new request once and each change
+// to a row already sent (as "update"). Where it resumes: the Last-Event-ID
+// header ("<request id>.<change sequence>", the last event the browser
+// got), or the "after" and "seq" parameters the page was rendered with.
 func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	reg, ok := regID(r)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	last, err := strconv.ParseInt(r.Header.Get("Last-Event-ID"), 10, 64)
-	if err != nil {
-		last, _ = strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	last, seq, ok := resumeAt(r.Header.Get("Last-Event-ID"))
+	if !ok {
+		q := r.URL.Query()
+		last, _ = strconv.ParseInt(q.Get("after"), 10, 64)
+		var err error
+		if seq, err = strconv.ParseInt(q.Get("seq"), 10, 64); err != nil {
+			seq = -1
+		}
+	}
+	if seq < 0 { // a page of an older version: changes from now on
+		var err error
+		if seq, err = h.store.ChangeSeq(r.Context()); err != nil {
+			h.fail(w, "live feed", err)
+			return
+		}
 	}
 	rc := http.NewResponseController(w)
 	wake, unsubscribe := h.live.Subscribe(reg)
@@ -781,9 +803,12 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, "retry: 2000\n\n")
 
-	// since: outcomes updated from then on are sent again (as "update"
-	// events, without an id) so rows show what was finally done.
-	since := time.Now().UnixMilli()
+	// seq: changes to rows already sent past this value of the store's
+	// change sequence are sent again (as "update" events, without an id) so
+	// rows show what was finally done. Request events carry the value the
+	// pass started from; the pass's last event ("counts") the value it
+	// reached, so a reconnect in the middle of a pass repeats it, never
+	// skips it.
 	writeRow := func(req store.Request, n int, event string) bool {
 		v := h.row(req, n, event == "request")
 		var buf bytes.Buffer
@@ -791,7 +816,7 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 			return false
 		}
 		if event == "request" {
-			fmt.Fprintf(w, "id: %d\n", req.ID)
+			fmt.Fprintf(w, "id: %d.%d\n", req.ID, seq)
 		}
 		fmt.Fprintf(w, "event: %s\n", event)
 		for line := range strings.SplitSeq(strings.TrimRight(buf.String(), "\n"), "\n") {
@@ -803,7 +828,7 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	// writeCounts sends the register's totals after rows changed, so the
 	// header's kept and verdict counts follow without a reload (rows past
 	// the retention limit or not loaded yet count too).
-	writeCounts := func() error {
+	writeCounts := func(next int64) error {
 		ep, err := h.store.Endpoint(r.Context(), reg)
 		if err != nil {
 			return err
@@ -815,16 +840,22 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		b, _ := json.Marshal(map[string]int{"kept": ep.Count, "pass": c["pass"], "fail": c["fail"], "nv": c["n/v"], "nc": c["n/c"]})
-		fmt.Fprintf(w, "event: counts\ndata: %s\n\n", b)
+		fmt.Fprintf(w, "id: %d.%d\nevent: counts\ndata: %s\n\n", last, next, b)
 		return nil
 	}
 	send := func() bool {
-		now := time.Now().UnixMilli()
 		wrote := false
-		reqs, err := h.store.RequestsAfter(r.Context(), reg, last)
+		// Changes first: the new rows are read after the sequence value the
+		// changes are complete up to, so they show every change up to it.
 		var changed []store.Request
-		if err == nil && last > 0 {
-			changed, err = h.store.RequestsChanged(r.Context(), reg, last, since)
+		var err error
+		next := seq
+		if last > 0 {
+			changed, next, err = h.store.RequestsChanged(r.Context(), reg, last, seq)
+		}
+		var reqs []store.Request
+		if err == nil {
+			reqs, err = h.store.RequestsAfter(r.Context(), reg, last)
 		}
 		var nums map[int64]int
 		if err == nil && len(changed)+len(reqs) > 0 {
@@ -849,7 +880,7 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 			last, wrote = req.ID, true
 		}
 		if err == nil && wrote {
-			err = writeCounts()
+			err = writeCounts(next)
 		}
 		if err != nil {
 			if r.Context().Err() == nil {
@@ -857,7 +888,7 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 			}
 			return false
 		}
-		since = now
+		seq = next
 		return rc.Flush() == nil
 	}
 
@@ -894,6 +925,24 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// resumeAt reads a Last-Event-ID: "<request id>.<change sequence>", or a
+// plain request id (a page of an older version: seq -1, changes from now).
+func resumeAt(v string) (last, seq int64, ok bool) {
+	a, b, dotted := strings.Cut(v, ".")
+	last, err := strconv.ParseInt(a, 10, 64)
+	if err != nil || last < 0 {
+		return 0, 0, false
+	}
+	if !dotted {
+		return last, -1, true
+	}
+	seq, err = strconv.ParseInt(b, 10, 64)
+	if err != nil || seq < 0 {
+		return 0, 0, false
+	}
+	return last, seq, true
 }
 
 // hashAssets fingerprints the static files so their URLs change with them

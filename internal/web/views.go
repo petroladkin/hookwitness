@@ -40,6 +40,7 @@ type registerView struct {
 	Rows     []rowView
 	More     bool  // older requests exist beyond Rows
 	Newest   int64 // id of the newest row, where the live feed starts
+	Seq      int64 // the change sequence the rows are complete up to
 	Base     string
 	Selected int64
 	Keep     int // retention: the register never holds more

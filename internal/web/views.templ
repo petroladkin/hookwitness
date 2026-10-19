@@ -385,11 +385,12 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 					id="register"
 					aria-label="Caught requests, newest first"
 					hx-ext="sse"
-					sse-connect={ reg.Base + "/events?after=" + id(reg.Newest) }
+					sse-connect={ reg.Base + "/events?after=" + id(reg.Newest) + "&seq=" + id(reg.Seq) }
 					sse-swap="request,update"
 					hx-swap="afterbegin"
 					data-selected={ id(reg.Selected) }
 					data-keep={ strconv.Itoa(reg.Keep) }
+					data-seq={ id(reg.Seq) }
 				>
 					for _, r := range reg.Rows {
 						@row(r)

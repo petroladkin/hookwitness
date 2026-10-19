@@ -200,7 +200,7 @@ func TestRegisterAndExhibit(t *testing.T) {
 	if page.Code != 200 {
 		t.Fatalf("register page %d", page.Code)
 	}
-	if !strings.Contains(body, `sse-connect="/admin/e/`+id(ep.ID)+`/events?after=`+id(big.ID)+`"`) {
+	if !strings.Contains(body, `sse-connect="/admin/e/`+id(ep.ID)+`/events?after=`+id(big.ID)+`&amp;seq=0"`) {
 		t.Error("live feed does not start after the newest row")
 	}
 	// Newest first.
@@ -302,15 +302,25 @@ func TestOlderRows(t *testing.T) {
 	}
 }
 
-// readEvents reads SSE events until n request events arrived or the timeout.
+// readEvents reads SSE events until n request events arrived or the
+// timeout, and returns their request ids (the id before the dot).
 func readEvents(t *testing.T, body io.Reader, n int) []string {
 	t.Helper()
 	ids := make(chan string)
 	go func() {
 		sc := bufio.NewScanner(body)
+		var evID, kind string
 		for sc.Scan() {
-			if v, ok := strings.CutPrefix(sc.Text(), "id: "); ok {
-				ids <- v
+			l := sc.Text()
+			if v, ok := strings.CutPrefix(l, "id: "); ok {
+				evID = v
+			} else if v, ok := strings.CutPrefix(l, "event: "); ok {
+				kind = v
+			} else if l == "" {
+				if kind == "request" {
+					ids <- strings.SplitN(evID, ".", 2)[0]
+				}
+				evID, kind = "", ""
 			}
 		}
 		close(ids)
