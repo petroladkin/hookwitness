@@ -167,15 +167,17 @@ templ tokenTable(nav navView, ts []store.Token, owners bool) {
 							<td class="when made">{ lastSeen(t.CreatedAt) }</td>
 							<td class="when used">{ lastSeen(t.LastUsedAt) }</td>
 							<td class="acts">
-								if owners {
-									<form method="post" action={ templ.SafeURL(nav.Prefix + "/tokens/" + t.PublicID + "/revoke") } data-confirm={ "Revoke " + t.Owner + "'s token " + t.Name + "? Whatever uses it stops working at once." }>
-										<button class="btn quiet" type="submit">Revoke</button>
-									</form>
-								} else {
-									<form method="post" action={ templ.SafeURL(nav.Prefix + "/account/tokens/" + t.PublicID + "/revoke") } data-confirm={ "Revoke the token " + t.Name + "? Whatever uses it stops working at once." }>
-										<button class="btn quiet" type="submit">Revoke</button>
-									</form>
-								}
+								<div class="row-acts">
+									if owners {
+										<form method="post" action={ templ.SafeURL(nav.Prefix + "/tokens/" + t.PublicID + "/revoke") } data-confirm={ "Revoke " + t.Owner + "'s token " + t.Name + "? Whatever uses it stops working at once." }>
+											<button class="btn quiet" type="submit">Revoke</button>
+										</form>
+									} else {
+										<form method="post" action={ templ.SafeURL(nav.Prefix + "/account/tokens/" + t.PublicID + "/revoke") } data-confirm={ "Revoke the token " + t.Name + "? Whatever uses it stops working at once." }>
+											<button class="btn quiet" type="submit">Revoke</button>
+										</form>
+									}
+								</div>
 							</td>
 						</tr>
 					}
@@ -223,25 +225,27 @@ templ usersPage(nav navView, v usersView) {
 									<td class="when">{ lastSeen(u.CreatedAt) }</td>
 									<td class="num">{ strconv.Itoa(u.Tokens) }</td>
 									<td class="acts">
-										if v.lastAdmin(u) {
-											<span class="help" title="Make another user an admin first">the last admin</span>
-										} else {
-											<form method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/role") }>
-												if u.Role == store.RoleAdmin {
-													<input type="hidden" name="role" value="user"/>
-													<button class="btn quiet" type="submit">Make user</button>
-												} else {
-													<input type="hidden" name="role" value="admin"/>
-													<button class="btn quiet" type="submit">Make admin</button>
-												}
-											</form>
-										}
-										<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users?dialog=password&name=" + u.Name) }>Set password</a>
-										if !v.lastAdmin(u) {
-											<form method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/remove") } data-confirm={ "Remove " + u.Name + " with their " + strconv.Itoa(u.Tokens) + " tokens?" }>
-												<button class="btn quiet" type="submit">Remove</button>
-											</form>
-										}
+										<div class="row-acts">
+											if v.lastAdmin(u) {
+												<span class="help" title="Make another user an admin first">the last admin</span>
+											} else {
+												<form method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/role") }>
+													if u.Role == store.RoleAdmin {
+														<input type="hidden" name="role" value="user"/>
+														<button class="btn quiet" type="submit">Make user</button>
+													} else {
+														<input type="hidden" name="role" value="admin"/>
+														<button class="btn quiet" type="submit">Make admin</button>
+													}
+												</form>
+											}
+											<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users?dialog=password&name=" + u.Name) }>Set password</a>
+											if !v.lastAdmin(u) {
+												<form method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/remove") } data-confirm={ "Remove " + u.Name + " with their " + strconv.Itoa(u.Tokens) + " tokens?" }>
+													<button class="btn quiet" type="submit">Remove</button>
+												</form>
+											}
+										</div>
 									</td>
 								</tr>
 							}
