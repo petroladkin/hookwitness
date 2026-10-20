@@ -50,7 +50,10 @@ templ loginPage(nav navView, v loginView) {
 templ accountPage(nav navView, v accountView) {
 	@layout(nav, "Account") {
 		<main class="sheet">
-			<h1 class="title">{ nav.User }</h1>
+			<div class="title-row near">
+				<h1 class="title">{ nav.User }</h1>
+				<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/account?dialog=password") }>Change password</a>
+			</div>
 			<p class="lede">
 				if nav.Admin {
 					Admin: you manage endpoints and <a href={ templ.SafeURL(nav.Prefix + "/users") }>users</a>.
@@ -69,8 +72,6 @@ templ accountPage(nav navView, v accountView) {
 				<a class="btn solid" href={ templ.SafeURL(nav.Prefix + "/account?dialog=token") }>New token</a>
 			</div>
 			@tokenTable(nav, v.Tokens, false)
-			<h2 class="sub">Password</h2>
-			<p><a class="btn" href={ templ.SafeURL(nav.Prefix + "/account?dialog=password") }>Change password</a></p>
 			if v.Dialog == "token" {
 				<dialog class="modal" data-modal data-close={ nav.Prefix + "/account" } open aria-labelledby="dialog-title">
 					<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/account/tokens") }>

@@ -105,3 +105,15 @@ func TestMastheadLoggedIn(t *testing.T) {
 		t.Fatalf("login page:\n%s", page)
 	}
 }
+
+// The account page's one password action sits beside the name, not under a
+// heading of its own.
+func TestAccountTitle(t *testing.T) {
+	e := newAccessEnv(t, "")
+	e.addUser(t, "ann", store.RoleUser, adminPW)
+	page := e.req("GET", "/admin/account", e.login(t, "ann", adminPW), "", nil).Body.String()
+	want := `<div class="title-row near"><h1 class="title">ann</h1><a class="btn quiet" href="/admin/account?dialog=password">Change password</a></div>`
+	if !strings.Contains(page, want) || strings.Contains(page, `<h2 class="sub">Password</h2>`) {
+		t.Fatalf("account page:\n%s", page)
+	}
+}
