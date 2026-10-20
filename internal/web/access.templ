@@ -50,7 +50,7 @@ templ loginPage(nav navView, v loginView) {
 templ accountPage(nav navView, v accountView) {
 	@layout(nav, "Account") {
 		<main class="sheet">
-			<div class="title-row near">
+			<div class="title-row full">
 				<h1 class="title">{ nav.User }</h1>
 				<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/account?dialog=password") }>Change password</a>
 			</div>
