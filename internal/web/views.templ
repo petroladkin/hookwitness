@@ -120,6 +120,9 @@ templ registerPicker(nav navView, reg registerView) {
 					@pickItem(nav.registerURL(e.ID), e.Path, e.Count, nav.Current == e.ID, "menu-item")
 				}
 			}
+			if nav.someOff() && !nav.someOn() {
+				<span class="menu-none">None</span>
+			}
 			if nav.someOff() {
 				<span class="menu-label">Off</span>
 				for _, e := range nav.Endpoints {

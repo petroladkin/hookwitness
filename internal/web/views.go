@@ -216,6 +216,16 @@ func (n navView) section() string {
 	return "endpoints"
 }
 
+// someOn reports whether any endpoint is on: an empty On group says so.
+func (n navView) someOn() bool {
+	for _, e := range n.Endpoints {
+		if e.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
 // someOff reports whether any endpoint is off: the picker then groups them.
 func (n navView) someOff() bool {
 	for _, e := range n.Endpoints {
