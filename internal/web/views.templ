@@ -199,12 +199,14 @@ templ endpointsPage(nav navView, d endpointsDialog) {
 									<td class="num">{ strconv.Itoa(e.Count) }</td>
 									<td class="when">{ lastSeen(e.LastAt) }</td>
 									<td class="acts">
-										@switchForm(nav.registerURL(e.ID), e.Path, e.Enabled, nav.Prefix+"/")
-										<a class="btn quiet" href={ templ.SafeURL(nav.registerURL(e.ID) + "/behaviour") }>Behaviour</a>
-										@clearForm(nav, e.ID, nav.Prefix+"/", e.Path)
-										<form method="post" action={ templ.SafeURL(nav.registerURL(e.ID) + "/delete") } data-confirm={ "Delete " + e.Path + " and its " + strconv.Itoa(e.Count) + " requests?" }>
-											<button class="btn quiet" type="submit">Delete</button>
-										</form>
+										<div class="row-acts">
+											@switchForm(nav.registerURL(e.ID), e.Path, e.Enabled, nav.Prefix+"/")
+											<a class="btn quiet" href={ templ.SafeURL(nav.registerURL(e.ID) + "/behaviour") }>Behaviour</a>
+											@clearForm(nav, e.ID, nav.Prefix+"/", e.Path)
+											<form method="post" action={ templ.SafeURL(nav.registerURL(e.ID) + "/delete") } data-confirm={ "Delete " + e.Path + " and its " + strconv.Itoa(e.Count) + " requests?" }>
+												<button class="btn quiet" type="submit">Delete</button>
+											</form>
+										</div>
 									</td>
 								</tr>
 							}

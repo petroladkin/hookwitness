@@ -193,7 +193,8 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
 .eps .url{color:var(--muted);word-break:break-all;user-select:all}
 .eps .num{text-align:right;font-variant-numeric:tabular-nums}
 .eps .when{white-space:nowrap;color:var(--muted);font-variant-numeric:tabular-nums}
-.eps .acts{display:flex;gap:6px;justify-content:flex-end}
+.eps .row-acts{display:flex;gap:6px;justify-content:flex-end}
+.eps .row-acts>form{display:flex}
 
 /* A wide register page is one screen tall: the list and the request scroll
    on their own, whatever is above them (the strip and its legend wrap). */
@@ -301,7 +302,8 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
   .eps .num{grid-row:3;grid-column:2}
   .eps .num::after{content:" kept"}
   .eps .when{grid-row:3;grid-column:1}
-  .eps .acts{grid-column:1 / -1;justify-content:flex-start;flex-wrap:wrap}
+  .eps .acts{grid-column:1 / -1}
+  .eps .row-acts{justify-content:flex-start;flex-wrap:wrap}
   .eps.people .num::after{content:" tokens"}
   .eps.tokens .when{grid-row:auto;grid-column:1 / -1}
   .eps.tokens .made::before{content:"made "}
