@@ -120,6 +120,9 @@ templ registerPicker(nav navView, reg registerView) {
 					@pickItem(nav.registerURL(e.ID), e.Path, e.Count, nav.Current == e.ID, "menu-item")
 				}
 			}
+			if nav.someOff() && !nav.someOn() {
+				<span class="menu-none">None</span>
+			}
 			if nav.someOff() {
 				<span class="menu-label">Off</span>
 				for _, e := range nav.Endpoints {
@@ -348,6 +351,25 @@ templ clearForm(nav navView, regID int64, next, what string) {
 
 templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 	@layout(nav, title(reg)) {
+		<div class="reg-bar">
+			<div class="reg-id">
+				@registerPicker(nav, reg)
+				<span class="kept"><span id="kept" data-count="kept">{ strconv.Itoa(reg.Count) }</span> kept</span>
+			</div>
+			<div class="reg-tools">
+				if reg.ID == store.Unmatched {
+					@clearForm(nav, reg.ID, reg.Base, "Unmatched")
+				} else {
+					@switchForm(reg.Base, reg.Path, reg.Enabled, reg.Base)
+					@clearForm(nav, reg.ID, reg.Base, reg.Path)
+					<a class="btn" href={ templ.SafeURL(reg.Base + "/behaviour") }>Behaviour</a>
+				}
+				<a class="btn" href={ templ.SafeURL(reg.Base + "?report") }>Report</a>
+				if reg.ID != store.Unmatched {
+					<a class="btn" href={ templ.SafeURL(reg.Base + "?draft") }>Draft schema</a>
+				}
+			</div>
+		</div>
 		<section class="strip" aria-label="Arrivals over the last 2 min">
 			<canvas id="trace" aria-hidden="true" data-marks={ reg.Base + "/marks" }></canvas>
 			<div class="legend">
@@ -363,23 +385,6 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 		</section>
 		<main class="desk">
 			<section class="register" aria-label="Caught requests">
-				<div class="reg-head">
-					@registerPicker(nav, reg)
-					<span><span id="kept" data-count="kept">{ strconv.Itoa(reg.Count) }</span> kept</span>
-				</div>
-				<div class="reg-tools">
-					if reg.ID == store.Unmatched {
-						@clearForm(nav, reg.ID, reg.Base, "Unmatched")
-					} else {
-						@switchForm(reg.Base, reg.Path, reg.Enabled, reg.Base)
-						@clearForm(nav, reg.ID, reg.Base, reg.Path)
-						<a class="btn" href={ templ.SafeURL(reg.Base + "/behaviour") }>Behaviour</a>
-					}
-					<a class="btn" href={ templ.SafeURL(reg.Base + "?report") }>Report</a>
-					if reg.ID != store.Unmatched {
-						<a class="btn" href={ templ.SafeURL(reg.Base + "?draft") }>Draft schema</a>
-					}
-				</div>
 				if !reg.Enabled {
 					<p class="banner off-note" role="status">
 						Off: requests to this path are answered 404 and kept under
@@ -408,6 +413,9 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 						<p class="saved banner" role="status">Re-checked { reg.Verdicts.Rechecked } requests with the current checks, secrets and schemas.</p>
 					}
 				}
+				if len(reg.Rows) == 0 {
+					<p class="empty" id="register-empty">Nothing caught yet.</p>
+				}
 				<ol
 					class="reg-list"
 					id="register"
@@ -427,9 +435,6 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 						@moreRow(reg.Base, reg.Rows[len(reg.Rows)-1].ID)
 					}
 				</ol>
-				if len(reg.Rows) == 0 {
-					<p class="empty" id="register-empty">Nothing caught yet.</p>
-				}
 			</section>
 			<article class="exhibit" id="exhibit" aria-live="polite">
 				if ex != nil {

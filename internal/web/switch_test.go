@@ -48,6 +48,17 @@ func TestSwitchEndpoint(t *testing.T) {
 	if strings.Index(page, `<span>/refunds</span>`) > strings.Index(page, `<span class="menu-label">Off</span>`) {
 		t.Fatal("the on endpoint is not in the On group")
 	}
+	if strings.Contains(page, `class="menu-none"`) {
+		t.Fatal("None under a group that has an endpoint")
+	}
+
+	// With every endpoint off, the empty On group says None.
+	e.do("POST", "/admin/e/2/switch", url.Values{"enabled": {"false"}})
+	page = e.do("GET", reg, nil).Body.String()
+	if on, none, off := strings.Index(page, `<span class="menu-label">On</span>`), strings.Index(page, `<span class="menu-none">None</span>`), strings.Index(page, `<span class="menu-label">Off</span>`); on < 0 || none < on || off < none {
+		t.Fatalf("empty On group:\n%s", page)
+	}
+	e.do("POST", "/admin/e/2/switch", url.Values{"enabled": {"true"}})
 
 	// The register page says so, with the switch.
 	page = e.do("GET", reg, nil).Body.String()
