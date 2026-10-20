@@ -75,7 +75,8 @@ func TestUsersAPI(t *testing.T) {
 		t.Fatalf("add bob: %d %s", rec.Code, rec.Body)
 	}
 	wantError(t, e.call(ann, "DELETE", "/users/ann", ""), 409, "last_admin", "")
-	wantError(t, e.call(ann, "PATCH", "/users/ann", `{"role":"user"}`), 409, "last_admin", "")
+	// Demoting herself is refused before the last-admin guard is reached.
+	wantError(t, e.call(ann, "PATCH", "/users/ann", `{"role":"user"}`), 409, "self_demotion", "")
 	wantError(t, e.call(ann, "PATCH", "/users/nobody", `{"role":"user"}`), 404, "not_found", "")
 	wantError(t, e.call(ann, "PATCH", "/users/bob", `{"password":"short"}`), 422, "invalid", "password")
 	// The singular path of the first build is gone.
@@ -128,6 +129,15 @@ func TestUsersAPI(t *testing.T) {
 	}
 	if rec := e.call(ann, "PATCH", "/users/bob", `{"role":"admin"}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"role": "admin"`) {
 		t.Fatalf("promote: %d %s", rec.Code, rec.Body)
+	}
+	// With another admin there she still cannot demote herself; bob can.
+	wantError(t, e.call(ann, "PATCH", "/users/ann", `{"role":"user"}`), 409, "self_demotion", "")
+	bobAdmin := e.as(t, "bob", access.ViaSession)
+	if rec := e.call(bobAdmin, "PATCH", "/users/ann", `{"role":"user"}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"role": "user"`) {
+		t.Fatalf("bob demotes ann: %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.call(bobAdmin, "PATCH", "/users/ann", `{"role":"admin"}`); rec.Code != 200 {
+		t.Fatalf("bob promotes ann back: %d %s", rec.Code, rec.Body)
 	}
 	if rec := e.call(ann, "DELETE", "/users/ann", ""); rec.Code != 204 {
 		t.Fatalf("ann removes herself with another admin there: %d", rec.Code)

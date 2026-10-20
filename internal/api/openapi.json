@@ -1704,7 +1704,7 @@
             }
           },
           "409": {
-            "description": "That would leave no admin (`last_admin`).",
+            "description": "That would leave no admin (`last_admin`), or you would make yourself a user (`self_demotion`): another admin can.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2251,7 +2251,7 @@
             "properties": {
               "code": {
                 "type": "string",
-                "description": "A machine-readable code: not_found, invalid, duplicate_path, stale_version, version_required, conflict, secret_in_use, unknown_field, bad_json, unsupported_media_type, not_an_image, not_kept, too_large, unauthorized, invalid_token, forbidden, session_required, login_off, exists, last_admin, busy, internal."
+                "description": "A machine-readable code: not_found, invalid, duplicate_path, stale_version, version_required, conflict, secret_in_use, unknown_field, bad_json, unsupported_media_type, not_an_image, not_kept, too_large, unauthorized, invalid_token, forbidden, session_required, login_off, exists, last_admin, self_demotion, busy, internal."
               },
               "message": {
                 "type": "string",

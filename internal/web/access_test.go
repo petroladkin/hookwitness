@@ -508,6 +508,16 @@ func TestUsersPage(t *testing.T) {
 	if rec := e.form("/admin/users/bob/role", a, url.Values{"role": {"admin"}}); rec.Code != http.StatusSeeOther {
 		t.Fatalf("promote: %d", rec.Code)
 	}
+	// Two admins: ann's own row offers no Make user, and the route refuses it.
+	if page := e.req("GET", "/admin/users", a, "", nil).Body.String(); strings.Count(page, "Make user") != 1 || !strings.Contains(page, `title="Another admin can change your role">you</span>`) {
+		t.Fatalf("users page with two admins:\n%s", page)
+	}
+	if rec := e.form("/admin/users/ann/role", a, url.Values{"role": {"user"}}); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "You cannot make yourself a user") {
+		t.Fatalf("ann demotes herself: %d", rec.Code)
+	}
+	if u, _ := e.st.UserByName(context.Background(), "ann"); u.Role != store.RoleAdmin {
+		t.Fatal("ann was demoted")
+	}
 	if rec := e.req("GET", "/admin/api/v1/users", "", bt, nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("admin's token on user management: %d", rec.Code)
 	}
