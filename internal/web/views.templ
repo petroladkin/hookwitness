@@ -410,6 +410,9 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 						<p class="saved banner" role="status">Re-checked { reg.Verdicts.Rechecked } requests with the current checks, secrets and schemas.</p>
 					}
 				}
+				if len(reg.Rows) == 0 {
+					<p class="empty" id="register-empty">Nothing caught yet.</p>
+				}
 				<ol
 					class="reg-list"
 					id="register"
@@ -429,9 +432,6 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 						@moreRow(reg.Base, reg.Rows[len(reg.Rows)-1].ID)
 					}
 				</ol>
-				if len(reg.Rows) == 0 {
-					<p class="empty" id="register-empty">Nothing caught yet.</p>
-				}
 			</section>
 			<article class="exhibit" id="exhibit" aria-live="polite">
 				if ex != nil {
