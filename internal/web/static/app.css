@@ -194,6 +194,7 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
 .eps .num{text-align:right;font-variant-numeric:tabular-nums}
 .eps .when{white-space:nowrap;color:var(--muted);font-variant-numeric:tabular-nums}
 .eps .acts{display:flex;gap:6px;justify-content:flex-end}
+.eps .acts>form{display:flex}
 
 /* A wide register page is one screen tall: the list and the request scroll
    on their own, whatever is above them (the strip and its legend wrap). */
