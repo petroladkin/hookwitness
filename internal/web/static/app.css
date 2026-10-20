@@ -388,6 +388,7 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 .sections a:hover{color:var(--ink)}
 .sections a[aria-current=page]{color:var(--ink);border-bottom-color:var(--ink)}
 @media (max-width:600px){
+  .reg-tools{justify-content:flex-start}
   .mast{column-gap:12px}
   .mast .status{order:2;column-gap:10px}
   .mast .sections{order:3;flex-basis:100%}
