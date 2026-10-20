@@ -21,7 +21,7 @@ func TestSwitchEndpoint(t *testing.T) {
 
 	// The Endpoints page: a switch per row, all on.
 	page := e.do("GET", "/admin/", nil).Body.String()
-	if strings.Count(page, `role="switch" aria-checked="true"`) != 2 || strings.Contains(page, `<optgroup`) {
+	if strings.Count(page, `role="switch" aria-checked="true"`) != 2 {
 		t.Fatalf("all on:\n%s", page)
 	}
 
@@ -37,13 +37,15 @@ func TestSwitchEndpoint(t *testing.T) {
 	if !strings.Contains(page, `<tr class="off">`) || strings.Count(page, `aria-checked="false"`) != 1 {
 		t.Fatalf("the off row:\n%s", page)
 	}
-	// The picker groups them, the off one marked.
-	for _, want := range []string{`<optgroup label="On">`, `<optgroup label="Off">`, `/orders · off</option>`} {
+
+	// The register's picker groups them, the off one marked.
+	page = e.do("GET", reg, nil).Body.String()
+	for _, want := range []string{`<span class="menu-label">On</span>`, `<span class="menu-label">Off</span>`, `<a class="menu-item off" href="/admin/e/1" aria-current="page"><span>/orders</span>`} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("picker lacks %s:\n%s", want, page)
 		}
 	}
-	if strings.Index(page, `/refunds</option>`) > strings.Index(page, `<optgroup label="Off">`) {
+	if strings.Index(page, `<span>/refunds</span>`) > strings.Index(page, `<span class="menu-label">Off</span>`) {
 		t.Fatal("the on endpoint is not in the On group")
 	}
 

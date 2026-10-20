@@ -203,6 +203,19 @@ func (r rowView) tag() string {
 	return ""
 }
 
+// section is the masthead tab the page belongs to: "users" for the users
+// page, "" for the account page, "endpoints" for everything else.
+func (n navView) section() string {
+	path, _, _ := strings.Cut(strings.TrimPrefix(n.Here, n.Prefix), "?")
+	switch {
+	case path == "/users" || strings.HasPrefix(path, "/users/"):
+		return "users"
+	case path == "/account" || strings.HasPrefix(path, "/account/"):
+		return ""
+	}
+	return "endpoints"
+}
+
 // someOff reports whether any endpoint is off: the picker then groups them.
 func (n navView) someOff() bool {
 	for _, e := range n.Endpoints {

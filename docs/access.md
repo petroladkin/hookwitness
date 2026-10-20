@@ -68,7 +68,7 @@ before logging in comes back after it.
 
 ![The login page](images/login.webp)
 
-- A login lasts until you log out (*Log out* in the header), or a day
+- A login lasts until you log out (*Log out* in the menu under your name), or a day
   without activity, or a week at most. An open register counts as activity.
 - Ten failed logins from one address in 15 minutes pause logins from that
   address for the rest of the 15 minutes.
@@ -95,7 +95,7 @@ admin first.
 
 Scripts, CI jobs and AI agents use the REST API and MCP with a personal
 token instead of a password. Make one on your account page (click your name
-in the header, then *New token*). It is shown once: copy it then.
+in the header, *Account and tokens*, then *New token*). It is shown once: copy it then.
 
 ![A new token, shown once](images/token-new.webp)
 

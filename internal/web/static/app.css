@@ -120,7 +120,6 @@ code{font:400 .9em/1 var(--f-data)}
 .desk{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);flex:1;min-height:0}
 .register{border-right:1px solid var(--rule);min-width:0;display:flex;flex-direction:column}
 .reg-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:14px 14px 4px 0;font:600 10px/1.3 var(--f-data);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
-.reg-name{text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);word-break:break-all}
 .reg-tools{display:flex;flex-wrap:wrap;gap:8px;padding:4px 14px 10px 0}
 .reg-list{list-style:none;margin:0;padding:0;overflow:auto;flex:1 1 auto;min-height:120px}
 .row a{display:grid;grid-template-columns:54px minmax(0,1fr) auto;gap:2px 10px;align-items:baseline;padding:10px 14px 10px 10px;border-top:1px solid var(--rule);color:inherit;text-decoration:none;position:relative}
@@ -374,9 +373,51 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 .card:has(select[name=by] option[value=pick]:checked) .for-value,
 .card:has(select[name=by] option[value=value]:checked) .for-pick{display:none}
 .changes{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:2px;font-size:12px}
-.build{margin-top:48px;font:400 12px/1.4 var(--f-data);color:var(--muted)}
 .body-as{display:flex;align-items:end;justify-content:space-between;gap:12px}
 .body-as select{width:auto}
+
+/* masthead: the sections as tabs, then the live state, the address and the
+   account menu on the right. */
+.sections{display:flex;gap:18px;align-self:stretch;align-items:center}
+.sections a{font:600 11px/1 var(--f-data);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-decoration:none;padding:6px 0 5px;border-bottom:2px solid transparent}
+.sections a:hover{color:var(--ink)}
+.sections a[aria-current=page]{color:var(--ink);border-bottom-color:var(--ink)}
+@media (max-width:600px){
+  .mast{column-gap:12px}
+  .mast .status{order:2;column-gap:10px}
+  .mast .sections{order:3;flex-basis:100%}
+  .mast .addr{display:none}
+  /* the live state as its dot alone; the word stays for screen readers */
+  .mast .rec>span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+}
+/* A menu: a details element whose list drops below its summary. */
+.menu{position:relative}
+.menu>summary{list-style:none;cursor:pointer}
+.menu>summary::-webkit-details-marker{display:none}
+.menu-list{position:absolute;top:calc(100% + 6px);z-index:20;min-width:240px;max-width:calc(100vw - 32px);background:var(--paper);border:1px solid var(--ink);box-shadow:4px 4px 0 color-mix(in srgb,var(--text) 18%,transparent);display:flex;flex-direction:column;padding-block:4px;font:400 13px/1.2 var(--f-data);text-transform:none;letter-spacing:0}
+.menu-label{display:block;font:600 10px/1 var(--f-data);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding:10px 14px 6px}
+.menu-note{margin:0;padding:8px 14px 10px;font:400 11px/1.3 var(--f-data);color:var(--muted);border-bottom:1px solid var(--rule)}
+.menu-item{display:flex;justify-content:space-between;gap:12px;width:100%;padding:9px 14px;font:inherit;color:var(--text);text-decoration:none;background:none;border:0;text-align:left;cursor:pointer}
+.menu-item:hover{background:var(--paper-2);color:var(--ink)}
+.menu-item[aria-current=page]{color:var(--ink);font-weight:600;box-shadow:inset 3px 0 0 var(--ink)}
+.menu-item.off{color:var(--muted)}
+.menu-item.apart{border-top:1px solid var(--rule);margin-top:4px}
+.menu-item .n{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.menu-theme{padding-bottom:10px;border-bottom:1px solid var(--rule)}
+.menu-theme:last-child{border-bottom:0}
+.menu-theme form.theme{margin-inline:14px}
+.acct .menu-list{right:0}
+.acct>summary{display:inline-flex;align-items:center;gap:7px;font:600 12px/1 var(--f-data);color:var(--ink);border:1px solid var(--grid-major);padding:6px 9px}
+.acct>summary::after,.pick>summary::after{content:"";width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-2px) rotate(45deg)}
+.acct[open]>summary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.menu[open]>summary::after{transform:translateY(2px) rotate(225deg)}
+/* The register's name picks the register. */
+.pick .menu-list{left:0;width:min(380px,calc(100vw - 32px))}
+.pick>summary{display:inline-flex;align-items:center;gap:9px;color:var(--ink);font:600 15px/1.2 var(--f-data);text-transform:none;letter-spacing:0;word-break:break-all}
+.pick>summary:hover{text-decoration:underline;text-underline-offset:4px}
+.pick>summary::after{flex:none;width:7px;height:7px}
+/* The build serving the page, at the foot of the column. */
+.build{margin-top:auto;padding-block:20px 14px;font:400 11px/1.4 var(--f-data);color:var(--muted)}
 
 /* login */
 .nologin{margin:0;padding:7px 10px;border:1px dashed var(--alarm);font:400 12px/1.4 var(--f-data);color:var(--text)}

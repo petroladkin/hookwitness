@@ -210,11 +210,12 @@ for (const [i, e] of events.entries()) {
 }
 await shot("register", `${UI}/e/${gh}`);
 
-// docs/endpoints.md, "Light or dark": the masthead's switch set against the
-// system (Dark on a light system), then back to Auto for the other shots.
+// docs/endpoints.md, "Light or dark": the switch in the masthead's menu set
+// against the system (Dark on a light system), the menu left open to show
+// it, then back to Auto for the other shots.
 if (!only.length || only.includes("theme")) {
   const against = (process.env.MEDIA_SCHEME || "light") === "dark" ? "light" : "dark";
-  await shot("theme", `${UI}/e/${gh}`, { maxHeight: 520, step: `document.querySelector('form.theme button[value=${against}]').click()` });
+  await shot("theme", `${UI}/e/${gh}`, { maxHeight: 520, step: `document.querySelector('details.acct').open = true; document.querySelector('form.theme button[value=${against}]').click()` });
   await js(`document.querySelector('form.theme button[value=auto]').click()`);
   await sleep(300);
 }

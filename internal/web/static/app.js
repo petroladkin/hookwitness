@@ -133,9 +133,18 @@
     }
   });
 
-  document.addEventListener("change", (e) => {
-    const el = e.target;
-    if (el.matches && el.matches("select[data-navigate]") && el.value) location.assign(el.value);
+  // Menus (details[data-menu]) open one at a time and close on a click
+  // elsewhere or Escape; without scripts they open and close on their own.
+  document.addEventListener("click", (e) => {
+    const inside = e.target.closest && e.target.closest("details[data-menu]");
+    document.querySelectorAll("details[data-menu][open]").forEach((d) => { if (d !== inside) d.open = false; });
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const open = document.querySelector("details[data-menu][open]");
+    if (!open) return;
+    open.open = false;
+    open.querySelector("summary").focus();
   });
   // Copy buttons: data-copy names the field whose value is copied (a token
   // shown once); without a clipboard the field is selected for Ctrl-C.
