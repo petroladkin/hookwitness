@@ -49,9 +49,9 @@ already held by a timeout when you turn the endpoint off ends as scripted.
 
 The switch is on each row of the Endpoints page (rows that are off are
 dimmed) and next to **Clear** on the endpoint's register, which says while
-it is off where its requests go. When some endpoint is off, the
-**Endpoint** picker in the header lists the endpoints that are on and those
-that are off apart. Turn it **On** again and the next request is caught by
+it is off where its requests go. When some endpoint is off, the list under
+the register's name (click it to go to another register) shows the
+endpoints that are on and those that are off apart. Turn it **On** again and the next request is caught by
 the endpoint, with its rules counting on from where they stopped. A new
 endpoint is on. Scripts and agents use the API's `enabled`.
 
@@ -186,8 +186,8 @@ Unmatched register. Older ones are deleted as new ones arrive. See
 ## Light or dark
 
 The UI follows your system's light or dark setting. To choose otherwise,
-use the **Auto · Light · Dark** switch at the top of every page, next to
-**Endpoints**. The choice belongs to this browser: it is kept in a cookie,
+use the **Auto · Light · Dark** switch in the menu at the top right of
+every page: under your name, or **Theme** while login is off. The choice belongs to this browser: it is kept in a cookie,
 so a phone and a laptop can differ, with or without login. **Auto** follows
 the system again. Reports downloaded as HTML follow the reader's own
 setting.

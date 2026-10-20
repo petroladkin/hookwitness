@@ -44,6 +44,9 @@ templ layout(nav navView, pageTitle string) {
 					</p>
 				}
 				{ children... }
+				if nav.Build != "" {
+					<footer class="build">Hookwitness { nav.Build }</footer>
+				}
 			</div>
 		</body>
 	</html>
@@ -52,63 +55,87 @@ templ layout(nav navView, pageTitle string) {
 templ masthead(nav navView) {
 	<header class="mast">
 		<a class="brand" href={ templ.SafeURL(nav.Prefix + "/") } title={ "Hookwitness " + nav.Build }>Hookwitness</a>
-		if nav.Bare {
-			<span></span>
-		} else {
-			@mastNav(nav)
+		if !nav.Bare {
+			<nav class="sections" aria-label="Sections">
+				<a href={ templ.SafeURL(nav.Prefix + "/") } aria-current={ tabCurrent(nav.section() == "endpoints") }>Endpoints</a>
+				if nav.Admin {
+					<a href={ templ.SafeURL(nav.Prefix + "/users") } aria-current={ tabCurrent(nav.section() == "users") }>Users</a>
+				}
+			</nav>
+			<div class="status">
+				if nav.OnRegister {
+					<span class="rec" id="feed-state" data-state="connecting"><i aria-hidden="true"></i><span>Connecting</span></span>
+				}
+				<span class="addr">{ hostOf(nav.Catch) }</span>
+				@accountMenu(nav)
+			</div>
 		}
 	</header>
 }
 
-templ mastNav(nav navView) {
-	if len(nav.Endpoints) > 0 || nav.Unmatched > 0 {
-		<div class="endpoint">
-			<label for="register-select">Endpoint</label>
-			<select id="register-select" data-navigate>
-				if nav.Current < 0 {
-					<option value="" selected>Choose…</option>
+// accountMenu is everything about the person at the screen, behind their
+// name: account and tokens, this browser's theme, log out. A details
+// element, so it opens without scripts; with login off it holds the theme.
+templ accountMenu(nav navView) {
+	<details class="menu acct" data-menu>
+		<summary>
+			if nav.User != "" {
+				{ nav.User }
+			} else {
+				Theme
+			}
+		</summary>
+		<div class="menu-list">
+			if nav.User != "" {
+				<p class="menu-note">
+					if nav.Admin {
+						Admin: manages endpoints and users
+					} else {
+						User: manages endpoints
+					}
+				</p>
+				<a class="menu-item" href={ templ.SafeURL(nav.Prefix + "/account") }>Account and tokens</a>
+			}
+			<div class="menu-theme"><span class="menu-label">Theme</span>@themeSwitch(nav)</div>
+			if nav.User != "" {
+				<form method="post" action={ templ.SafeURL(nav.Prefix + "/logout") }>
+					<button class="menu-item" type="submit">Log out</button>
+				</form>
+			}
+		</div>
+	</details>
+}
+
+// registerPicker is a register's name, and the way to another register:
+// the endpoints on, then those off, then Unmatched, each with its count.
+templ registerPicker(nav navView, reg registerView) {
+	<details class="menu pick" data-menu>
+		<summary class="reg-name">{ title(reg) }</summary>
+		<div class="menu-list">
+			if nav.someOff() {
+				<span class="menu-label">On</span>
+			}
+			for _, e := range nav.Endpoints {
+				if e.Enabled {
+					@pickItem(nav.registerURL(e.ID), e.Path, e.Count, nav.Current == e.ID, "menu-item")
 				}
-				if nav.someOff() {
-					<optgroup label="On">
-						for _, e := range nav.Endpoints {
-							if e.Enabled {
-								<option value={ nav.registerURL(e.ID) } selected?={ nav.Current == e.ID }>{ e.Path }</option>
-							}
-						}
-					</optgroup>
-					<optgroup label="Off">
-						for _, e := range nav.Endpoints {
-							if !e.Enabled {
-								<option value={ nav.registerURL(e.ID) } selected?={ nav.Current == e.ID }>{ e.Path } · off</option>
-							}
-						}
-					</optgroup>
-				} else {
-					for _, e := range nav.Endpoints {
-						<option value={ nav.registerURL(e.ID) } selected?={ nav.Current == e.ID }>{ e.Path }</option>
+			}
+			if nav.someOff() {
+				<span class="menu-label">Off</span>
+				for _, e := range nav.Endpoints {
+					if !e.Enabled {
+						@pickItem(nav.registerURL(e.ID), e.Path, e.Count, nav.Current == e.ID, "menu-item off")
 					}
 				}
-				<option value={ nav.registerURL(store.Unmatched) } selected?={ nav.Current == store.Unmatched }>Unmatched · { strconv.Itoa(nav.Unmatched) }</option>
-			</select>
+			}
+			@pickItem(nav.registerURL(store.Unmatched), "Unmatched", nav.Unmatched, nav.Current == store.Unmatched, "menu-item apart")
+			<a class="menu-item apart" href={ templ.SafeURL(nav.Prefix + "/") }><span>All endpoints</span><span aria-hidden="true">→</span></a>
 		</div>
-	}
-	<div class="status">
-		if nav.OnRegister {
-			<span class="rec" id="feed-state" data-state="connecting"><i aria-hidden="true"></i><span>Connecting</span></span>
-		}
-		<span class="addr">{ hostOf(nav.Catch) }</span>
-		<a class="btn" href={ templ.SafeURL(nav.Prefix + "/") }>Endpoints</a>
-		@themeSwitch(nav)
-		if nav.Admin {
-			<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users") }>Users</a>
-		}
-		if nav.User != "" {
-			<a class="who" href={ templ.SafeURL(nav.Prefix + "/account") } title="Your password and tokens">{ nav.User }</a>
-			<form method="post" action={ templ.SafeURL(nav.Prefix + "/logout") }>
-				<button class="btn quiet" type="submit">Log out</button>
-			</form>
-		}
-	</div>
+	</details>
+}
+
+templ pickItem(href, name string, n int, current bool, class string) {
+	<a class={ class } href={ templ.SafeURL(href) } aria-current={ tabCurrent(current) }><span>{ name }</span><span class="n">{ strconv.Itoa(n) }</span></a>
 }
 
 // themeSwitch chooses this browser's theme: a form, so it works without
@@ -223,7 +250,6 @@ templ endpointsPage(nav navView, d endpointsDialog) {
 					</form>
 				</dialog>
 			}
-			<p class="build">Hookwitness { nav.Build }</p>
 		</main>
 	}
 }
@@ -336,7 +362,7 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 		<main class="desk">
 			<section class="register" aria-label="Caught requests">
 				<div class="reg-head">
-					<span class="reg-name">{ title(reg) }</span>
+					@registerPicker(nav, reg)
 					<span><span id="kept" data-count="kept">{ strconv.Itoa(reg.Count) }</span> kept</span>
 				</div>
 				<div class="reg-tools">

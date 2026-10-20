@@ -181,7 +181,7 @@ func TestFirstUserTurnsLoginOn(t *testing.T) {
 	}
 	c := e.login(t, "ANN", adminPW)
 	rec = e.req("GET", "/admin/", c, "", nil)
-	if rec.Code != 200 || strings.Contains(rec.Body.String(), "No login.") || !strings.Contains(rec.Body.String(), ">ann</a>") {
+	if rec.Code != 200 || strings.Contains(rec.Body.String(), "No login.") || !strings.Contains(rec.Body.String(), "<summary>ann</summary>") {
 		t.Fatalf("logged in: %d", rec.Code)
 	}
 	if !strings.Contains(e.log.String(), "user added") || !strings.Contains(e.log.String(), "user logged in") {
