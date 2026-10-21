@@ -206,3 +206,22 @@ func TestSetupEmpty(t *testing.T) {
 		t.Fatal("a schemas part with no schemas")
 	}
 }
+
+// A header the report masks stays masked in the setup section: what a
+// required header must equal, and a reply's header of that name.
+func TestSetupMasked(t *testing.T) {
+	o := setupOptions(t)
+	o.Mask = []string{"x-shop-domain"}
+	o.Setup.Default.Headers = append(o.Setup.Default.Headers, emulate.Header{Name: "X-Shop-Domain", Value: "reply-secret.example"})
+	for _, f := range []Format{Markdown, HTML} {
+		got := render(t, f, o, fixture(t)[:1])
+		_, section, _ := strings.Cut(got, "Setup")
+		section, _, _ = strings.Cut(section, "Requests")
+		if strings.Contains(section, "test-shop.example") || strings.Contains(section, "reply-secret.example") {
+			t.Errorf("%s: a masked header's value in the setup section:\n%s", f, section)
+		}
+		if !strings.Contains(section, "•••• 17 chars") || !strings.Contains(section, "•••• 20 chars") {
+			t.Errorf("%s: the masked values are not marked:\n%s", f, section)
+		}
+	}
+}

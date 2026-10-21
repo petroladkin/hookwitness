@@ -76,9 +76,19 @@ func (h *Handler) exportSetup(w http.ResponseWriter, r *http.Request) {
 	w.Write(f.JSON())
 }
 
+// maxImportForm bounds an import form's body.
+const maxImportForm = 3*setup.MaxSize + 1<<20
+
 // importForm reads the file of the first step: an uploaded file wins over
 // pasted text.
 func importForm(r *http.Request) (string, error) {
+	if err := r.ParseMultipartForm(1 << 20); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			return "", fmt.Errorf("the file is over %d MiB", setup.MaxSize>>20)
+		}
+		return "", fmt.Errorf("the form could not be read: %v", err)
+	}
 	text := r.PostFormValue("text")
 	if f, hdr, err := r.FormFile("file"); err == nil {
 		defer f.Close()
@@ -107,6 +117,9 @@ func importForm(r *http.Request) (string, error) {
 // replacements and secret values chosen.
 func (h *Handler) importSetup(w http.ResponseWriter, r *http.Request) {
 	show := func(status int, v importView) { h.showEndpointsWith(w, r, status, endpointsDialog{Import: &v}) }
+	// The form is bounded before it is read: a setup file, sent once more
+	// (escaped) with the second step, and the fields beside it.
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportForm)
 	text, err := importForm(r)
 	if err != nil {
 		show(http.StatusUnprocessableEntity, importView{Text: text, Error: err.Error()})

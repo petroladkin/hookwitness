@@ -95,8 +95,10 @@ What each setting does:
   path. Nothing publishes 8080 on the server: only Caddy reaches it.
 - `HOOKWITNESS_ADMIN_PREFIX: /` puts the UI at the root of the admin port.
 - `HOOKWITNESS_PUBLIC_URL` is the address senders use: the catch URLs the UI
-  shows are built on it, and an `https://` address marks the login cookie
-  *Secure*.
+  shows are built on it. The login cookie is *Secure* on the admin's own
+  site (step 3, for a team); through the tunnel, over plain HTTP, it is
+  not, or the browser would drop it ([Behind a reverse
+  proxy](access.md#behind-a-reverse-proxy)).
 - The `hookwitness` volume holds the database and the key that seals the
   secrets; see [Keep the data in a volume](deployment.md#keep-the-data-in-a-volume).
 

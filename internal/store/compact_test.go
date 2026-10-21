@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -202,4 +203,40 @@ func TestCompactFailureLeavesTheDatabase(t *testing.T) {
 	if mode, _ := s.AutoVacuum(ctx); mode != "none" {
 		t.Fatalf("mode %q", mode)
 	}
+}
+
+// A new lock file takes the database's mode (and owner), and a lock file
+// this user cannot write is still taken, read-only: a lock left by another
+// user (sudo hookwitness db compact) does not keep the server out.
+func TestLockFileOwnerAndReadOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no advisory locks here")
+	}
+	dir := t.TempDir()
+	db := filepath.Join(dir, "h.db")
+	if err := os.WriteFile(db, nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	f, err := lockFile(db+".lock", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if fi, _ := os.Stat(db + ".lock"); fi.Mode().Perm() != 0o640 {
+		t.Fatalf("lock mode %v, want the database's 0640", fi.Mode().Perm())
+	}
+	if err := os.Chmod(db+".lock", 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root writes any file")
+	}
+	f, err = lockFile(db+".lock", false)
+	if err != nil {
+		t.Fatalf("a read-only lock file: %v", err)
+	}
+	if _, err := lockFile(db+".lock", true); !errors.Is(err, errLocked) {
+		t.Fatalf("exclusive while shared is held: %v", err)
+	}
+	f.Close()
 }

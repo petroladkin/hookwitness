@@ -247,14 +247,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
 
-// allowedHost reports whether the UI answers to host (a Host header): an IP
-// address, localhost or a *.localhost name, or one of the configured names.
-func (h *Handler) allowedHost(host string) bool {
+// hostName is a Host header's name: no port, no brackets, lower case,
+// without a trailing dot.
+func hostName(host string) string {
 	name := host
 	if hn, _, err := net.SplitHostPort(host); err == nil {
 		name = hn
 	}
-	name = strings.ToLower(strings.TrimSuffix(strings.Trim(name, "[]"), "."))
+	return strings.ToLower(strings.TrimSuffix(strings.Trim(name, "[]"), "."))
+}
+
+// allowedHost reports whether the UI answers to host (a Host header): an IP
+// address, localhost or a *.localhost name, or one of the configured names.
+func (h *Handler) allowedHost(host string) bool {
+	name := hostName(host)
 	if _, err := netip.ParseAddr(name); err == nil {
 		return true
 	}

@@ -163,9 +163,15 @@ with the "no login" line, until the first user exists.
 
 ## Behind a reverse proxy
 
-- The login cookie is marked *Secure* when the request came over TLS, or when
-  `-public-url` / `HOOKWITNESS_PUBLIC_URL` is `https://…`: behind a TLS
-  proxy, set it.
+- The login cookie is marked *Secure* when the browser reached the admin
+  over TLS: the request came over TLS, a proxy named in `-trusted-proxies`
+  says so in `X-Forwarded-Proto`, or `-public-url` /
+  `HOOKWITNESS_PUBLIC_URL` is `https://…` and the admin shares the catch
+  port (behind a TLS proxy, set it). With the admin on [its own
+  port](deployment.md#the-admin-on-its-own-port), an `https://` public URL
+  counts only when the admin is opened by a name of `-admin-hosts`: opened
+  by an address over plain HTTP (an SSH tunnel, the LAN), the cookie is not
+  *Secure*, since a browser would drop it there.
 - The login limit counts failures per client address. Behind a proxy every
   login comes from the proxy's address, so they would share one limit.
   `-trusted-proxies` / `HOOKWITNESS_TRUSTED_PROXIES` (addresses or CIDRs,

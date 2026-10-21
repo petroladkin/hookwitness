@@ -26,6 +26,10 @@ type Limiter struct {
 	// the addresses by their first tracked failure, for eviction.
 	fails map[string][]time.Time
 	order []string
+	// pending counts each address's attempts allowed but not yet settled:
+	// they count against the limit, so a burst cannot pass Allow before any
+	// of its failures is recorded.
+	pending map[string]int
 }
 
 // NewLimiter returns a limiter; now is the clock (nil: time.Now).
@@ -33,7 +37,7 @@ func NewLimiter(now func() time.Time) *Limiter {
 	if now == nil {
 		now = time.Now
 	}
-	return &Limiter{now: now, fails: map[string][]time.Time{}}
+	return &Limiter{now: now, fails: map[string][]time.Time{}, pending: map[string]int{}}
 }
 
 // recent drops the failures of addr older than the window; the lock is held.
@@ -52,23 +56,47 @@ func (l *Limiter) recent(addr string, now time.Time) []time.Time {
 	return fs
 }
 
-// Allow reports whether addr may try to log in now; when not, wait is how
-// long until it may.
+// Allow reports whether addr may try to log in now, and reserves the
+// attempt: every allowed attempt is settled once, by Fail, Success or
+// Release. When not allowed, wait is how long until it may be (at least a
+// second while the attempts in flight are unsettled).
 func (l *Limiter) Allow(addr string) (ok bool, wait time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	fs := l.recent(addr, now)
-	if len(fs) < MaxFailures {
+	if len(fs)+l.pending[addr] < MaxFailures {
+		l.pending[addr]++
 		return true, 0
+	}
+	if len(fs) < MaxFailures {
+		return false, time.Second
 	}
 	return false, fs[len(fs)-MaxFailures].Add(FailureWindow).Sub(now)
 }
 
-// Fail records a failed login from addr.
+// settle ends one reserved attempt of addr; the lock is held.
+func (l *Limiter) settle(addr string) {
+	if l.pending[addr] <= 1 {
+		delete(l.pending, addr)
+	} else {
+		l.pending[addr]--
+	}
+}
+
+// Release settles an allowed attempt that neither failed nor succeeded (the
+// server was busy or failed).
+func (l *Limiter) Release(addr string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.settle(addr)
+}
+
+// Fail settles an allowed attempt as a failed login from addr.
 func (l *Limiter) Fail(addr string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.settle(addr)
 	now := l.now()
 	if _, known := l.fails[addr]; !known {
 		for len(l.fails) >= maxTracked && len(l.order) > 0 {
@@ -89,10 +117,12 @@ func (l *Limiter) Fail(addr string) {
 	}
 }
 
-// Success clears addr's failures.
+// Success settles an allowed attempt as a login and clears addr's
+// failures.
 func (l *Limiter) Success(addr string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.settle(addr)
 	delete(l.fails, addr)
 }
 
@@ -128,6 +158,25 @@ func (ps Proxies) trusted(a netip.Addr) bool {
 		}
 	}
 	return false
+}
+
+// ForwardedHTTPS reports whether a trusted proxy says the request reached it
+// over TLS: the peer is one of ps and the last X-Forwarded-Proto is https.
+func ForwardedHTTPS(r *http.Request, ps Proxies) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	peer, err := netip.ParseAddr(host)
+	if err != nil || !ps.trusted(peer) {
+		return false
+	}
+	vs := r.Header.Values("X-Forwarded-Proto")
+	if len(vs) == 0 {
+		return false
+	}
+	parts := strings.Split(vs[len(vs)-1], ",")
+	return strings.EqualFold(strings.TrimSpace(parts[len(parts)-1]), "https")
 }
 
 // ClientAddr is the address a request came from: the TCP peer, or, when the
