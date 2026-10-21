@@ -31,3 +31,24 @@ func TestSessionLimitProbeFreesAtOnce(t *testing.T) {
 		t.Fatalf("initialize after probes: %d", s)
 	}
 }
+
+// Only an initialize (or a body that cannot be told apart from one) takes a
+// slot: an SDK client probes server/discover first and sends initialize as
+// soon as the probe's answer arrives.
+func TestOpens(t *testing.T) {
+	for _, c := range []struct {
+		body string
+		want bool
+	}{
+		{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`, true},
+		{`{"jsonrpc":"2.0","id":1,"method":"server/discover"}`, false},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, false},
+		{`[{"jsonrpc":"2.0","id":1,"method":"initialize"}]`, true},
+		{`{"jsonrpc":"2.0","method":`, true},
+		{`{"method":"tools/list","pad":"` + strings.Repeat("x", peekSize) + `"}`, true},
+	} {
+		if got := opens([]byte(c.body)); got != c.want {
+			t.Errorf("opens(%.60s) = %v, want %v", c.body, got, c.want)
+		}
+	}
+}

@@ -112,10 +112,20 @@ type creatingKey struct{}
 type creating struct{ srv *sdk.Server }
 
 // ServeHTTP takes a slot for a request that would create a session (a POST
-// without a session id: initialize), refusing it when none is free;
-// requests of existing sessions pass untouched.
+// without a session id whose message is initialize), refusing it when none
+// is free; requests of existing sessions and other messages without one (a
+// client probing a newer protocol first) pass untouched.
 func (s *Streamable) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || r.Header.Get("Mcp-Session-Id") != "" {
+		s.sdk.ServeHTTP(w, r)
+		return
+	}
+	head, err := io.ReadAll(io.LimitReader(r.Body, peekSize))
+	r.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(head), r.Body), r.Body}
+	if err == nil && !opens(head) {
 		s.sdk.ServeHTTP(w, r)
 		return
 	}
@@ -142,6 +152,24 @@ func (s *Streamable) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !held {
 		s.give()
 	}
+}
+
+// peekSize is how much of a body opens reads; an initialize is far smaller.
+const peekSize = 64 << 10
+
+// opens reports whether a message sent without a session id may create a
+// session: an initialize, or anything that is not one JSON-RPC message read
+// whole (counted, to be safe). A probe answered without a session must not
+// hold a slot: its client sends initialize the moment the answer arrives,
+// before the handler could give the slot back.
+func opens(head []byte) bool {
+	var msg struct {
+		Method string `json:"method"`
+	}
+	if len(head) >= peekSize || json.Unmarshal(head, &msg) != nil {
+		return true
+	}
+	return msg.Method == "initialize"
 }
 
 func (s *Streamable) take() bool {

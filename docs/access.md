@@ -36,7 +36,7 @@ to add it; pick by how the server runs:
   ```yaml
   services:
     hookwitness:
-      image: ghcr.io/petroladkin/hookwitness:0.1
+      image: ghcr.io/petroladkin/hookwitness:0.2
       ports: ["8080:8080"]
       volumes: ["hookwitness:/data"]
       environment:

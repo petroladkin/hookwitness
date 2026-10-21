@@ -1,6 +1,6 @@
 # Contributing to Hookwitness
 
-Thanks for looking. The project is young (0.1, before 1.0) and the shape of
+Thanks for looking. The project is young (0.2, before 1.0) and the shape of
 the code is still settling, so **open an issue before a pull request** and
 say what problem the change solves. That costs less than a pull request that cannot be
 merged. The issue forms ask for what helps: a bug's version and a request
@@ -33,7 +33,7 @@ a pull request (`scripts/dco.sh`) and fails when one lacks it.
   `hotfix/<name>` are for maintainers.
 - A fix for a released version (a security problem, a serious bug) goes on a
   `hotfix/<name>` branch from `main`, is released as the next patch version
-  (0.1.0 → 0.1.1) and merged back into `dev`.
+  (0.2.0 → 0.2.1) and merged back into `dev`.
 - One branch, one concern. A fix and a refactor are two pull requests.
 - CI runs `make check`, `make docs-check` and the container and API smoke
   tests on every pull request; all must pass.

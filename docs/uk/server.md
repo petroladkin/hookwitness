@@ -54,7 +54,7 @@ sudo chown 65532 admin_password.txt && sudo chmod 400 admin_password.txt
 ```yaml
 services:
   hookwitness:
-    image: ghcr.io/petroladkin/hookwitness:0.1
+    image: ghcr.io/petroladkin/hookwitness:0.2
     restart: unless-stopped
     ports: ["127.0.0.1:8081:8081"]   # адмінка, лише на localhost сервера
     volumes: ["hookwitness:/data"]
