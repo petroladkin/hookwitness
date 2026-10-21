@@ -112,6 +112,16 @@ func (h *Handler) openUI(r *http.Request) bool {
 	return p == h.prefix+"/login" || p == h.prefix+"/logout" || strings.HasPrefix(p, h.prefix+"/static/")
 }
 
+// mayReplay reports whether the caller may send replays: an admin, or
+// anyone while login is off.
+func (h *Handler) mayReplay(ctx context.Context) bool {
+	on, err := h.uiLoginOn(ctx)
+	if err != nil {
+		return false
+	}
+	return !on || access.From(ctx).Admin()
+}
+
 // gateUI applies the UI's rules; it answers itself and returns false when
 // the request may not go on.
 func (h *Handler) gateUI(w http.ResponseWriter, r *http.Request, id *access.Identity) bool {
@@ -137,6 +147,11 @@ func (h *Handler) gateUI(w http.ResponseWriter, r *http.Request, id *access.Iden
 			h.forbidden(w, r, "Only an admin can manage users.")
 			return false
 		}
+	}
+	// Sending a replay reaches the server's own network: admins only.
+	if strings.HasPrefix(p, h.prefix+"/r/") && strings.HasSuffix(p, "/replay") && !id.Admin() {
+		h.forbidden(w, r, "Only an admin can replay requests.")
+		return false
 	}
 	if (p == h.prefix+"/account" || strings.HasPrefix(p, h.prefix+"/account/")) && id.Via != access.ViaSession {
 		h.forbidden(w, r, "Your password and tokens are managed after logging in, not with a token.")

@@ -99,3 +99,35 @@ func TestReplayNotOffered(t *testing.T) {
 		t.Fatalf("post: %d", rec.Code)
 	}
 }
+
+// With login on, sending a replay is an admin's: a user is not offered it
+// and is refused, an admin is offered it; both read recorded replays.
+func TestReplayAdminsOnly(t *testing.T) {
+	e := newAccessEnv(t, "")
+	e.addUser(t, "ann", store.RoleAdmin, adminPW)
+	e.addUser(t, "bob", store.RoleUser, userPW)
+	ctx := context.Background()
+	ep, _ := e.st.CreateEndpoint(ctx, "/hooks")
+	r := &store.Request{EndpointID: ep.ID, Method: "POST", Path: "/hooks", Proto: "HTTP/1.1", Body: []byte("{}"), Size: 2}
+	if err := e.st.AddRequest(ctx, r, 100, nil); err != nil {
+		t.Fatal(err)
+	}
+	self := fmt.Sprintf("/admin/e/%d/r/%d", ep.ID, r.ID)
+	post := fmt.Sprintf("/admin/r/%d/replay", r.ID)
+	ann, bob := e.login(t, "ann", adminPW), e.login(t, "bob", userPW)
+	if page := e.req("GET", self, bob, "", nil).Body.String(); strings.Contains(page, "?replay") {
+		t.Fatal("Replay offered to a user")
+	}
+	if page := e.req("GET", self+"?replay", bob, "", nil).Body.String(); strings.Contains(page, `id="dialog-title">Replay`) {
+		t.Fatal("the replay dialog shown to a user")
+	}
+	if rec := e.form(post, bob, url.Values{"url": {"http://127.0.0.1:1/"}}); rec.Code != http.StatusForbidden {
+		t.Fatalf("a user's replay: %d", rec.Code)
+	}
+	if page := e.req("GET", self, ann, "", nil).Body.String(); !strings.Contains(page, "?replay") {
+		t.Fatal("Replay not offered to an admin")
+	}
+	if page := e.req("GET", self+"?replay", ann, "", nil).Body.String(); !strings.Contains(page, `id="dialog-title">Replay`) {
+		t.Fatal("the replay dialog not shown to an admin")
+	}
+}

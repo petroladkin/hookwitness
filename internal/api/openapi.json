@@ -2109,6 +2109,16 @@
               }
             }
           },
+          "403": {
+            "description": "Only an admin can send a replay (`forbidden`): it reaches the server's own network.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           }
