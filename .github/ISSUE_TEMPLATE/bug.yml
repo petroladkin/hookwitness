@@ -7,7 +7,7 @@ body:
     attributes:
       label: Version
       description: "`hookwitness version`, or the line at the foot of any page of the UI."
-      placeholder: hookwitness v0.1.0 (7da28df)
+      placeholder: hookwitness v0.2.0 (bb4bab0)
     validations:
       required: true
   - type: dropdown

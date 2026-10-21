@@ -15,11 +15,12 @@ published with the fix; you are credited unless you ask not to be.
 
 | Version | Fixes |
 |---|---|
-| 0.1.x, the newest patch release | yes: a patch release (0.1.1, 0.1.2…) and the `:0.1` image |
-| older 0.1.x releases | upgrade to the newest 0.1.x |
+| 0.2.x, the newest patch release | yes: a patch release (0.2.1, 0.2.2…) and the `:0.2` image |
+| older 0.2.x releases | upgrade to the newest 0.2.x |
+| 0.1.x | no: upgrade to 0.2 |
 | `:edge` and `dev` builds | fixed on `dev`; no promises in between |
 
-Before 1.0, only the newest minor version gets fixes: once 0.2.0 is out, 0.1
+Before 1.0, only the newest minor version gets fixes: once 0.3.0 is out, 0.2
 does not.
 
 ## In scope
