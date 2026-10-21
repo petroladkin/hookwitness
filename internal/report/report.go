@@ -283,8 +283,6 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 	}
 	if h.Endpoint == "" {
 		h.Endpoint = "Unmatched"
-	} else if o.Setup != nil {
-		h.Setup = describeSetup(*o.Setup)
 	}
 	for _, m := range o.Mask {
 		if k := strings.ToLower(strings.TrimSpace(m)); k != "" && !h.mask[k] {
@@ -293,6 +291,9 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 		}
 	}
 	slices.SortFunc(h.Masked, func(a, b string) int { return cmp.Compare(strings.ToLower(a), strings.ToLower(b)) })
+	if h.Endpoint != "Unmatched" && o.Setup != nil {
+		h.Setup = describeSetup(*o.Setup, h.mask) // after the mask: masked headers' values stay masked there too
+	}
 
 	classes := map[string]int{}
 	checks := map[int]*CheckCount{}

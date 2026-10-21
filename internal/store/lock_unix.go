@@ -5,7 +5,9 @@ package store
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"strings"
 	"syscall"
 )
 
@@ -13,8 +15,22 @@ import (
 // every process that uses the database, exclusive for compacting it. It
 // never waits: errLocked when the other kind is held. The lock lasts until
 // the returned file is closed.
+//
+// A new lock file gets the owner and mode of the database next to it (path
+// without ".lock"), so a lock made by another user (sudo hookwitness db
+// compact) does not keep the server's user out; one that cannot be written
+// is opened for reading, which is enough for a lock.
 func lockFile(path string, exclusive bool) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	switch {
+	case err == nil:
+		_ = sameOwner(strings.TrimSuffix(path, ".lock"), path) // best effort: a new database has no file yet
+	case errors.Is(err, fs.ErrExist):
+		f, err = os.OpenFile(path, os.O_RDWR, 0)
+		if errors.Is(err, fs.ErrPermission) {
+			f, err = os.Open(path)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

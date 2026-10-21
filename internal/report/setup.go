@@ -52,10 +52,29 @@ type SetupReply struct {
 // SetupSecret is a secret named, never shown.
 type SetupSecret struct{ Name, Kind, State, Use string }
 
-// describeSetup puts a behaviour in words.
-func describeSetup(c emulate.Config) *Setup {
-	s := &Setup{Default: setupReply(c.Default), Vars: c.Vars}
+// describeSetup puts a behaviour in words. The values of headers the
+// report masks (lower-case names in mask) are masked here too: what a
+// required header must equal or match, and a reply's header of that name.
+func describeSetup(c emulate.Config, mask map[string]bool) *Setup {
+	reply := func(r emulate.Reply) SetupReply {
+		out := setupReply(r)
+		if len(out.Headers) > 0 {
+			hs := make([]emulate.Header, len(out.Headers))
+			for i, hd := range out.Headers {
+				if mask[strings.ToLower(hd.Name)] {
+					hd.Value = maskValue(hd.Value)
+				}
+				hs[i] = hd
+			}
+			out.Headers = hs
+		}
+		return out
+	}
+	s := &Setup{Default: reply(c.Default), Vars: c.Vars}
 	for i, ch := range c.Checks {
+		if !ch.GivesVerdict() && ch.Value != "" && mask[strings.ToLower(ch.Header)] {
+			ch.Value = maskValue(ch.Value)
+		}
 		s.Checks = append(s.Checks, SetupCheck{No: i + 1, Label: ch.Label(), Detail: ch.Summary()})
 	}
 	for _, sc := range c.Schemas {
@@ -64,7 +83,7 @@ func describeSetup(c emulate.Config) *Setup {
 	for i, r := range c.Rules {
 		sr := SetupRule{No: i + 1, When: r.When.Label(), Then: r.Action()}
 		if r.Do == emulate.ActReply {
-			rep := setupReply(r.Reply)
+			rep := reply(r.Reply)
 			sr.Reply = &rep
 		}
 		s.Rules = append(s.Rules, sr)

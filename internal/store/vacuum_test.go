@@ -160,3 +160,35 @@ func openRelease010(t *testing.T) *Store {
 	t.Cleanup(func() { s.Close() })
 	return s
 }
+
+// TestClearStandsWhenTheCallerLeaves: once a clear or a delete has
+// committed, the caller leaving while the space is given back neither
+// fails it nor stops the giving back.
+func TestClearStandsWhenTheCallerLeaves(t *testing.T) {
+	s := openTemp(t)
+	ep, _ := s.CreateEndpoint(context.Background(), "/big")
+	other, _ := s.CreateEndpoint(context.Background(), "/other")
+	fill(t, s, ep.ID, 192, 1000) // 12 MiB each: several steps of ReclaimStep pages
+	fill(t, s, other.ID, 192, 1000)
+	for _, op := range []func(context.Context) error{
+		func(ctx context.Context) error { return s.ClearRequests(ctx, ep.ID) },
+		func(ctx context.Context) error { return s.DeleteEndpoint(ctx, other.ID) },
+	} {
+		ctx, cancel := context.WithCancel(context.Background())
+		steps := 0
+		reclaimHook = func(int64) { steps++; cancel() } // the caller leaves after the first step
+		err := op(ctx)
+		reclaimHook = nil
+		cancel()
+		if err != nil {
+			t.Fatalf("committed, then answered %v", err)
+		}
+		if free, _ := s.freePages(context.Background()); free != 0 || steps < 2 {
+			t.Fatalf("%d free pages left after %d steps: the giving back stopped with the caller", free, steps)
+		}
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM requests`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("%d requests left (%v)", n, err)
+	}
+}

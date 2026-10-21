@@ -521,14 +521,21 @@ func (s *Store) RequestsChanged(ctx context.Context, endpointID, upToID, afterSe
 	return reqs, seq, nil
 }
 
+// reclaimAfter gives back the space a committed delete freed. The delete
+// stands whatever happens here: the caller leaving does not cut it short,
+// and a failure is left to the housekeeping tick, which reclaims too.
+func (s *Store) reclaimAfter(ctx context.Context) {
+	_, _ = s.Reclaim(context.WithoutCancel(ctx), 0)
+}
+
 // DeleteEndpoint removes an endpoint and every request it caught, and
 // gives the space back (Reclaim).
 func (s *Store) DeleteEndpoint(ctx context.Context, id int64) error {
 	if err := s.deleteEndpoint(ctx, id); err != nil {
 		return err
 	}
-	_, err := s.Reclaim(ctx, 0)
-	return err
+	s.reclaimAfter(ctx)
+	return nil
 }
 
 func (s *Store) deleteEndpoint(ctx context.Context, id int64) error {
@@ -567,8 +574,8 @@ func (s *Store) ClearRequests(ctx context.Context, endpointID int64) error {
 	if err := s.clearRequests(ctx, endpointID); err != nil {
 		return err
 	}
-	_, err := s.Reclaim(ctx, 0)
-	return err
+	s.reclaimAfter(ctx)
+	return nil
 }
 
 func (s *Store) clearRequests(ctx context.Context, endpointID int64) error {

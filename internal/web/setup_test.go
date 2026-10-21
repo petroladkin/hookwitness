@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -171,4 +172,40 @@ func TestImportSetupFileUpload(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `name="path_1" value="/refunds"`) {
 		t.Fatalf("upload: %d %s", rec.Code, rec.Body)
 	}
+}
+
+// An upload over the import form's bound is refused once the bound is
+// reached: the rest of it is never read, so nothing big lands on disk.
+func TestImportSetupUploadBounded(t *testing.T) {
+	e := newEnv(t)
+	head := "--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"big.json\"\r\nContent-Type: application/json\r\n\r\n"
+	body := &countingReader{r: io.MultiReader(strings.NewReader(head), io.LimitReader(zeros{}, 4*maxImportForm), strings.NewReader("\r\n--b--\r\n"))}
+	r := httptest.NewRequest("POST", "/admin/import", body)
+	r.Header.Set("Content-Type", "multipart/form-data; boundary=b")
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "the file is over 16 MiB") {
+		t.Fatalf("big upload: %d", rec.Code)
+	}
+	if body.n > maxImportForm+64<<10 {
+		t.Fatalf("read %d bytes of the upload, bound %d", body.n, maxImportForm)
+	}
+}
+
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }

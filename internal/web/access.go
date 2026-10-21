@@ -84,9 +84,21 @@ func (h *Handler) failGate(w http.ResponseWriter, isAPI bool, err error) {
 }
 
 // secure reports whether the login cookie should be Secure: the request
-// came over TLS, or the public URL is https (a TLS proxy in front).
+// came over TLS, or a trusted proxy says it did (X-Forwarded-Proto). On the
+// shared listener an https public URL also says so (the admin is behind the
+// same TLS proxy as the catch paths). An admin with its own listener may be
+// reached over plain HTTP while senders use https (an SSH tunnel, a LAN
+// address): there an https public URL counts only for the names given in
+// -admin-hosts, the names a proxy serves; a browser drops a Secure cookie on
+// plain HTTP and the login would loop.
 func (h *Handler) secure(r *http.Request) bool {
-	return r.TLS != nil || strings.HasPrefix(h.catch.Public, "https://")
+	if r.TLS != nil || access.ForwardedHTTPS(r, h.proxies) {
+		return true
+	}
+	if !strings.HasPrefix(h.catch.Public, "https://") {
+		return false
+	}
+	return !h.catch.Separate || h.hosts[hostName(r.Host)]
 }
 
 // uiLoginOn reports whether the UI requires a login: some user exists.

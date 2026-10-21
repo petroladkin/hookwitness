@@ -103,9 +103,11 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		again(http.StatusUnauthorized, "Wrong name or password.")
 		return
 	case errors.Is(err, access.ErrBusy):
+		h.limiter.Release(addr)
 		h.busy(w, false)
 		return
 	case err != nil:
+		h.limiter.Release(addr)
 		h.fail(w, "login", err)
 		return
 	}
