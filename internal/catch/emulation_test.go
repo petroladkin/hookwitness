@@ -499,16 +499,18 @@ func TestRawReplyBody(t *testing.T) {
 	}
 }
 
-// Every rendered reply carries the protective headers unless the endpoint
-// sets them: a reply is served from the admin UI's origin, and one that
-// echoes the request must not run as a page of it. They are recorded as
-// sent.
+// Every rendered reply carries the sandbox, also next to an endpoint's own
+// policy, and nosniff unless the endpoint sets it: a reply is served from
+// the admin UI's origin, and neither one that echoes the request nor one a
+// user scripted may run as a page of it. They are recorded as sent. A reply
+// never sets the admin's login cookie.
 func TestProtectiveHeaders(t *testing.T) {
 	h, st, _ := setup(t, 1<<20)
 	url := serve(t, h)
 	echo := configure(t, st, "/echo", emulate.Config{Default: emulate.Reply{Status: 200, Body: "{{.Body}}"}})
 	own := configure(t, st, "/own", emulate.Config{Default: emulate.Reply{Status: 200, Body: "<b>x</b>", Headers: []emulate.Header{
 		{Name: "Content-Type", Value: "text/html"}, {Name: "content-security-policy", Value: "default-src 'none'"},
+		{Name: "Set-Cookie", Value: "hookwitness_session=planted; Path=/admin/"}, {Name: "Set-Cookie", Value: "other=kept"},
 	}}})
 	broken := configure(t, st, "/broken", emulate.Config{Default: emulate.Reply{Status: 200, Body: `{{printf "%*d" 900000000 1}}`}})
 	refusing := configure(t, st, "/refusing", emulate.Config{Default: emulate.Reply{Status: 200},
@@ -520,7 +522,7 @@ func TestProtectiveHeaders(t *testing.T) {
 		csp    string
 	}{
 		{echo, "/echo", 200, "sandbox"},
-		{own, "/own", 200, "default-src 'none'"},
+		{own, "/own", 200, "default-src 'none'|sandbox"},
 		{broken, "/broken", 500, "sandbox"},
 		{refusing, "/refusing", 400, "sandbox"},
 	} {
@@ -544,6 +546,9 @@ func TestProtectiveHeaders(t *testing.T) {
 		}
 		if strings.Join(csp, "|") != c.csp || strings.Join(sniff, "|") != "nosniff" {
 			t.Errorf("%s: outcome headers %v", c.path, o.Headers)
+		}
+		if c.path == "/own" && strings.Join(resp.Header.Values("Set-Cookie"), "|") != "other=kept" {
+			t.Errorf("own: Set-Cookie %v", resp.Header.Values("Set-Cookie"))
 		}
 	}
 }

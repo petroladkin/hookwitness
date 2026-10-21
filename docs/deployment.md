@@ -2,6 +2,8 @@
 
 How to run Hookwitness for longer than an afternoon: in Docker with its data
 in a volume, with its settings, its secret key, and behind a reverse proxy.
+For a whole server for a team, step by step, see [Setting up a shared
+server](server.md).
 
 ## Docker
 
@@ -26,7 +28,9 @@ Release candidates (`:0.1.0-rc.1`) have only their own tag.
 
 Everything Hookwitness keeps (endpoints, their behaviour, secrets, caught
 requests) is in `/data`: the database and, unless `HOOKWITNESS_SECRET_KEY` is
-set, the key that seals the secrets (`/data/hookwitness.db.key`).
+set, the key that seals the secrets (`/data/hookwitness.db.key`). An empty
+`/data/hookwitness.db.lock` tells a running server from a stopped one (see
+[The database's size](#the-databases-size)).
 
 **Always mount `/data`.** Without `-v hookwitness:/data`, the data lives in
 the container's own layer: `docker rm` followed by a new `docker run` (an
@@ -76,9 +80,17 @@ variable. In Docker, pass the variables: `-e HOOKWITNESS_RETENTION=5000`.
 | `-max-body` | `HOOKWITNESS_MAX_BODY` | `10MiB` | the largest body kept, in bytes or with `KiB`, `MiB`, `GiB`, at most `512MiB`; a larger one is answered `413` and not kept |
 | `-max-inflight` | `HOOKWITNESS_MAX_INFLIGHT` | the larger of `256MiB` and twice `-max-body` | bytes of request bodies read at once; a body that does not fit is answered `503` with `Retry-After: 5` and kept without its body; at least `-max-body` |
 | `-retention` | `HOOKWITNESS_RETENTION` | `1000` | requests kept per endpoint, and as many unmatched |
-| `-admin-prefix` | `HOOKWITNESS_ADMIN_PREFIX` | `/admin` | where the UI and the API live |
+| `-admin-addr` | `HOOKWITNESS_ADMIN_ADDR` | none | the admin's own address (host:port) for the UI, the API and MCP; none: they live under `-admin-prefix` on `-addr` ([below](#the-admin-on-its-own-port)) |
+| `-admin-prefix` | `HOOKWITNESS_ADMIN_PREFIX` | `/admin` | where the UI and the API live; `/` (the root) only with `-admin-addr` |
+| `-public-url` | `HOOKWITNESS_PUBLIC_URL` | none | the URL senders reach the catch paths at, such as `https://hooks.example.com`: the catch URLs the UI and the API show are built on it (behind a proxy, a tunnel or remapped ports) |
 | `-admin-hosts` | `HOOKWITNESS_ADMIN_HOSTS` | none | host names the UI and the API answer to, comma-separated |
 | `-max-wait` | `HOOKWITNESS_MAX_WAIT` | `5m` | the longest reply delay or timeout hold, from 1s to 1h |
+| `-import` | `HOOKWITNESS_IMPORT` | none | a setup file applied at every start: its endpoints are created or their behaviour replaced, secrets keep their values ([Sharing a setup](sharing.md#known-endpoints-without-clicks)) |
+| `-replay-allow` | `HOOKWITNESS_REPLAY_ALLOW` | any target but link-local and cloud-metadata addresses | where caught requests may be replayed to: host names, `host:port`, addresses or CIDRs, comma-separated; `none` turns replay off ([Replaying a request](replay.md#which-targets)) |
+| `-mcp-max-sessions` | `HOOKWITNESS_MCP_MAX_SESSIONS` | `32` | MCP sessions open at once; one more is answered `503` at `initialize`, and a slot frees when a session closes or stays idle for 30 minutes; `0` for no limit ([MCP](agents.md#mcp)) |
+| `-trusted-proxies` | `HOOKWITNESS_TRUSTED_PROXIES` | none | reverse proxies (addresses or CIDRs, comma-separated) whose `X-Forwarded-For` names the client, for the login limit ([Users and login](access.md#behind-a-reverse-proxy)) |
+| — | `HOOKWITNESS_ADMIN_USER`, `HOOKWITNESS_ADMIN_PASSWORD_FILE` | none | the first admin, created at start on a database without users ([Users and login](access.md)) |
+| — | `HOOKWITNESS_API_TOKEN_FILE` | none | a file with a machine token for the API and MCP ([Users and login](access.md#a-machine-token)) |
 | — | `HOOKWITNESS_SECRET_KEY` | none | the secret key (below); without it, the key file `<db>.key` |
 
 The database grows to at most about (endpoints × `-retention` × `-max-body`)
@@ -105,10 +117,47 @@ another key keeps everything except the secrets: signing keys cannot be
 decrypted (their checks give **n/v**) and stored tokens never match. The
 server warns about it at startup; see [Troubleshooting](troubleshooting.md).
 
+### The database's size
+
+Clearing a register or deleting an endpoint gives its space back to the
+file system at once. Space freed by pruning past `-retention` goes back once
+a minute, when more than 8 MiB is free.
+
+A database made by version 0.1 keeps its largest size instead, and the
+server says so at startup. To convert it, stop the server and compact the
+database once:
+
+<!-- docs-check: skip: needs the server stopped and a container; tested by the store and command tests -->
+```sh
+docker stop hookwitness
+docker run --rm -v hookwitness:/data ghcr.io/petroladkin/hookwitness:0.1 db compact -db /data/hookwitness.db
+docker start hookwitness
+```
+
+Without Docker, run `hookwitness db compact -db <path>` with the server
+stopped. Always stop the server first: the command refuses while a server
+of this version (or another `hookwitness` command) has the database open,
+but it cannot tell a running 0.1 server, which holds no lock.
+
+- It writes a new copy next to the database, so it needs free disk for the
+  data the database holds. It checks the copy and only then puts it in place.
+  On any failure, such as a full disk, the database stays as it was and the
+  command says why.
+- `-keep-old` keeps the old file as `<db>.before-compact`. Remove that file
+  when you are done, or its space stays used.
+- It prints the size before and after.
+
+To roll back, stop the server and do one of these:
+- put the old file back: `mv <db>.before-compact <db>`;
+- turn the conversion off with SQLite's shell:
+  `sqlite3 <db> 'PRAGMA auto_vacuum = NONE; VACUUM;'`.
+
 ## Reaching it from other machines
 
-The UI and the API have **no login yet**. Keep them on localhost, or behind a
-reverse proxy that publishes only the catch paths.
+Until it has a user, the admin (the UI, the API and MCP) has **no login**:
+keep it on localhost, or add a user before you publish it
+([Users, login and tokens](access.md)). Even with login on, publishing only
+the catch paths is the safer default.
 
 - `-p 127.0.0.1:8080:8080` keeps it on this host. `-p 8080:8080` publishes it
   to the network.
@@ -118,9 +167,95 @@ reverse proxy that publishes only the catch paths.
   `-e HOOKWITNESS_ADMIN_HOSTS=hooks.example.com`. Catch paths answer to any
   name.
 - Where strangers can reach the server, publish everything except the admin
-  prefix (`/admin`).
+  prefix (`/admin`), or give the admin its own port and publish only the
+  catch port (next section).
 
 ![The answer to a host name that is not allowed](images/host-refused.webp)
+
+### The admin on its own port
+
+By default one port does everything: the catch paths and, under `/admin`,
+the UI, the API and MCP. Set `HOOKWITNESS_ADMIN_ADDR` to give the admin its
+own port; the catch port then keeps only the catch paths and `/healthz`, and
+every other path there is caught, `/admin/…` too. Publish the catch port and
+keep the admin port on localhost:
+
+<!-- docs-check: skip: starts a container; scripts/docker-smoke.sh runs this layout in CI -->
+```sh
+docker run -d --name hookwitness -p 8080:8080 -p 127.0.0.1:8081:8081 \
+  -e HOOKWITNESS_ADMIN_ADDR=:8081 -e HOOKWITNESS_ADMIN_PREFIX=/ \
+  -e HOOKWITNESS_PUBLIC_URL=http://hooks.example.com:8080 \
+  -v hookwitness:/data ghcr.io/petroladkin/hookwitness:0.1
+```
+
+The UI is then at <http://127.0.0.1:8081/>, the API at
+`http://127.0.0.1:8081/api/v1` and MCP at `http://127.0.0.1:8081/mcp`
+(`hookwitness mcp -url http://127.0.0.1:8081/mcp`). With the default prefix
+they stay under `/admin` on the admin port. `/healthz` answers on both ports;
+the image's health check asks the catch port.
+
+The catch URLs the UI shows need to know where senders reach the catch port.
+Without `HOOKWITNESS_PUBLIC_URL` they use the catch port's own host when
+`-addr` names one, else the host you opened the UI by, with the catch port
+(`8080`). Behind a proxy, a tunnel or a remapped port (`-p 9000:8080`) that
+guess is wrong: set `HOOKWITNESS_PUBLIC_URL`.
+
+An endpoint may now use a path under `/admin`. If the admin later moves back
+under the prefix on the catch port, it covers such an endpoint, which then
+catches nothing; the server names those endpoints in a warning at start.
+
+## Upgrading
+
+Back up the volume (or the database and its key) first, then run the new
+image or binary on the same data; with Docker, pull the new tag and create
+the container again with the same `-v hookwitness:/data`. The server brings
+the database up to date at start, and the changes are one way: an older
+version refuses a database a newer one has opened ("database schema is
+newer than this binary"), so going back means restoring the backup.
+
+[The changelog](../CHANGELOG.md) lists, for each version, what changed in
+the API, the flags and the stored data. From 0.1:
+
+- Login is still off until the first user; nothing changes for a server
+  that should stay open on localhost. To turn it on, see [Users, login and
+  tokens](access.md).
+- A 0.1 database keeps its largest size until compacted once
+  ([The database's size](#the-databases-size)).
+- The image's tag in these pages moves with each minor version (`:0.1`,
+  `:0.2`): a tag such as `:0.1` never moves to the next minor version, so
+  upgrading is changing the tag.
+
+## Download a binary
+
+From 0.2 on, every release carries an archive for Linux and macOS on amd64
+and arm64, `hookwitness_<version>_<os>_<arch>.tar.gz`, and a `SHA256SUMS`
+file. An archive unpacks into a directory of the same name holding the
+binary, `LICENSE`, `THIRD-PARTY-NOTICES.md` and `README.md`. The binary is
+static (built without cgo) and needs nothing else.
+
+<!-- docs-check: skip: downloads from a published release -->
+```sh
+v=0.2.0 os=linux arch=amd64   # os: linux or darwin; arch: amd64 or arm64
+base=https://github.com/petroladkin/hookwitness/releases/download/v$v
+curl -fsSLO "$base/hookwitness_${v}_${os}_${arch}.tar.gz"
+curl -fsSLO "$base/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS   # macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
+gh attestation verify "hookwitness_${v}_${os}_${arch}.tar.gz" --owner petroladkin
+tar -xzf "hookwitness_${v}_${os}_${arch}.tar.gz"
+"hookwitness_${v}_${os}_${arch}/hookwitness" version
+```
+
+`SHA256SUMS` shows the download is whole. `gh attestation verify` (the
+[GitHub CLI](https://cli.github.com/)) shows the archive was built by this
+repository's CI from the release tag. `version` prints the tag and its
+commit, `v0.2.0 (…)`. Then put the binary on your `PATH` and run
+`hookwitness serve`, as in [Build from source](#build-from-source).
+
+The macOS binary is not signed by Apple. `curl` does not mark what it
+downloads, so the binary above runs as is; one downloaded with a browser is
+quarantined and macOS refuses to open it. Remove the mark once:
+`xattr -d com.apple.quarantine hookwitness`. The attestation is what proves
+where the binary came from.
 
 ## Build from source
 
@@ -144,8 +279,8 @@ it is up.
 ## Which build is running
 
 Every place that names Hookwitness names the build as `<version> (<commit>)`,
-for example `v0.1.0 (5a45bb4)`: the line at the bottom of the Endpoints page
-(and the logo's tooltip on every page), `hookwitness version`, and the
+for example `v0.1.0 (5a45bb4)`: the line at the foot of every page (and
+the logo's tooltip), `hookwitness version`, and the
 "Generated … by Hookwitness" line of every report. So a report attached to a
 ticket says which build caught its requests. Released images say their tag
 (`v1.2.0 (…)`), the `:edge` image says `edge`, `make build` says what

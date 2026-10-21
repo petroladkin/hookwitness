@@ -24,10 +24,37 @@
     return top(rows) - 14 - ROW * r;
   }
 
+  // The ranges the strip offers, in ms: the paper's width (span), a grid
+  // line every line, a major one every major, a time label every label.
+  const SPANS = {
+    "2m": { span: 120000, line: 2000, major: 10000, label: 30000 },
+    "10m": { span: 600000, line: 10000, major: 60000, label: 120000 },
+    "1h": { span: 3600000, line: 60000, major: 600000, label: 600000 },
+    "6h": { span: 21600000, line: 600000, major: 3600000, label: 3600000 },
+  };
+  const MIN = 60000, HOUR = 3600000;
+
+  // ago names a time label in the unit of the range: "−90 s" on the 2 min
+  // paper, "−2 min" up to an hour, "−1 h" beyond.
+  function ago(ms, span) {
+    if (span <= 2 * MIN) return "−" + Math.round(ms / 1000) + " s";
+    if (span <= HOUR) return "−" + Math.round(ms / MIN) + " min";
+    return "−" + Math.round(ms / HOUR) + " h";
+  }
+
+  // A gap between deliveries in its own unit: seconds under a minute,
+  // minutes under an hour, hours beyond (+4.0 s, +5 min, +2 h).
+  function num(v) {
+    return v < 10 && Math.round(v * 10) % 10 !== 0 ? v.toFixed(1) : String(Math.round(v));
+  }
   function full(gapMs) {
-    return "+" + (gapMs / 1000).toFixed(1) + " s";
+    if (gapMs < MIN) return "+" + (gapMs / 1000).toFixed(1) + " s";
+    if (gapMs < HOUR) return "+" + num(gapMs / MIN) + " min";
+    return "+" + num(gapMs / HOUR) + " h";
   }
   function short(gapMs) {
+    if (gapMs >= HOUR) return num(gapMs / HOUR) + "h";
+    if (gapMs >= MIN) return num(gapMs / MIN) + "m";
     const sec = gapMs / 1000;
     return (sec < 10 ? sec.toFixed(1) : String(Math.round(sec))) + "s"; // a tenth kept where it matters
   }
@@ -109,5 +136,5 @@
     return { top: top(rows), rows, brackets: segs, now: { x: w - 2, align: "right" } };
   }
 
-  root.HookwitnessStrip = { layout, rowsFor, top, rowY };
+  root.HookwitnessStrip = { layout, rowsFor, top, rowY, SPANS, ago, full, short };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -26,19 +26,22 @@ does not.
 
 - An authorization check that passes a request it should fail (or fails one
   it should pass) for a correctly configured secret.
-- A secret, token or credential value reaching the database in plain text,
+- A secret, password, token or credential value reaching the database in plain text,
   the logs, a rendered page or a response.
 - Cross-site scripting, request forgery or DNS rebinding against the web UI.
+- With login on: reaching the admin (UI, API, MCP) without a valid login or
+  token, a user doing what only an admin may, a session or token that outlives
+  its logout, revocation or its owner, or a way around the login limit.
 - Anything a sender of webhooks can do to the server beyond being caught:
   reading other endpoints' requests, changing configuration, running code,
   exhausting memory or disk past the configured limits.
 
 ## Not a vulnerability
 
-- **The web UI has no login yet.** Anyone who can reach the admin prefix can
-  read every caught request and change every endpoint. Keep it on localhost
-  or behind a reverse proxy that does not publish it (see
-  [Reaching it from other machines](docs/deployment.md#reaching-it-from-other-machines)).
+- **An admin without users has no login.** Until the first user is added,
+  anyone who can reach the admin prefix can read every caught request and
+  change every endpoint; every page and the start-up log say so. Add a user
+  before publishing it (see [Users, login and tokens](docs/access.md)).
 - Caught requests are stored as received, including the senders' own
   `Authorization` headers and signatures: they are the evidence.
 - Secrets used with the checks are meant to be test values; protect the

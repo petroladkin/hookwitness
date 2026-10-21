@@ -28,7 +28,9 @@ COPY --from=build --chown=65532:65532 /out/data /data
 ENV HOOKWITNESS_ADDR=:8080 \
     HOOKWITNESS_DB=/data/hookwitness.db
 VOLUME /data
-EXPOSE 8080
+# 8080 catches; 8081 is the admin's own port, used only when
+# HOOKWITNESS_ADMIN_ADDR=:8081 is set (by default the admin is under /admin on 8080).
+EXPOSE 8080 8081
 USER 65532:65532
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["/hookwitness", "health"]

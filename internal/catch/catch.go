@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -93,9 +94,10 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	// that was received in full is still evidence and must be kept.
 	ctx := context.WithoutCancel(r.Context())
 
-	endpointID, cfgText, err := h.Store.EndpointByPath(ctx, p)
+	endpointID, cfgText, on, err := h.Store.EndpointByPath(ctx, p)
+	off := err == nil && !on // answered as a path without an endpoint
 	switch {
-	case errors.Is(err, store.ErrNotFound):
+	case errors.Is(err, store.ErrNotFound) || off:
 		endpointID = store.Unmatched
 	case err != nil:
 		h.Log.Error("catch: endpoint lookup failed", "path", p, "err", err)
@@ -128,13 +130,14 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	}
 
 	busy := read == bodyBusy
-	plan := h.plan(req, cfgText, busy)
+	plan := h.plan(req, cfgText, busy, off)
 	err = h.Store.AddRequest(ctx, req, h.Retention, plan.decide)
-	if errors.Is(err, store.ErrNotFound) {
-		// The endpoint was deleted after the lookup: the path is unknown now.
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrOff) {
+		// The endpoint was deleted or turned off after the lookup.
+		off = errors.Is(err, store.ErrOff)
 		req.EndpointID = store.Unmatched
 		req.Verdict, req.Verdicts = "", "" // the endpoint's checks no longer apply
-		plan = h.plan(req, "", busy)
+		plan = h.plan(req, "", busy, off)
 		err = h.Store.AddRequest(ctx, req, h.Retention, nil)
 	}
 	if err != nil {
@@ -143,7 +146,10 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 		return
 	}
 	h.Live.Publish(req.EndpointID)
-	if req.EndpointID == store.Unmatched {
+	switch {
+	case off:
+		h.Log.Info("unmatched request: endpoint off", "method", r.Method, "path", p, "remote", r.RemoteAddr, "no", req.No)
+	case req.EndpointID == store.Unmatched:
 		h.Log.Info("unmatched request", "method", r.Method, "path", p, "remote", r.RemoteAddr, "no", req.No)
 	}
 
@@ -171,7 +177,8 @@ type plan struct {
 
 // plan works out the outcome for everything but the rules, which decide
 // inside the store's transaction (plan.decide), where the counter is exact.
-func (h *Handler) plan(req *store.Request, cfgText string, busy bool) *plan {
+// off: the path is an endpoint's that is off (req goes to Unmatched).
+func (h *Handler) plan(req *store.Request, cfgText string, busy, off bool) *plan {
 	pl := &plan{}
 	if busy && req.EndpointID == store.Unmatched {
 		pl.out = busyOutcome()
@@ -181,6 +188,9 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy bool) *plan {
 	}
 	if req.EndpointID == store.Unmatched {
 		pl.out = emulate.Outcome{Source: emulate.FromUnmatched, Action: emulate.ActReply, Status: http.StatusNotFound}
+		if off {
+			pl.out.Source = emulate.FromOff
+		}
 		req.Status, req.Outcome = pl.out.Status, pl.out.String()
 		pl.closing = req.TooLarge
 		return pl
@@ -191,11 +201,12 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy bool) *plan {
 		cfg = emulate.DefaultConfig()
 	}
 	pl.cfg = cfg
-	er := EmulateRequest(*req)
+	er := toEmulate(*req)
 	// Every authorization check gives its verdict, also on a request whose
 	// body was not kept (those that need it say "not verifiable").
 	verdicts, f := cfg.Verify(er, req.ReceivedAt, !req.TooLarge, h.Keys)
 	req.Verdict, req.Verdicts = emulate.Overall(verdicts), emulate.VerdictsJSON(verdicts)
+	req.Signatures, req.Repeated = signatures(verdicts, h.Keys), repeated(verdicts)
 	if busy {
 		pl.out = busyOutcome()
 		req.Status, req.Outcome = pl.out.Status, pl.out.String()
@@ -234,8 +245,9 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy bool) *plan {
 	return pl
 }
 
-// EmulateRequest is what checks and templates see of a stored request.
-func EmulateRequest(r store.Request) emulate.Request {
+// toEmulate is what checks and templates see of a stored request: one
+// conversion for catching, re-checking and drafting.
+func toEmulate(r store.Request) emulate.Request {
 	er := emulate.Request{Method: r.Method, Path: r.Path, RawQuery: r.RawQuery, Body: r.Body}
 	for _, hd := range r.Headers {
 		er.Headers = append(er.Headers, emulate.Header{Name: hd.Name, Value: hd.Value})
@@ -286,7 +298,7 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 			Headers: []emulate.Header{{Name: "Content-Type", Value: "text/plain; charset=utf-8"}},
 			Body:    []byte("Hookwitness could not render this endpoint's reply: " + err.Error() + "\n")}
 	}
-	rendered = rendered.Protect()
+	rendered = rendered.Protect(access.CookieName)
 	sent, withheld := rendered.AsSent(r.Method) // what net/http will send of it
 	pl.out.SetReply(sent)
 	pl.out.Withheld = withheld
@@ -390,6 +402,13 @@ func (h *Handler) release(n int64) {
 	h.held -= n
 	h.heldMu.Unlock()
 }
+
+// Reserve and Release hold n bytes of MaxInFlight for a body read
+// elsewhere (a replay), so bodies held for any reason share one budget.
+func (h *Handler) Reserve(n int64) bool { return h.reserve(n) }
+
+// Release gives back what Reserve took.
+func (h *Handler) Release(n int64) { h.release(n) }
 
 func (h *Handler) heldNow() int64 {
 	h.heldMu.Lock()
@@ -509,6 +528,38 @@ func rawQuery(r *http.Request) string {
 }
 
 func storeHeaders(r *http.Request, hs []wire.Header, ok bool) []store.Header {
+	out := storeHeaderLines(r, hs, ok)
+	for i, h := range out {
+		if strings.EqualFold(h.Name, "Cookie") {
+			out[i].Value = RedactSession(h.Value)
+		}
+	}
+	return out
+}
+
+// SessionRedacted replaces the value of the admin's login cookie in a
+// recorded Cookie header.
+const SessionRedacted = "[hookwitness session]"
+
+// RedactSession replaces the value of a hookwitness_session cookie in a
+// Cookie header's value. Cookies ignore ports, so a browser logged in to an
+// admin on another port of the same host sends it to catch paths too; it
+// must never be kept with the evidence. Everything else stays as sent.
+func RedactSession(v string) string {
+	if !strings.Contains(v, access.CookieName) {
+		return v
+	}
+	parts := strings.Split(v, ";")
+	for i, p := range parts {
+		name, _, found := strings.Cut(p, "=")
+		if found && strings.TrimSpace(name) == access.CookieName {
+			parts[i] = name + "=" + SessionRedacted
+		}
+	}
+	return strings.Join(parts, ";")
+}
+
+func storeHeaderLines(r *http.Request, hs []wire.Header, ok bool) []store.Header {
 	if ok {
 		out := make([]store.Header, len(hs))
 		for i, h := range hs {

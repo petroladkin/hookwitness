@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
+	"github.com/petroladkin/hookwitness/internal/jsonptr"
 	"github.com/petroladkin/hookwitness/internal/schema"
 )
 
@@ -140,7 +141,7 @@ func (c Config) validateSchemaCheck(ch Check, maxWait time.Duration) error {
 	if s := ch.Select; s != nil {
 		switch s.From {
 		case FromBody:
-			if !strings.HasPrefix(s.Key, "/") {
+			if _, err := jsonptr.Parse(s.Key); err != nil || s.Key == "" {
 				return fmt.Errorf("the value to pick the schema by is a JSON pointer such as /type, not %q", s.Key)
 			}
 		case FromHeader:
@@ -318,23 +319,13 @@ func (s Select) value(r Request) (value string, found bool, err error) {
 	if err := dec.Decode(&doc); err != nil {
 		return "", false, fmt.Errorf("not JSON: %v", err) // not reached: BodyError checked it
 	}
-	cur := doc
-	for _, tok := range strings.Split(s.Key[1:], "/") {
-		tok = strings.NewReplacer("~1", "/", "~0", "~").Replace(tok)
-		switch v := cur.(type) {
-		case map[string]any:
-			if cur, found = v[tok]; !found {
-				return "", false, nil
-			}
-		case []any:
-			i, err := strconv.Atoi(tok)
-			if err != nil || i < 0 || i >= len(v) {
-				return "", false, nil
-			}
-			cur = v[i]
-		default:
-			return "", false, nil
-		}
+	toks, err := jsonptr.Parse(s.Key)
+	if err != nil {
+		return "", false, nil // not reached: the key is validated with the config
+	}
+	cur, found := jsonptr.Get(doc, toks)
+	if !found {
+		return "", false, nil
 	}
 	switch v := cur.(type) {
 	case string:

@@ -68,7 +68,7 @@ func newEnv(t *testing.T) env {
 	stop := make(chan struct{})
 	stopOnce := sync.OnceFunc(func() { close(stop) })
 	t.Cleanup(stopOnce)
-	a := api.New(st, lv, log, api.Options{Prefix: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: stop, Version: "v0.0.0-test"})
+	a := api.New(st, lv, log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: stop, Version: "v0.0.0-test"})
 	catcher := &catch.Handler{Store: st, Live: lv, Log: log, MaxBody: 1 << 20, Retention: 1000, Keys: keys}
 
 	polls, inPoll := &atomic.Int64{}, &atomic.Int64{}
@@ -157,7 +157,8 @@ func TestToolList(t *testing.T) {
 		got[tool.Name] = tool
 	}
 	want := []string{"create_endpoint", "list_endpoints", "get_endpoint", "configure_endpoint", "set_secret", "wait_for_request",
-		"list_requests", "get_request", "expect", "reset_endpoint", "recheck", "delete_endpoint"}
+		"list_requests", "get_request", "expect", "reset_endpoint", "recheck", "delete_endpoint", "switch_endpoint",
+		"export_endpoint", "import_endpoints", "replay_request"}
 	if len(got) != len(want) {
 		t.Fatalf("%d tools, want %d", len(got), len(want))
 	}
@@ -167,17 +168,20 @@ func TestToolList(t *testing.T) {
 			t.Fatalf("%s: missing, or without description, schema or annotations", name)
 		}
 	}
-	for _, name := range []string{"list_endpoints", "get_endpoint", "wait_for_request", "list_requests", "get_request", "expect"} {
+	for _, name := range []string{"list_endpoints", "get_endpoint", "wait_for_request", "list_requests", "get_request", "expect", "export_endpoint"} {
 		if !got[name].Annotations.ReadOnlyHint {
 			t.Errorf("%s is not marked read-only", name)
 		}
 	}
-	for _, name := range []string{"delete_endpoint", "reset_endpoint"} {
+	for _, name := range []string{"delete_endpoint", "reset_endpoint", "import_endpoints"} {
 		if a := got[name].Annotations; a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint {
 			t.Errorf("%s is not marked destructive", name)
 		}
 	}
-	for _, name := range []string{"create_endpoint", "configure_endpoint", "set_secret", "recheck"} {
+	if a := got["replay_request"].Annotations; a.ReadOnlyHint || a.OpenWorldHint == nil || !*a.OpenWorldHint || a.DestructiveHint == nil || *a.DestructiveHint {
+		t.Errorf("replay_request is not marked open-world and not destructive: %+v", a)
+	}
+	for _, name := range []string{"create_endpoint", "configure_endpoint", "set_secret", "recheck", "switch_endpoint"} {
 		if a := got[name].Annotations; a.DestructiveHint == nil || *a.DestructiveHint {
 			t.Errorf("%s is marked destructive", name)
 		}
@@ -388,5 +392,16 @@ func TestWaitEndsAtShutdown(t *testing.T) {
 	a = <-start("wait_for_request", map[string]any{"endpoint": "/s", "timeout_s": 30})
 	if !a.res.IsError || !strings.Contains(a.text, "shutting down; 0 of 1 matched") || e.polls.Load() != 2 {
 		t.Fatalf("after the shutdown: %s, %d long-polls", a.text, e.polls.Load())
+	}
+}
+
+// TestDescribeNotes: a repeated signature's note reaches the summary line
+// in short.
+func TestDescribeNotes(t *testing.T) {
+	r := map[string]any{"no": float64(2), "method": "POST", "path": "/gh", "status": float64(200), "verdict": "pass",
+		"verdicts": []any{map[string]any{"label": "GitHub signature", "result": "pass", "reason": "signature matches",
+			"note": "same signature as #1: a replay, or a redelivery of the same signed request"}}}
+	if got := describe(r); got != "#2 POST /gh answered 200, verdict pass; same signature as #1" {
+		t.Fatalf("%q", got)
 	}
 }

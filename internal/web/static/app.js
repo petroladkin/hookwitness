@@ -5,8 +5,9 @@
 
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  // The newest request already on the page; a feed (re)opened from scratch
-  // starts after it. A browser's own reconnect sends Last-Event-ID instead.
+  // The newest request already on the page and the change sequence the
+  // page has seen; a feed (re)opened from scratch starts after them. A
+  // browser's own reconnect sends Last-Event-ID ("<id>.<seq>") instead.
   function newestShown() {
     let max = 0;
     document.querySelectorAll("#register > li[data-id]").forEach((li) => {
@@ -18,6 +19,8 @@
     htmx.createEventSource = function (url) {
       const u = new URL(url, location.href);
       u.searchParams.set("after", String(newestShown()));
+      const reg = document.getElementById("register");
+      if (reg && reg.dataset.seq) u.searchParams.set("seq", reg.dataset.seq);
       return new EventSource(u.toString());
     };
   }
@@ -30,7 +33,13 @@
   }
 
   document.addEventListener("htmx:sseOpen", () => feed("live", "Recording"));
-  document.addEventListener("htmx:sseError", () => feed("lost", "Reconnecting"));
+  document.addEventListener("htmx:sseError", (e) => {
+    feed("lost", "Reconnecting");
+    // A feed the server refused (the login ended) is not retried by the
+    // browser: reloading lands on the login page.
+    const src = e.detail && e.detail.source;
+    if (src && src.readyState === EventSource.CLOSED) location.reload();
+  });
 
   // Each request appears once, whatever the feed resends; an "update"
   // replaces the row it names with its final outcome.
@@ -53,7 +62,7 @@
       markSelected();
       return;
     }
-    const id = ev.lastEventId;
+    const id = String(ev.lastEventId || "").split(".")[0];
     if (id && document.getElementById("req-" + id)) e.preventDefault();
   });
   document.addEventListener("htmx:sseMessage", (e) => {
@@ -80,7 +89,13 @@
     const src = e.detail && e.detail.source;
     if (!src || src.hwCounts) return;
     src.hwCounts = true;
+    // The login of this page ended: reload onto the login page.
+    src.addEventListener("login", () => location.reload());
     src.addEventListener("counts", (m) => {
+      // The pass's last event: the change sequence the page has now seen.
+      const seq = String(m.lastEventId || "").split(".")[1];
+      const reg = document.getElementById("register");
+      if (seq && reg) reg.dataset.seq = seq;
       let c;
       try { c = JSON.parse(m.data); } catch { return; }
       document.querySelectorAll("[data-count]").forEach((el) => {
@@ -118,14 +133,47 @@
     }
   });
 
-  document.addEventListener("change", (e) => {
-    const el = e.target;
-    if (el.matches && el.matches("select[data-navigate]") && el.value) location.assign(el.value);
+  // Menus (details[data-menu]) open one at a time and close on a click
+  // elsewhere or Escape; without scripts they open and close on their own.
+  document.addEventListener("click", (e) => {
+    const inside = e.target.closest && e.target.closest("details[data-menu]");
+    document.querySelectorAll("details[data-menu][open]").forEach((d) => { if (d !== inside) d.open = false; });
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const open = document.querySelector("details[data-menu][open]");
+    if (!open) return;
+    open.open = false;
+    open.querySelector("summary").focus();
+  });
+  // Copy buttons: data-copy names the field whose value is copied (a token
+  // shown once); without a clipboard the field is selected for Ctrl-C.
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest("button[data-copy]");
+    if (!b) return;
+    const field = document.getElementById(b.dataset.copy);
+    if (!field) return;
+    field.select();
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(field.value).then(() => { b.textContent = "Copied"; }, () => {});
+    }
   });
   document.addEventListener("submit", (e) => {
     const by = e.submitter && e.submitter.dataset.confirm;
     const msg = by || (e.target.dataset && e.target.dataset.confirm);
     if (msg && !window.confirm(msg)) e.preventDefault();
+  });
+  // A form that waits on the server (a replay waits for its target's
+  // answer) says so on its button, which cannot be pressed twice.
+  document.addEventListener("submit", (e) => {
+    const f = e.target;
+    if (e.defaultPrevented || !f.dataset || !f.dataset.busy) return;
+    const b = e.submitter || f.querySelector("button[type=submit]");
+    if (!b) return;
+    setTimeout(() => {
+      b.disabled = true;
+      b.textContent = f.dataset.busy;
+    }, 0);
   });
 
   // Editors are dialogs with their own URL: the page renders one open, here
@@ -139,33 +187,94 @@
     });
   });
 
-  // The strip: the last two minutes on recorder paper, the pen on the right,
-  // a mark per request (height = body size, log scale; refused in red), and
-  // deliveries of the same body bracketed with the gap between them.
+  // The strip: the last span of time on recorder paper (2 min by default;
+  // 10 min, 1 h or 6 h chosen in its legend), the pen on the right, a mark
+  // per request (height = body size, log scale; refused in red), and
+  // deliveries of the same body bracketed with the gap between them. The
+  // marks of the range come from the server (every kept request, not only
+  // the rows loaded); live arrivals and updates come from the register's
+  // rows. The time before the oldest kept request, when older ones are
+  // gone, is shaded "not kept".
   const cv = document.getElementById("trace");
-  const WINDOW = 120000;
+  const S = window.HookwitnessStrip;
   let ctx = cv ? cv.getContext("2d") : null;
+  let spanKey = "2m";
+  let fetched = new Map(); // id → mark, from the server
+  let keptFrom = 0; // unix ms; 0: nothing before is lost
+  let loading = null;
 
   function css(v) {
     return getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   }
+  function remembered() {
+    const fromURL = new URLSearchParams(location.search).get("span");
+    if (fromURL && S.SPANS[fromURL]) return fromURL;
+    try {
+      const v = localStorage.getItem("hookwitness.span");
+      if (v && S.SPANS[v]) return v;
+    } catch {}
+    return "2m";
+  }
+  function choose(key, remember) {
+    if (!S.SPANS[key]) return;
+    spanKey = key;
+    document.querySelectorAll(".strip [data-span]").forEach((b) => {
+      b.setAttribute("aria-pressed", b.dataset.span === key ? "true" : "false");
+    });
+    const sec = document.querySelector("section.strip");
+    const words = document.querySelector(`.strip [data-span="${key}"]`);
+    if (sec && words) sec.setAttribute("aria-label", "Arrivals over the last " + words.textContent.trim());
+    if (remember) {
+      try { localStorage.setItem("hookwitness.span", key); } catch {}
+      const u = new URL(location.href);
+      if (key === "2m") u.searchParams.delete("span");
+      else u.searchParams.set("span", key);
+      history.replaceState(history.state, "", u);
+    }
+    fetched = new Map();
+    keptFrom = 0;
+    load();
+  }
+  function load() {
+    if (!cv || !cv.dataset.marks) return;
+    const key = spanKey;
+    const req = (loading = fetch(cv.dataset.marks + "?span=" + key, { headers: { Accept: "application/json" }, credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((a) => {
+        if (req !== loading || key !== spanKey) return; // a newer choice won
+        const m = new Map();
+        a.marks.forEach(([id, at, size, mark, verdict, group]) => m.set(String(id), { id: String(id), at, size, mark, verdict, group }));
+        fetched = m;
+        keptFrom = a.kept_from || 0;
+        draw();
+      })
+      .catch(() => {})); // the rows still draw; the next load tries again
+  }
+  // marks is the server's marks of the range with the register's rows over
+  // them: a row is newer (a live arrival, an updated outcome).
   function marks() {
-    const out = [];
+    const all = new Map(fetched);
+    let selected = "";
     document.querySelectorAll("#register > li.row").forEach((li) => {
-      out.push({
+      if (li.getAttribute("aria-current") === "true") selected = li.dataset.id;
+      all.set(li.dataset.id, {
+        id: li.dataset.id,
         at: Number(li.dataset.at),
         size: Number(li.dataset.size),
         mark: li.dataset.mark || "ok",
         verdict: li.dataset.verdict || "",
         group: li.dataset.group || "",
-        selected: li.getAttribute("aria-current") === "true",
       });
     });
+    const out = [...all.values()];
+    out.forEach((m) => (m.selected = m.id === selected));
     return out.sort((a, b) => a.at - b.at);
   }
 
   function draw() {
     if (!ctx) return;
+    const sp = S.SPANS[spanKey];
+    const WINDOW = sp.span;
     const now = Date.now();
     const dpr = window.devicePixelRatio || 1;
     const w = cv.clientWidth, h = cv.clientHeight;
@@ -174,43 +283,75 @@
       cv.height = Math.round(h * dpr);
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const c = {
+      paper: css("--paper"), paper2: css("--paper-2"), grid: css("--grid"), major: css("--grid-major"),
+      ink: css("--ink"), inkSoft: css("--ink-soft"), alarm: css("--alarm"), muted: css("--muted"),
+    };
     const pen = w - 28, base = h - 22;
     const x = (t) => pen - ((now - t) / WINDOW) * (pen - 8);
     const mono = css("--f-data");
-    const ms = marks().filter((m) => m.at > now - WINDOW - 5000);
+    const ms = marks().filter((m) => m.at > now - WINDOW - WINDOW / 24);
     ms.forEach((m) => (m.x = x(m.at)));
     ctx.font = "600 10px " + mono;
-    const lay = window.HookwitnessStrip.layout(ms, w, h, pen, (s) => ctx.measureText(s).width);
+    const lay = S.layout(ms, w, h, pen, (s) => ctx.measureText(s).width);
     const top = lay.top;
 
-    ctx.fillStyle = css("--paper");
+    ctx.fillStyle = c.paper;
     ctx.fillRect(0, 0, w, h);
-    // Grid: a line every 2 s, a major one every 10 s, moving with the paper.
-    for (let s = 0; s <= WINDOW / 1000; s += 2) {
-      const t = now - (now % 2000) - s * 1000;
-      const major = Math.round(t / 1000) % 10 === 0;
-      ctx.strokeStyle = css(major ? "--grid-major" : "--grid");
+    // Before the oldest kept request the register cannot say what arrived:
+    // shaded, never an empty paper.
+    if (keptFrom && keptFrom > now - WINDOW) {
+      const xk = Math.min(pen, x(keptFrom));
+      ctx.fillStyle = c.paper2;
+      ctx.fillRect(0, top - 10, xk, base - top + 10);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, top - 10, xk, base - top + 10);
+      ctx.clip();
+      ctx.strokeStyle = c.grid;
       ctx.lineWidth = 1;
+      for (let d = -h; d < xk + h; d += 8) {
+        ctx.beginPath();
+        ctx.moveTo(d, base);
+        ctx.lineTo(d + (base - top + 10), top - 10);
+        ctx.stroke();
+      }
+      ctx.restore();
+      ctx.font = "600 10px " + mono;
+      if (xk > ctx.measureText("not kept").width + 12) {
+        ctx.fillStyle = c.muted;
+        ctx.strokeStyle = c.paper2;
+        ctx.lineWidth = 3;
+        ctx.textAlign = "center";
+        ctx.strokeText("not kept", xk / 2, (top + base) / 2);
+        ctx.fillText("not kept", xk / 2, (top + base) / 2);
+      }
+    }
+    // Grid: a line every sp.line, a major one every sp.major, moving with
+    // the paper.
+    ctx.lineWidth = 1;
+    for (let t = now - (now % sp.line); t >= now - WINDOW - sp.line; t -= sp.line) {
+      ctx.strokeStyle = t % sp.major === 0 ? c.major : c.grid;
       ctx.beginPath();
       ctx.moveTo(Math.round(x(t)) + 0.5, top - 10);
       ctx.lineTo(Math.round(x(t)) + 0.5, base);
       ctx.stroke();
     }
-    ctx.strokeStyle = css("--grid");
+    ctx.strokeStyle = c.grid;
     for (let y = base; y >= top - 10; y -= 16) {
       ctx.beginPath();
       ctx.moveTo(0, Math.round(y) + 0.5);
       ctx.lineTo(pen, Math.round(y) + 0.5);
       ctx.stroke();
     }
-    ctx.fillStyle = css("--muted");
+    ctx.fillStyle = c.muted;
     ctx.font = "10px " + mono;
     ctx.textAlign = "center";
-    for (let s = 30; s < WINDOW / 1000; s += 30) ctx.fillText("−" + s + " s", x(now - s * 1000), h - 7);
+    for (let k = sp.label; k < WINDOW; k += sp.label) ctx.fillText(S.ago(k, WINDOW), x(now - k), h - 7);
     ctx.textAlign = "right"; // clear of the pen's arrow
     ctx.fillText("now", lay.now.x, h - 7);
     ctx.textAlign = "center";
-    ctx.strokeStyle = css("--ink");
+    ctx.strokeStyle = c.ink;
     ctx.globalAlpha = 0.35;
     ctx.beginPath();
     ctx.moveTo(0, base + 0.5);
@@ -220,7 +361,7 @@
 
     // Brackets between deliveries of the same body, on rows (strip.js).
     lay.brackets.forEach((br) => {
-      ctx.strokeStyle = css("--ink-soft");
+      ctx.strokeStyle = c.inkSoft;
       ctx.lineWidth = 1;
       ctx.setLineDash(br.crowded ? [1, 2] : [3, 3]);
       ctx.beginPath();
@@ -238,8 +379,8 @@
     // Labels after every bracket, edged with paper: a row's label sits
     // where the row above may draw its line.
     ctx.font = "600 10px " + mono;
-    ctx.fillStyle = css("--ink");
-    ctx.strokeStyle = css("--paper");
+    ctx.fillStyle = c.ink;
+    ctx.strokeStyle = c.paper;
     ctx.lineWidth = 3;
     lay.brackets.forEach((br) => {
       if (!br.label) return;
@@ -247,15 +388,15 @@
       ctx.fillText(br.label, br.lx, br.y - 4);
     });
     ms.forEach((m) => {
-      const mx = x(m.at);
+      const mx = m.x;
       if (mx < -4) return;
       const size = m.size > 0 ? m.size : 64;
       const hgt = Math.max(10, Math.min(base - top, (Math.log2(Math.max(size, 64)) - 6) * 9));
-      const col = css(m.mark === "ok" ? "--ink" : "--alarm");
+      const col = m.mark === "ok" ? c.ink : c.alarm;
       const tip = base - hgt;
       if (m.verdict === "fail") {
         // Failed authorization: a red bar under the line, whatever the reply.
-        ctx.fillStyle = css("--alarm");
+        ctx.fillStyle = c.alarm;
         ctx.fillRect(mx - 4, base + 3, 8, 3);
       }
       ctx.strokeStyle = col;
@@ -294,13 +435,13 @@
       ctx.fill();
     });
     // The pen.
-    ctx.strokeStyle = css("--alarm");
+    ctx.strokeStyle = c.alarm;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(pen + 0.5, top - 12);
     ctx.lineTo(pen + 0.5, base + 4);
     ctx.stroke();
-    ctx.fillStyle = css("--alarm");
+    ctx.fillStyle = c.alarm;
     ctx.beginPath();
     ctx.moveTo(pen - 5, base + 4);
     ctx.lineTo(pen + 6, base + 4);
@@ -310,6 +451,16 @@
   }
 
   if (cv) {
+    document.addEventListener("click", (e) => {
+      const b = e.target.closest && e.target.closest(".strip [data-span]");
+      if (b) choose(b.dataset.span, true);
+    });
+    choose(remembered(), false);
+    // The range's older part moves off the paper and the server prunes:
+    // read the range again now and then (arrivals come with the rows).
+    setInterval(() => {
+      if (!document.hidden) load();
+    }, 60000);
     if (reduce) {
       // No paper feed: redraw on arrivals and every few seconds.
       setInterval(draw, 5000);
@@ -322,7 +473,25 @@
     }
     window.addEventListener("resize", draw);
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+    new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
   }
+  // The theme switch: applied at once, kept by the server in the background
+  // (without scripts the form posts and the page comes back themed).
+  document.addEventListener("submit", (e) => {
+    const form = e.target.closest("form.theme");
+    const b = e.submitter;
+    if (!form || !b || b.name !== "theme") return;
+    e.preventDefault();
+    const t = b.value === "auto" ? "" : b.value;
+    if (t) document.documentElement.dataset.theme = t;
+    else delete document.documentElement.dataset.theme;
+    const meta = document.querySelector('meta[name="color-scheme"]');
+    if (meta) meta.content = t || "light dark";
+    form.querySelectorAll("button[name=theme]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    const data = new FormData(form);
+    data.set("theme", b.value);
+    fetch(form.action, { method: "POST", body: new URLSearchParams(data), redirect: "manual", credentials: "same-origin" }).catch(() => {});
+  });
   // Images under a request's body: a thumbnail opens the viewer, fitted to
   // the window; 1:1 shows the pixels, scrolling when larger. The exhibit is
   // swapped by htmx, so clicks are taken at the document.

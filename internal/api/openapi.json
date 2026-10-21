@@ -4,7 +4,7 @@
     "title": "Hookwitness API",
     "version": "1",
     "summary": "Catch webhooks, script the answers, read the verdicts.",
-    "description": "JSON under <admin prefix>/api/v1 (/admin/api/v1 by default), with the UI's access rules: it answers on IP addresses, localhost and -admin-hosts names; writes must be application/json. Every error has one shape (Error). See docs/api.md for recipes.",
+    "description": "JSON under <admin prefix>/api/v1 (/admin/api/v1 by default), with the UI's access rules: it answers on IP addresses, localhost and -admin-hosts names (a request with a valid token on any name); writes must be application/json. Once a user exists (or a machine token is configured) every route needs credentials: a personal token as Authorization: Bearer hkw_…, or the web UI's login cookie. Without users the API is open. Every error has one shape (Error). See docs/api.md for recipes.",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -29,6 +29,14 @@
               "type": "string"
             },
             "description": "Only the endpoint with this path."
+          },
+          {
+            "name": "enabled",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Only the endpoints that are on (`true`) or off (`false`)."
           }
         ],
         "responses": {
@@ -53,6 +61,19 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "A query parameter is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       },
@@ -126,6 +147,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -159,13 +183,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       },
       "patch": {
-        "operationId": "changeEndpointPath",
-        "summary": "Change an endpoint's path",
-        "description": "Validated as the UI validates a new path; its requests and behaviour stay.",
+        "operationId": "changeEndpoint",
+        "summary": "Change an endpoint's path or turn it on or off",
+        "description": "Give `path`, `enabled` or both; both change together or, on an error, neither. A new path is validated as the UI validates one; its requests and behaviour stay. Turning an endpoint off keeps everything it has; requests to its path are then answered 404 and kept in the Unmatched register.",
         "requestBody": {
           "required": true,
           "content": {
@@ -175,12 +202,14 @@
                 "properties": {
                   "path": {
                     "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "`false` turns the endpoint off, `true` on."
                   }
                 },
-                "required": [
-                  "path"
-                ],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "minProperties": 1
               }
             }
           }
@@ -245,6 +274,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       },
@@ -264,6 +296,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -304,6 +339,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       },
@@ -411,6 +449,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -487,6 +528,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       },
@@ -516,6 +560,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -570,6 +617,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -624,6 +674,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -688,6 +741,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -725,6 +781,9 @@
           },
           {
             "$ref": "#/components/parameters/images"
+          },
+          {
+            "$ref": "#/components/parameters/setup"
           }
         ],
         "responses": {
@@ -778,6 +837,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -851,6 +913,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       },
@@ -870,6 +935,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -903,6 +971,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -937,6 +1008,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -985,6 +1059,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -1043,6 +1120,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -1118,6 +1198,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -1136,6 +1219,1033 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "operationId": "me",
+        "summary": "Who am I",
+        "responses": {
+          "200": {
+            "description": "The caller; {\"login\": false} while login is off.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/me/password": {
+      "put": {
+        "operationId": "changeOwnPassword",
+        "summary": "Change your password",
+        "description": "Needs a login (not a token). Your other logins end.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "current": {
+                    "type": "string"
+                  },
+                  "new": {
+                    "type": "string",
+                    "minLength": 12
+                  }
+                },
+                "required": [
+                  "current",
+                  "new"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Changed."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "Login is off: no users yet (`login_off`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The current password is wrong, or the new one is too short (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/Busy"
+          },
+          "400": {
+            "description": "The body is not the JSON expected (`bad_json`, `unknown_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "A write was not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/tokens": {
+      "get": {
+        "operationId": "listOwnTokens",
+        "summary": "List your tokens",
+        "description": "Needs a login (not a token). No values.",
+        "responses": {
+          "200": {
+            "description": "Your tokens, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tokens": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Token"
+                      }
+                    }
+                  },
+                  "required": [
+                    "tokens"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "Login is off: no users yet (`login_off`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createToken",
+        "summary": "Make a token",
+        "description": "Needs a login (not a token). The answer carries the value once; it is never shown again.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The token, with its value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Token"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "You have a token with this name (`exists`), or login is off (`login_off`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The name is not valid (`invalid`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not the JSON expected (`bad_json`, `unknown_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "A write was not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/tokens/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/token"
+        }
+      ],
+      "delete": {
+        "operationId": "revokeOwnToken",
+        "summary": "Revoke one of your tokens",
+        "description": "Needs a login (not a token). Whatever uses it is refused from the next request.",
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such token of yours (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Login is off: no users yet (`login_off`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users": {
+      "get": {
+        "operationId": "listUsers",
+        "summary": "List users",
+        "description": "An admin's login. While there are no users, anyone (login is off).",
+        "responses": {
+          "200": {
+            "description": "Users by name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/User"
+                      }
+                    }
+                  },
+                  "required": [
+                    "users"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "operationId": "addUser",
+        "summary": "Add a user",
+        "description": "An admin's login. While there are no users anyone may add the first one, which must be an admin; login is on from then.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "admin"
+                    ],
+                    "default": "user"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 12
+                  }
+                },
+                "required": [
+                  "name",
+                  "password"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "A user with this name exists (`exists`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not the JSON expected (`bad_json`, `unknown_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "A write was not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{name}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/user"
+        }
+      ],
+      "patch": {
+        "operationId": "changeUser",
+        "summary": "Change a user's role or password",
+        "description": "An admin's login. Either change ends that user's logins; their tokens follow the new role at once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "admin"
+                    ]
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 12
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such user (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "That would leave no admin (`last_admin`), or you would make yourself a user (`self_demotion`): another admin can.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is not valid (`invalid`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not the JSON expected (`bad_json`, `unknown_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "A write was not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeUser",
+        "summary": "Remove a user",
+        "description": "An admin's login. Their logins and tokens end with them.",
+        "responses": {
+          "204": {
+            "description": "Removed."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such user (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The last admin cannot be removed (`last_admin`), and nobody removes themselves (`self_removal`): another admin can.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tokens": {
+      "get": {
+        "operationId": "listAllTokens",
+        "summary": "List everyone's tokens",
+        "description": "An admin's login. No values.",
+        "responses": {
+          "200": {
+            "description": "Tokens by owner.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tokens": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Token"
+                      }
+                    }
+                  },
+                  "required": [
+                    "tokens"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/tokens/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/token"
+        }
+      ],
+      "delete": {
+        "operationId": "revokeAnyToken",
+        "summary": "Revoke anyone's token",
+        "description": "An admin's login.",
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such token (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/setup": {
+      "get": {
+        "operationId": "exportSetup",
+        "summary": "Export endpoints' setup",
+        "description": "The setup file of the endpoints named by `id` (repeat it for several), or of every endpoint. It names each secret and its kind, never a value, hash or fingerprint. Saved as is, it is the file `POST /setup` takes.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "An endpoint to export; absent: all of them."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The setup file; Content-Disposition names it `<path>.hookwitness.json`.",
+            "headers": {
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Setup"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`id` is not an endpoint id (`invalid`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No endpoint with that id (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "operationId": "importSetup",
+        "summary": "Import endpoints from a setup file",
+        "description": "Creates the file's endpoints, all of them or none. Their secrets are created without values (`set: false`). With `on_conflict=replace` an endpoint already at a path gets the file's behaviour; its requests, counter and on/off state stay, and each secret of the same name and kind keeps its value. Importing the same file again changes nothing.",
+        "parameters": [
+          {
+            "name": "on_conflict",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "fail",
+                "replace"
+              ],
+              "default": "fail"
+            },
+            "description": "What to do with a path that is already an endpoint."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Setup"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Imported; at least one endpoint was created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupResult"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Imported; existing endpoints replaced or unchanged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`on_conflict` is not `fail` or `replace` (`invalid`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A path is already an endpoint and `on_conflict` is not `replace` (`duplicate_path`); nothing was imported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The file is over 16 MiB (`too_large`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Not a setup file, a newer format, an unknown field, an invalid path or behaviour (`invalid_setup`); the message names the problem and nothing was imported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/requests/{id}/replays": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "post": {
+        "operationId": "replayRequest",
+        "summary": "Send a caught request again to a URL",
+        "description": "Sends the body's bytes unchanged and the header lines in the order and case they arrived (Host replaced by the target's unless host is received), over HTTP/1.1, without following redirects, and records the answer. The target failing (refused, timeout, reset, TLS) is still a replay, with error set. Targets are checked on the address dialled: link-local and cloud-metadata addresses are always refused, and -replay-allow can narrow them or turn replay off. At most 4 replays run at once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplayIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The replay, with the answer body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Replay"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not valid JSON or has unknown fields (`bad_json`, `unknown_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The body was not kept whole, so the request cannot be sent as it arrived (`body_not_kept`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A bad input (`invalid`: url, host, timeout_ms), or a target the policy refuses (`target_refused`, field url; the message names the rule).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Four replays are running, or the bytes held are at -max-inflight (`busy`; try again after Retry-After), or the server is stopping (`stopping`).",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only an admin can send a replay (`forbidden`): it reaches the server's own network.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "operationId": "listReplays",
+        "summary": "A request's replays, newest first",
+        "parameters": [
+          {
+            "name": "include",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "body"
+              ]
+            },
+            "description": "body: each replay carries its answer body."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The replays; answer bodies only with include=body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "include is not body (`invalid`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/replays/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getReplay",
+        "summary": "Read one replay with the answer body",
+        "responses": {
+          "200": {
+            "description": "The replay.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Replay"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such replay (`not_found`): it went with its request, or newer replays replaced it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/replays/{id}/body": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getReplayBody",
+        "summary": "The answer body exactly as the target sent it",
+        "description": "With the target's Content-Type, never decompressed, always as an attachment (nosniff, CSP sandbox). At most the first 1 MiB.",
+        "responses": {
+          "200": {
+            "description": "The body.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such replay (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -1151,7 +2261,7 @@
             "properties": {
               "code": {
                 "type": "string",
-                "description": "A machine-readable code: not_found, invalid, duplicate_path, stale_version, version_required, conflict, secret_in_use, unknown_field, bad_json, unsupported_media_type, not_an_image, not_kept, too_large, internal."
+                "description": "A machine-readable code: not_found, invalid, duplicate_path, stale_version, version_required, conflict, secret_in_use, unknown_field, bad_json, unsupported_media_type, not_an_image, not_kept, too_large, unauthorized, invalid_token, forbidden, session_required, login_off, exists, last_admin, self_demotion, self_removal, busy, internal."
               },
               "message": {
                 "type": "string",
@@ -1197,6 +2307,10 @@
             "type": "integer",
             "description": "Requests that passed its checks since the counter was reset; the rules count these."
           },
+          "enabled": {
+            "type": "boolean",
+            "description": "On: it catches. Off: it keeps its path, behaviour, secrets, requests and counter, and requests to its path are answered 404 and kept in the Unmatched register."
+          },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
           },
@@ -1211,6 +2325,7 @@
           "url",
           "requests",
           "counter",
+          "enabled",
           "created_at"
         ],
         "additionalProperties": false
@@ -1519,7 +2634,11 @@
           },
           "fingerprint": {
             "type": "string",
-            "description": "A keyed fingerprint; never the value."
+            "description": "A keyed fingerprint; never the value. Empty while the secret is not set."
+          },
+          "set": {
+            "type": "boolean",
+            "description": "False for a secret imported from a setup file whose value has not been given yet: checks that use it give n/v \"secret NAME not set\" and never refuse. Set it on the secrets route."
           },
           "standard": {
             "type": "boolean",
@@ -1536,6 +2655,7 @@
           "name",
           "kind",
           "fingerprint",
+          "set",
           "used_by"
         ],
         "additionalProperties": false,
@@ -1666,6 +2786,10 @@
           "body_base64": {
             "type": "string",
             "description": "With include=body: the body in base64 when it is not UTF-8."
+          },
+          "replays": {
+            "type": "integer",
+            "description": "How many replays of it are kept (GET /requests/{id}/replays); the newest 50."
           }
         },
         "required": [
@@ -1679,7 +2803,8 @@
           "verdict",
           "body_size",
           "body_kept",
-          "content_type"
+          "content_type",
+          "replays"
         ],
         "additionalProperties": false
       },
@@ -1797,6 +2922,10 @@
             "items": {
               "$ref": "#/components/schemas/Image"
             }
+          },
+          "note": {
+            "type": "string",
+            "description": "Signature checks: the same signature as an earlier kept request of the endpoint (\"same signature as #N: a replay, or a redelivery of the same signed request\"). The result is not changed by it."
           },
           "at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -1927,7 +3056,7 @@
               "object",
               "null"
             ],
-            "description": "What was done: source, action (reply, timeout, drop, refused, error, abandoned — the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB; withheld says what of the configured reply HTTP did not send — a body and some headers with 204 or 304, a body to HEAD), delay_ms, waited_ms, counter."
+            "description": "What was done: source (default, rule, check, limit, busy, unmatched — no endpoint at the path, off — the path is an endpoint's that is off), action (reply, timeout, drop, refused, error, abandoned — the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB; withheld says what of the configured reply HTTP did not send — a body and some headers with 204 or 304, a body to HEAD), delay_ms, waited_ms, counter."
           },
           "verdicts": {
             "type": "array",
@@ -1940,6 +3069,10 @@
             "items": {
               "$ref": "#/components/schemas/RequestImage"
             }
+          },
+          "replays": {
+            "type": "integer",
+            "description": "How many replays of it are kept (GET /requests/{id}/replays); the newest 50."
           }
         },
         "required": [
@@ -1959,7 +3092,8 @@
           "headers",
           "outcome",
           "verdicts",
-          "images"
+          "images",
+          "replays"
         ],
         "additionalProperties": false
       },
@@ -2076,6 +3210,457 @@
           "exists",
           "changes",
           "discriminator"
+        ],
+        "additionalProperties": false
+      },
+      "User": {
+        "type": "object",
+        "description": "Someone who may log in. Never the password.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Lower-case: letters, digits, . _ -"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "admin"
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "name",
+          "role",
+          "created_at",
+          "tokens"
+        ],
+        "additionalProperties": false
+      },
+      "Token": {
+        "type": "object",
+        "description": "A personal token. Its value is in `token` only in the answer that made it.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z2-7]{8}$",
+            "description": "The token's public part, for revoking it."
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "shown": {
+            "type": "string",
+            "description": "How it is shown: hkw_<id>_…"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "last_used_at": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "token": {
+            "type": "string",
+            "pattern": "^hkw_[a-z2-7]{8}_[a-z2-7]{40}$",
+            "description": "The value: only when just made, never again."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "owner",
+          "shown",
+          "created_at",
+          "last_used_at"
+        ],
+        "additionalProperties": false
+      },
+      "Me": {
+        "type": "object",
+        "description": "Who the caller is.",
+        "properties": {
+          "login": {
+            "type": "boolean",
+            "description": "false while there are no users (and no machine token): the API is open."
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "admin"
+            ]
+          },
+          "via": {
+            "type": "string",
+            "enum": [
+              "session",
+              "token",
+              "machine token"
+            ]
+          }
+        },
+        "required": [
+          "login"
+        ],
+        "additionalProperties": false
+      },
+      "SetupSecret": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "key",
+              "token"
+            ],
+            "description": "key: a signing key; token: a token or password."
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "additionalProperties": false,
+        "description": "A secret the endpoint needs: its name and kind, never a value."
+      },
+      "SetupEndpoint": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "default": {
+            "$ref": "#/components/schemas/Reply"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            }
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            }
+          },
+          "vars": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Var"
+            }
+          },
+          "schemas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Schema"
+            }
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupSecret"
+            }
+          }
+        },
+        "required": [
+          "path",
+          "default"
+        ],
+        "additionalProperties": false,
+        "description": "One endpoint's setup: its path and behaviour. Requests, counters, the on/off state, ids and times are not part of it."
+      },
+      "Setup": {
+        "type": "object",
+        "properties": {
+          "hookwitness": {
+            "type": "integer",
+            "const": 1,
+            "description": "The format marker and version. A file of a newer format is refused."
+          },
+          "endpoints": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/SetupEndpoint"
+            }
+          }
+        },
+        "required": [
+          "hookwitness",
+          "endpoints"
+        ],
+        "additionalProperties": false,
+        "description": "A setup file: endpoints' behaviour, portable between instances. Unknown fields are refused."
+      },
+      "SetupResult": {
+        "type": "object",
+        "properties": {
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "result": {
+                  "type": "string",
+                  "enum": [
+                    "created",
+                    "replaced",
+                    "unchanged"
+                  ]
+                },
+                "secrets_not_set": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Secrets of the endpoint without a value: set them on the secrets route."
+                }
+              },
+              "required": [
+                "id",
+                "path",
+                "result",
+                "secrets_not_set"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "endpoints"
+        ],
+        "additionalProperties": false
+      },
+      "ReplayIn": {
+        "type": "object",
+        "description": "Where to send the request, and how.",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The target: http or https, with the path and query the request goes to. No user name or password."
+          },
+          "host": {
+            "type": "string",
+            "enum": [
+              "target",
+              "received"
+            ],
+            "default": "target",
+            "description": "The Host line: the URL's host and port (target), or as caught (received). It keeps its place either way."
+          },
+          "insecure_tls": {
+            "type": "boolean",
+            "default": false,
+            "description": "https: accept any certificate (self-signed handlers). Recorded with the replay."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 100,
+            "description": "The whole exchange; default 30000, at most -max-wait."
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "Replay": {
+        "type": "object",
+        "description": "A caught request sent again: what was sent where, and what the target answered. status 0 with error set: there was no (complete) answer.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "request_id": {
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "by": {
+            "type": "string",
+            "description": "Who replayed it; empty without login."
+          },
+          "url": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "enum": [
+              "target",
+              "received"
+            ]
+          },
+          "insecure_tls": {
+            "type": "boolean"
+          },
+          "timeout_ms": {
+            "type": "integer"
+          },
+          "line": {
+            "type": "string",
+            "description": "The request line sent: the method, the URL's path and query, HTTP/1.1."
+          },
+          "sent": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "The header lines written, in order: the caught ones, with Host as chosen."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Where the request sent differs from the one caught (HTTP/1.0 sent as 1.1, a chunked body as one chunk, a Host added)."
+          },
+          "proto": {
+            "type": "string",
+            "description": "The answer's protocol; empty without an answer."
+          },
+          "status": {
+            "type": "integer",
+            "description": "The answer's status; 0 without an answer. Redirects are not followed."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "The answer's header lines as received: order, case and repeats kept."
+          },
+          "body_size": {
+            "type": "integer",
+            "description": "The answer body's bytes; -1 when it was cut before its end (timeout or reset)."
+          },
+          "body_cut": {
+            "type": "boolean",
+            "description": "Only the first 1 MiB (or what arrived) is kept."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "description": "From the first byte written to the last byte read."
+          },
+          "ttfb_ms": {
+            "type": "integer",
+            "description": "From the first byte written to the first byte of the answer."
+          },
+          "error": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "dial",
+                  "tls",
+                  "timeout",
+                  "reset",
+                  "write",
+                  "answer"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          "body_text": {
+            "type": "string",
+            "description": "The answer body when it is UTF-8 text, as it arrived (never decompressed). In a list only with include=body."
+          },
+          "body_base64": {
+            "type": "string",
+            "description": "The answer body in base64 when it is not UTF-8."
+          }
+        },
+        "required": [
+          "id",
+          "request_id",
+          "created_at",
+          "by",
+          "url",
+          "host",
+          "insecure_tls",
+          "timeout_ms",
+          "line",
+          "sent",
+          "notes",
+          "proto",
+          "status",
+          "reason",
+          "headers",
+          "body_size",
+          "body_cut",
+          "duration_ms",
+          "ttfb_ms",
+          "error"
+        ],
+        "additionalProperties": false
+      },
+      "ReplayList": {
+        "type": "object",
+        "properties": {
+          "replays": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Replay"
+            }
+          }
+        },
+        "required": [
+          "replays"
         ],
         "additionalProperties": false
       }
@@ -2241,6 +3826,15 @@
           "default": "shown"
         }
       },
+      "setup": {
+        "name": "setup",
+        "in": "query",
+        "schema": {
+          "type": "boolean",
+          "default": false
+        },
+        "description": "true adds a section with the endpoint's setup as it is when the report is made: checks, schemas, rules, replies, variables, and secrets by name, kind and whether they are set (never a value)."
+      },
       "path": {
         "name": "path",
         "in": "query",
@@ -2289,7 +3883,93 @@
           ]
         },
         "description": "body: each request carries body_text or body_base64, as one request does; limit is then at most 100."
+      },
+      "token": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "The token's id (the 8 characters after hkw_)."
+      },
+      "user": {
+        "name": "name",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "The user's name (case does not matter)."
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A personal token (hkw_<id>_<secret>, from the account page or POST /me/tokens) or the machine token of HOOKWITNESS_API_TOKEN_FILE."
+      },
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "hookwitness_session",
+        "description": "The web UI's login."
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Login is on and the request has no valid credentials (`unauthorized`, `invalid_token`).",
+        "headers": {
+          "WWW-Authenticate": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Not allowed: only an admin manages users and everyone's tokens (`forbidden`); managing tokens and users needs a login, not a token (`session_required`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Busy": {
+        "description": "Too many password or token checks at once (`busy`); try again after Retry-After.",
+        "headers": {
+          "Retry-After": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
       }
     }
-  }
+  },
+  "security": [
+    {},
+    {
+      "bearerAuth": []
+    },
+    {
+      "cookieAuth": []
+    }
+  ]
 }

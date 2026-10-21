@@ -3,7 +3,10 @@
 Thanks for looking. The project is young (0.1, before 1.0) and the shape of
 the code is still settling, so **open an issue before a pull request** and
 say what problem the change solves. That costs less than a pull request that cannot be
-merged.
+merged. The issue forms ask for what helps: a bug's version and a request
+transcript, a feature's problem. A security problem is reported privately
+instead ([SECURITY.md](SECURITY.md)). The pull request template carries the
+checks and the sign-off below.
 
 ## Sign your commits (DCO)
 
@@ -18,7 +21,8 @@ Origin](https://developercertificate.org/): you wrote the change, or have the
 right to submit it, and you submit it under this project's license
 ([Apache-2.0](LICENSE)). The name and email must match the commit's author.
 To fix a missing sign-off: `git commit --amend -s`, or
-`git rebase --signoff <base>` for several commits.
+`git rebase --signoff <base>` for several commits. CI checks every commit of
+a pull request (`scripts/dco.sh`) and fails when one lacks it.
 
 ## Branches
 
@@ -31,8 +35,8 @@ To fix a missing sign-off: `git commit --amend -s`, or
   `hotfix/<name>` branch from `main`, is released as the next patch version
   (0.1.0 → 0.1.1) and merged back into `dev`.
 - One branch, one concern. A fix and a refactor are two pull requests.
-- CI runs `make check` and the container and API smoke tests on every pull
-  request; all must pass.
+- CI runs `make check`, `make docs-check` and the container and API smoke
+  tests on every pull request; all must pass.
 
 Enable the repository's git hooks once per clone:
 

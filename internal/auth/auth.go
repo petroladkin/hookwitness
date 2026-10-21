@@ -39,6 +39,7 @@ type Verdict struct {
 	Problems []Problem `json:"problems,omitempty"` // schema checks: the first problems found
 	Total    int       `json:"total,omitempty"`    // schema checks: all problems found
 	Images   []Image   `json:"images,omitempty"`   // schema checks: the images the schema declares, as found
+	Note     string    `json:"note,omitempty"`     // signatures: the same signature as an earlier request's
 	At       time.Time `json:"at"`                 // when it was computed
 }
 

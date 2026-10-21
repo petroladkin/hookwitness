@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
@@ -14,29 +15,39 @@ import (
 // navView is what the masthead of every page needs.
 type navView struct {
 	Prefix     string
-	Host       string // as the browser addressed us: the catch URLs' host
+	Catch      string // the catch URLs' base, e.g. http://127.0.0.1:8080 (api.CatchURL)
 	Endpoints  []store.Endpoint
 	Unmatched  int   // requests in the Unmatched register
 	Current    int64 // register shown; -1 for none
 	OnRegister bool  // a register page with a live feed
 	Asset      func(string) string
 	Build      string // the build serving the page: "<version> (<commit>)"
+	NoLogin    bool   // login is off: every page says that anyone can use it
+	User       string // who is logged in; "" with login off
+	Admin      bool   // the logged-in user may manage users
+	Bare       bool   // the login page: no endpoints, no addresses
+	Theme      string // this browser's choice: "light", "dark" or "" (auto)
+	Here       string // the page's own URL, where the theme switch comes back to
 }
 
 // registerView is one register: an endpoint's requests or the Unmatched ones.
 type registerView struct {
 	ID       int64
 	Path     string // empty for Unmatched
+	Enabled  bool   // the endpoint is on (always true for Unmatched)
+	Unset    int    // its secrets without a value (imported from a setup file)
 	Count    int
 	Rows     []rowView
 	More     bool  // older requests exist beyond Rows
 	Newest   int64 // id of the newest row, where the live feed starts
+	Seq      int64 // the change sequence the rows are complete up to
 	Base     string
 	Selected int64
 	Keep     int // retention: the register never holds more
 	Verdicts verdictsView
-	Export   *exportView      // the report dialog, when open
-	Draft    *draftDialogView // the schema draft dialog, when open
+	Export   *exportView       // the report dialog, when open
+	Draft    *draftDialogView  // the schema draft dialog, when open
+	Replay   *replayDialogView // the replay dialog, when open
 }
 
 // rowView is one line of the register.
@@ -54,6 +65,8 @@ type rowView struct {
 	Fresh    bool // arrived on the live feed
 	Outcome  emulate.Outcome
 	Verdict  string // overall authorization verdict, "" without checks
+	Replays  int    // replays kept of it
+	Repeat   string // the note of a signature an earlier request carried
 }
 
 // exhibitView is one request in full.
@@ -81,6 +94,9 @@ type exhibitView struct {
 	Verdicts []auth.Verdict
 	BadPaths int // body tokens marked by schema problems
 	Images   []imageView
+	// CanReplay: the whole body is kept, so it can be sent as it arrived.
+	CanReplay bool
+	Replays   []replayView // newest first
 }
 
 // imageView is an image the request carries, under its body.
@@ -142,8 +158,8 @@ func title(reg registerView) string {
 }
 
 // tryCommand is a curl line that sends a test request to an endpoint.
-func tryCommand(host, path string) string {
-	return "curl -X POST http://" + host + path + " \\\n" +
+func tryCommand(base, path string) string {
+	return "curl -X POST " + base + path + " \\\n" +
 		"  -H 'Content-Type: application/json' \\\n" +
 		`  -d '{"hello":"world"}'`
 }
@@ -179,8 +195,47 @@ func (r rowView) tag() string {
 		return "500 template error"
 	case o.Source == emulate.FromRule:
 		return strconv.Itoa(o.Status) + " · rule " + strconv.Itoa(o.Rule)
+	case o.Source == emulate.FromOff:
+		return "endpoint off"
 	case o.Source == emulate.FromDefault && !o.Good():
 		return strconv.Itoa(o.Status)
 	}
 	return ""
 }
+
+// section is the masthead tab the page belongs to: "users" for the users
+// page, "" for the account page, "endpoints" for everything else.
+func (n navView) section() string {
+	path, _, _ := strings.Cut(strings.TrimPrefix(n.Here, n.Prefix), "?")
+	switch {
+	case path == "/users" || strings.HasPrefix(path, "/users/"):
+		return "users"
+	case path == "/account" || strings.HasPrefix(path, "/account/"):
+		return ""
+	}
+	return "endpoints"
+}
+
+// someOn reports whether any endpoint is on: an empty On group says so.
+func (n navView) someOn() bool {
+	for _, e := range n.Endpoints {
+		if e.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// someOff reports whether any endpoint is off: the picker then groups them.
+func (n navView) someOff() bool {
+	for _, e := range n.Endpoints {
+		if !e.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// hostOf is a catch base without its "http://" scheme, for the header's
+// address; an https base keeps its scheme so it is not mistaken for http.
+func hostOf(base string) string { return strings.TrimPrefix(base, "http://") }

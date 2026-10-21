@@ -36,6 +36,41 @@ curl -s -X POST http://127.0.0.1:8080/stripe/webhook -d '{}'   # 404: kept under
 
 ![The Unmatched register with one request to /stripe/webhook](images/unmatched.webp)
 
+## Turning an endpoint off
+
+On a server shared by several products, many endpoints are set up and only a
+few matter at a time. Turn the others **off** instead of deleting them. An
+endpoint that is off keeps its path (no other endpoint can take it), its
+behaviour, secrets, kept requests and the rules' counter, and catches
+nothing: a request to its path is answered `404` and kept under Unmatched,
+as for a path without an endpoint, tagged **endpoint off**. Like any
+unmatched request, only the first 64 KiB of its body is kept. A request
+already held by a timeout when you turn the endpoint off ends as scripted.
+
+The switch is on each row of the Endpoints page (rows that are off are
+dimmed) and next to **Clear** on the endpoint's register, which says while
+it is off where its requests go. When some endpoint is off, the list under
+the register's name (click it to go to another register) shows the
+endpoints that are on and those that are off apart. Turn it **On** again and the next request is caught by
+the endpoint, with its rules counting on from where they stopped. A new
+endpoint is on. Scripts and agents use the API's `enabled`.
+
+<!-- docs-check: setup: stripe_endpoint -->
+```sh
+curl -s -X PATCH http://127.0.0.1:8080/admin/api/v1/endpoints/1 -H 'Content-Type: application/json' -d '{"enabled":false}' | jq -c '{path, enabled}'
+# {"path":"/stripe/webhooks","enabled":false}
+curl -s -X POST http://127.0.0.1:8080/stripe/webhooks -d '{}'   # 404: kept under Unmatched, tagged endpoint off
+curl -s -X PATCH http://127.0.0.1:8080/admin/api/v1/endpoints/1 -H 'Content-Type: application/json' -d '{"enabled":true}' | jq -c '{path, enabled}'
+# {"path":"/stripe/webhooks","enabled":true}
+curl -s -X POST http://127.0.0.1:8080/stripe/webhooks -d '{}'   # 200: caught by the endpoint again
+```
+
+![The Endpoints page with /stripe/webhooks switched off and dimmed](images/endpoints-off.webp)
+
+![The register of /stripe/webhooks while it is off, saying its requests go to Unmatched](images/register-off.webp)
+
+![An Unmatched request to /stripe/webhooks answered 404 because the endpoint is off](images/unmatched-off.webp)
+
 ## The register
 
 Click an endpoint to open its register: the endpoint's requests, newest on
@@ -59,7 +94,7 @@ the header says the feed is connected.
 ### The strip
 
 Above the register, the strip draws the last two minutes like a recorder's
-paper. Each request is one mark, and its height is the body size. A red mark
+paper; **10 min**, **1 h** or **6 h** under it show a longer stretch. Each request is one mark, and its height is the body size. A red mark
 was not answered 2xx, a dashed one timed out, and a cross was dropped. A red
 bar under the line means a check failed. The same body delivered more than
 once is bracketed, with the gap between the deliveries above the bracket. A
@@ -72,6 +107,22 @@ twice and delivered again after 4 s and 8 s, and another body arrived twice,
 5 s apart.
 
 ![The strip of a payments endpoint after a minute of traffic](images/strip.webp)
+
+A longer range shows senders that retry after minutes or hours, or deliver
+once an hour: Standard Webhooks (Svix), for example, retries after 5 s,
+5 min, 30 min, 2 h and more, so its whole pattern fits on the 6 h paper.
+Each range has its own grid and time labels, and a gap between deliveries is
+written in its own unit (`+4.0 s`, `+5 min`, `+2 h`). The strip draws every
+request the endpoint keeps in the range, not only the rows the register has
+loaded. The browser remembers the range, and the page's address carries it
+(`?span=10m`, `1h`, `6h`), so a link shows the same paper.
+
+The register keeps the newest requests only (`-retention`, see
+[Deployment](deployment.md#settings)). The part of a range older than the oldest kept
+request is hatched and labelled **not kept**: requests may have arrived then,
+but they are gone. A cleared register shows the same before its first new
+request. With a very high retention, a long range of a busy endpoint has
+many marks to load and draw.
 
 ### Retries
 
@@ -99,7 +150,9 @@ Click a row to open it on the right. From the top:
 - **Answer** says what Hookwitness sent, which rule or the default reply
   decided, and the measured delay.
 - **Headers** in the order and case the sender wrote them, repeated ones
-  kept.
+  kept. One value is never kept: the admin's own login cookie
+  (`hookwitness_session`), which a browser logged in on another port of the
+  same host sends along, reads `[hookwitness session]`.
 - **Query**, the query string as name and value pairs.
 
 **Report** (on the request or on the register) exports the evidence, see
@@ -129,3 +182,14 @@ replies stay as they were sent.
 Each endpoint keeps its newest 1000 requests (`-retention`), and so does the
 Unmatched register. Older ones are deleted as new ones arrive. See
 [Configuration and deployment](deployment.md).
+
+## Light or dark
+
+The UI follows your system's light or dark setting. To choose otherwise,
+use the **Auto · Light · Dark** switch in the menu at the top right of
+every page: under your name, or **Theme** while login is off. The choice belongs to this browser: it is kept in a cookie,
+so a phone and a laptop can differ, with or without login. **Auto** follows
+the system again. Reports downloaded as HTML follow the reader's own
+setting.
+
+![The register in Dark, chosen with the switch while the system is light](images/theme.webp)

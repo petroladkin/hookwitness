@@ -2,9 +2,11 @@ package web
 
 import (
 	"context"
+	"github.com/petroladkin/hookwitness/internal/catch"
 	"html"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -99,6 +101,33 @@ func TestSchemaDraftFlow(t *testing.T) {
 		if p := page(base + "/behaviour?tab=schemas&edit=schema-draft&" + q); !strings.Contains(p, why) || strings.Contains(p, "<dialog") {
 			t.Errorf("%s: want %q", q, why)
 		}
+	}
+}
+
+// A draft holds at most catch.MaxDraftBytes of bodies: picked requests
+// past it are refused; all with a value keep the newest that fit.
+func TestSchemaDraftBytes(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	ep, _ := e.st.CreateEndpoint(ctx, "/shop/events")
+	base := "/admin/e/" + id(ep.ID)
+	e.edit(ep.ID, url.Values{"op": {"schema-save"}, "i": {"new"}, "name": {"OrderPaid"}, "text": {orderPaid}})
+	e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"schema"}, "select_from": {"body"}, "select_key": {"/type"},
+		"select_map": {"order.paid = OrderPaid"}})
+	for i := range 4 {
+		e.add(t, ep.ID, `{"type":"order.shipped","order_id":`+strconv.Itoa(i)+`,"pad":"`+strings.Repeat("x", 1000)+`"}`, nil)
+	}
+	old := catch.MaxDraftBytes
+	catch.MaxDraftBytes = 2500
+	t.Cleanup(func() { catch.MaxDraftBytes = old })
+	get := func(q string) string {
+		return html.UnescapeString(e.do("GET", base+"/behaviour?tab=schemas&edit=schema-draft&"+q, nil).Body.String())
+	}
+	if p := get("pick=1-4"); !strings.Contains(p, "No draft: at most 2500 bytes of bodies at a time.") {
+		t.Fatalf("picked past the budget:\n%s", p)
+	}
+	if p := get("by=value&value=order.shipped"); !strings.Contains(p, "Drafted from the 2 newest of 4 requests with /type = order.shipped.") {
+		t.Fatalf("by value past the budget:\n%s", between(p, "<dialog", "</dialog>"))
 	}
 }
 

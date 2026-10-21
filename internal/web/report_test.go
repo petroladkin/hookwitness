@@ -138,3 +138,29 @@ func TestReportImagesOption(t *testing.T) {
 		t.Fatal("the images option")
 	}
 }
+
+// The dialog offers the endpoint's setup, off by default; the Unmatched
+// register's dialog does not.
+func TestReportSetupOption(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/shop")
+	e.add(t, ep.ID, `{}`, nil)
+	base := "/admin/e/" + id(ep.ID)
+	dialog := e.do("GET", base+"?report", nil).Body.String()
+	if !strings.Contains(dialog, `name="setup" value="true"`) || strings.Contains(dialog, `name="setup" value="true" checked`) {
+		t.Fatal("the setup switch is missing or on by default")
+	}
+	if strings.Contains(e.do("GET", base+"/report?format=md&scope=all", nil).Body.String(), "## Setup") {
+		t.Fatal("a setup section without asking")
+	}
+	md := e.do("GET", base+"/report?format=md&scope=all&setup=true", nil).Body.String()
+	if !strings.Contains(md, "## Setup") || !strings.Contains(md, "**Default reply**") {
+		t.Fatalf("no setup section:\n%s", md)
+	}
+	if rec := e.do("GET", base+"/report?format=md&scope=all&setup=maybe", nil); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("a bad setup value: %d", rec.Code)
+	}
+	if strings.Contains(e.do("GET", "/admin/e/unmatched?report", nil).Body.String(), `name="setup"`) {
+		t.Fatal("the Unmatched register offers a setup")
+	}
+}

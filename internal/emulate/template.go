@@ -165,26 +165,38 @@ func (d *Data) JSON(path string) string {
 	}
 }
 
-// Protective headers every rendered reply carries unless the endpoint sets
-// them itself. A catch path shares its origin with the admin UI, so a reply
-// that reflects request data could otherwise run as a page of that origin
-// (an echo reply opened through a cross-site form); senders of webhooks do
-// not render pages, so emulation loses nothing.
-var protective = []Header{
-	{"Content-Security-Policy", "sandbox"},
-	{"X-Content-Type-Options", "nosniff"},
-}
-
-// Protect adds the protective headers the reply does not set.
-func (r Rendered) Protect() Rendered {
-	hs := r.Headers
-	for _, p := range protective {
-		if len(headerValues(r.Headers, p.Name)) == 0 {
-			hs = append(hs[:len(hs):len(hs)], p)
+// A catch path shares its origin with the admin UI, so a reply that
+// reflects request data, or one a user of the admin scripted, could
+// otherwise run as a page of that origin with an admin's login (an echo
+// reply opened through a cross-site form, a link sent to an admin); senders
+// of webhooks do not render pages, so emulation loses nothing. Protect
+// therefore always adds "Content-Security-Policy: sandbox" (an endpoint's
+// own policy is sent too: several policies only narrow each other), adds
+// "X-Content-Type-Options: nosniff" unless the endpoint sets it, and drops
+// any Set-Cookie of sessionCookie, the admin's login cookie.
+func (r Rendered) Protect(sessionCookie string) Rendered {
+	hs := make([]Header, 0, len(r.Headers)+2)
+	for _, h := range r.Headers {
+		if strings.EqualFold(h.Name, "Set-Cookie") && cookieName(h.Value) == sessionCookie {
+			continue
 		}
+		hs = append(hs, h)
+	}
+	if !contains(headerValues(hs, "Content-Security-Policy"), "sandbox") {
+		hs = append(hs, Header{"Content-Security-Policy", "sandbox"})
+	}
+	if len(headerValues(hs, "X-Content-Type-Options")) == 0 {
+		hs = append(hs, Header{"X-Content-Type-Options", "nosniff"})
 	}
 	r.Headers = hs
 	return r
+}
+
+// cookieName is the name a Set-Cookie value sets, as a browser reads it.
+func cookieName(v string) string {
+	name, _, _ := strings.Cut(v, "=")
+	name, _, _ = strings.Cut(name, ";")
+	return strings.TrimSpace(name)
 }
 
 // Rendered is a reply ready to send.

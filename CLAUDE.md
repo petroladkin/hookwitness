@@ -13,8 +13,12 @@ sqlite, also shipped as a Docker image.
 
 `hookwitness serve` catches webhooks: endpoints are exact paths managed in the
 web UI under the admin prefix (default `/admin`); every other path is caught
-into the Unmatched register with a 404. The UI shows each endpoint's requests
-live (SSE + HTMX) with the recorder strip and the request detail. Each
+into the Unmatched register with a 404. An endpoint can be turned off
+(`enabled`): it keeps everything, and its path is answered as unmatched
+(outcome source `off`) until it is on again. The UI shows each endpoint's requests
+live (SSE + HTMX) with the recorder strip (2 min, 10 min, 1 h or 6 h, every
+kept request of the range from a UI-only marks route, the time before the
+oldest kept request hatched "not kept") and the request detail. Each
 endpoint's behaviour page scripts its answers: required-header checks, ordered
 rules (every Nth, first N, random p%) with reply / timeout / drop, a default
 reply, template variables; a reply body is a template or exact bytes
@@ -39,7 +43,9 @@ screenshots) and its Ukrainian twin in `docs/uk/`; the README keeps the pitch,
 the quick start and links. Reports: a register's requests (all, a time range or
 picked by number) download from the UI as Markdown, self-contained HTML or a
 native PDF, with a summary (answers by class, verdicts per check, retry
-groups, the strip of the range) and optional header masking. The REST API
+groups, the strip of the range), optional header masking and an optional
+section with the endpoint's setup at generation time (secrets by name,
+kind and set / not set only). The REST API
 covers the UI: endpoints (create, change path, delete), behaviour, secrets,
 requests with filters (verdict, status, text in the body, a value at a
 JSON pointer), bodies in lists and long-poll, the Unmatched register, the raw body,
@@ -51,8 +57,40 @@ task-shaped tools over the REST API (`internal/mcp`), and `hookwitness mcp`
 bridges stdio clients to it. `hookwitness
 version`, reports, the UI and `/healthz` name the build as `<version>
 (<commit>)` (the image from `dev` is `edge`); `hookwitness health` probes
-`/healthz` (the container's health check). A container image (distroless, non-root, data
+`/healthz` (the container's health check). The admin (UI, REST API, MCP)
+lives under the prefix on the catch listener, or on its own address
+(`-admin-addr`, prefix `/` allowed there), where the catch listener keeps
+only endpoints and `/healthz`; catch URLs come from `-public-url` or are
+derived (`api.CatchURL`). Access: with no users the admin is open (a "no
+login" line on every page, a start-up warning beyond loopback); the first
+user (always an admin; from the Users page, `HOOKWITNESS_ADMIN_USER` +
+`HOOKWITNESS_ADMIN_PASSWORD_FILE` at start, `hookwitness user add`, or the
+API) turns login on for the UI, the API and MCP: browser sessions (cookie,
+SameSite=Lax, idle 24 h, absolute 7 days), personal tokens
+(`hkw_<id>_<secret>`, Bearer, shown once; skip the host check), a machine
+token (`HOOKWITNESS_API_TOKEN_FILE`, closes the API and MCP even without
+users), two roles (user, admin), a login limit per client address
+(`-trusted-proxies`); token and user management needs a session; the
+catcher replaces the session cookie's value in recorded `Cookie` headers.
+Replay: a caught request whose body was kept whole is sent again, byte for
+byte (Host replaced in place unless kept), to a URL from the UI, the API
+(`POST <prefix>/api/v1/requests/{id}/replays`) or MCP (`replay_request`), by an admin once login is on;
+the target's answer is kept with the request (newest 50); link-local and
+cloud-metadata addresses are refused on the address dialled, and
+`-replay-allow` narrows the targets or turns replay off. Setup files: an endpoint's setup (path,
+behaviour, secret names and kinds, never values; `"hookwitness": 1`,
+unknown fields refused) exports from the Behaviour page, Export all, `GET
+<prefix>/api/v1/setup` and MCP `export_endpoint`, and imports (all or
+none; a taken path replaced only when asked, keeping its requests, counter,
+on/off state and the values of same-named secrets) through the import dialog
+(review, other paths, optional secret values), `POST .../setup`, MCP
+`import_endpoints`, `serve -import` / `HOOKWITNESS_IMPORT` at every start and
+`hookwitness apply`; a secret without its value is "not set": its checks give
+n/v "secret NAME not set" and never refuse. A container image (distroless, non-root, data
 in the `/data` volume) is built, smoke-tested and published to GHCR by CI.
+Release tags also get binaries: archives for linux and darwin × amd64 and
+arm64 with `SHA256SUMS` and a provenance attestation, on a draft Release
+the release step publishes (`make dist`).
 Released: 0.1.0 (`CHANGELOG.md`); the documentation tells users to run the
 image `:0.1` (`TestDocsImageTag`), and `main` holds the tagged releases.
 This section must describe what is true now — update it in the same change
@@ -60,20 +98,50 @@ that makes it false.
 
 ## Layout
 
-- `cmd/hookwitness` — the command: subcommands `serve`, `health`, `mcp` (the
-  stdio bridge), `version`; signal
-  handling; logger setup; wiring of the parts below.
-- `internal/config` — `serve` settings from flags and `HOOKWITNESS_*` env.
+- `cmd/hookwitness` — the command: subcommands `serve` (`-import` applies a
+  setup file before listening), `health`, `mcp` (the stdio bridge,
+  `-token-file`), `apply` (a setup file through the API, `-url`,
+  `-token-file`), `user` (add / passwd / rm / list on the database, exit
+  codes 0-4), `db compact` (server stopped), `version`; the first admin from the
+  environment; signal handling; logger setup; wiring of the parts below.
+- `internal/access` — who may use the admin: names, passwords, tokens
+  (format, minting), sessions (ids hashed with SHA-256, lifetimes, the
+  cookie), the login limiter and trusted proxies, the identity a request
+  carries in its context (`With`, `From`, `Who` for logs), the
+  `Authenticator` over the store and `internal/secret`.
+- `internal/config` — `serve` settings from flags and `HOOKWITNESS_*` env
+  (the admin's own address and the public URL validated with the rest).
 - `internal/store` — sqlite (modernc.org/sqlite, no cgo): pragmas, embedded
   migrations in `internal/store/migrations/NNNN_name.sql`, applied in order and
-  recorded in `schema_migrations`; a newer database schema is refused.
-  Endpoints and requests (`catch.go`); `endpoint_id` NULL is the Unmatched
-  register; request ids are never reused (they are the SSE event ids).
+  recorded in `schema_migrations`; a newer database schema is refused. New
+  databases have incremental auto-vacuum: clearing and deleting give space
+  back at once, pruning by a housekeeping tick (`vacuum.go`, steps of 1024
+  pages); `Compact` (`hookwitness db compact`, server stopped: a shared
+  lock on `<db>.lock` while open, exclusive while compacting) converts an
+  older database through a checked copy renamed into place.
+  Users, sessions and tokens (`access.go`; the last admin guarded inside the
+  write transaction).
+  Endpoints and requests (`catch.go`); imports (`import.go`: all or none); `endpoint_id` NULL is the Unmatched
+  register; request ids are never reused (they are the SSE event ids);
+  every outcome or verdict change takes the next value of one change
+  sequence (`requests.change_seq`, in commit order), from which the live
+  feed resumes (`Last-Event-ID: <request id>.<seq>`); the signatures kept
+  requests carried, as keyed digests (`signature_seen`), so a passing
+  signature that repeats an earlier kept request's gets a note (the
+  result unchanged).
+- `internal/setup` — setup files: `Export` (secret names and kinds only),
+  `Parse` (format marker and version, unknown fields refused, paths and
+  behaviours validated), `Endpoint.Config` (a replace keeps the values of
+  secrets with the same name and kind), `Apply` through
+  `store.ImportEndpoints` (one transaction; a `Plan` says which taken paths
+  to replace and gives sealed values typed at import).
 - `internal/wire` — follows the raw HTTP/1.x stream of each connection to keep
   header lines in received order, case and repetition (net/http's map loses
   them). The root handler must `wire.Take` every request.
-- `internal/server` — the root router on the raw path (`/healthz`, admin
-  prefix, everything else caught; no ServeMux cleaning) and graceful shutdown.
+- `internal/server` — the root routers on the raw path (`/healthz`, admin
+  prefix, everything else caught; no ServeMux cleaning): `New` for one
+  listener, `CatchRoot` and `AdminRoot` when the admin has its own; graceful
+  shutdown (`cmd/hookwitness` runs both listeners together).
 - `internal/emulate` — pure decision logic for an endpoint's answer: config
   (JSON in `endpoints.config`), validation, required-header and
   authorization checks (`checks.go`: kinds, secrets list, `Verify`), rule
@@ -101,11 +169,16 @@ that makes it false.
   by digest);
   finding them in a request (schema verdicts, data:image strings, an image
   body) and reading one by JSON pointer.
+- `internal/jsonptr` — JSON pointers (RFC 6901): parse, format, resolve;
+  array indexes without a sign or a leading zero. Every lookup at a pointer
+  (schema selection, problem paths, the `json=` filter, images) uses it.
 - `internal/payload` — a body and a query prepared for people: JSON
   pretty-printed with tokens tagged (class, JSON pointer; indentation capped
   at 32 levels, no pointer past 128, so deep bodies stay small), the text test, the
   hex dump, query pairs; shared by the UI and the reports.
-- `internal/report` — reports of caught requests: Markdown, one HTML file
+- `internal/report` — reports of caught requests (and, asked for, the
+  endpoint's setup in words, `setup.go`, through `emulate`'s `words.go`
+  shared with the behaviour page): Markdown, one HTML file
   (inline CSS, the UI's fonts as data URIs, a CSP that forbids requests, an
   SVG strip) and PDF (signintech/gopdf; Martian Mono and Atkinson
   Hyperlegible TTFs vendored in `internal/report/fonts/<name>/` with LICENSE
@@ -121,8 +194,10 @@ that makes it false.
   404 + Unmatched keeping a body's first 64 KiB; bodies held at once bounded
   by `-max-inflight`, over it 503 "busy" without the body); runs checks, lets the store decide the rule inside the
   counter's transaction (exact under concurrency), then replies (with
-  `Content-Security-Policy: sandbox` and `nosniff` unless the endpoint sets
-  them: catch paths share the UI's origin), delays, holds (timeout) or
+  `Content-Security-Policy: sandbox` always, next to an endpoint's own
+  policy, `nosniff` unless the endpoint sets it, and never a `Set-Cookie` of
+  the login cookie: catch paths share the UI's origin), delays, holds
+  (timeout) or
   resets (drop, SO_LINGER 0); holds end on shutdown.
 - `internal/live` — wake-ups for live feeds; feeds read what they missed from
   the store, so nothing is lost or repeated.
@@ -140,15 +215,30 @@ that makes it false.
   `<prefix>/mcp`; `wait_for_request` and `expect` chain the API's long-polls
   and end on cancellation and at shutdown (a tool error); open sessions are
   tracked and closed on shutdown (`Streamable.CloseSessions`, called by
-  `StopStreams`); results are a summary line and compact JSON,
+  `StopStreams`) and capped (`-mcp-max-sessions`, default 32: a slot taken at
+  `initialize`, 503 over it); results are a summary line and compact JSON,
   bodies cut at 16 KiB; `Bridge` pipes stdio to Streamable HTTP.
+- `internal/send` — one HTTP/1.1 exchange written and read by hand (header
+  lines in order and case, the body as is, the answer never decompressed,
+  no redirects), and the target `Policy` checked on the dialled address
+  (the dialer's Control hook): link-local and metadata addresses always
+  refused, `-replay-allow` parsed here.
+- `internal/replay` — replays of caught requests: refuses bodies not kept
+  whole, four at once, bodies held against `-max-inflight` (the catcher's
+  `Reserve`/`Release`), the timeout, the record (`store` `replays`, newest
+  50 per request), logs naming only the target's origin; `Stop`/`Wait` at
+  shutdown.
 - `internal/web` — the UI (and its report dialog and download, `report.go`): templ components (`views.templ`, generated
   `views_templ.go` is committed), handlers, SSE feed, embedded `static/`
   (our `app.css`, `app.js`; vendored htmx, htmx-ext-sse and fonts under
   `static/vendor/<name>/` with `LICENSE` and `SOURCE`). Strict CSP: no
   inline scripts or styles, nothing from other origins. Answers only to IP
-  addresses, localhost and `-admin-hosts` names (DNS rebinding); refuses
-  cross-origin form posts.
+  addresses, localhost and `-admin-hosts` names (DNS rebinding; a valid
+  token skips it); refuses cross-origin form posts. The theme (`theme.go`):
+  the `hw_theme` cookie written into `<html data-theme>` by the server. The admin's gate
+  (`access.go`: credentials, then the host check, then the rules per route)
+  and the login, account and users pages (`users.go`, `access.templ`); the
+  live feed checks its session at each heartbeat (`event: login`).
 - `internal/version` — version and commit, set via `-ldflags` by `make build`;
   without them (`go install`) taken from the build info Go records.
 - `internal/repoguard` — tests over the repository itself: no private network
@@ -158,7 +248,11 @@ that makes it false.
   assets (web vendor files and report fonts); the documentation: every page
   of `docs/` has its twin in `docs/uk/` (except `api.md`) with the same `sh`
   blocks, relative links and anchors resolve, every image is used.
+- `scripts/dist` — `make dist`: cross-builds and packs the release archives
+  reproducibly (fixed entry time from the commit, owner 0, sorted entries,
+  no gzip name or time) and writes `SHA256SUMS`.
 - `scripts/hooks` — git hooks; `scripts/notices.sh` — notices generator;
+  `scripts/dco.sh` — every commit of a range signed off by its author;
   `scripts/docker-smoke.sh` — the container scenario (README's `docker run`,
   health, persistence of data and sealed secrets, graceful stop, read-only);
   `scripts/api-smoke.sh` — the API scenario (the Basic-credentials recipe
@@ -170,7 +264,7 @@ that makes it false.
   (English only); `skills/hookwitness/SKILL.md` — a Claude Code skill for
   testing webhook senders with hookwitness.
 - `scripts/docscheck` — `make docs-check`: runs every `sh` block of the README
-  and `docs/` against a fresh server and checks the verdicts, statuses and
+  and `docs/` (the binary on PATH as `hookwitness`) against a fresh server and checks the verdicts, statuses and
   outputs the text promises (`setup.sh` does through the API what a page
   says to click); `scripts/media/media.mjs` — `make media`: does through the
   API what each page's text does (same paths, values, requests) and shoots
@@ -181,15 +275,23 @@ that makes it false.
 - `Dockerfile`, `.dockerignore` — two-stage image: cross-compiling build
   stage through `make build`, distroless static nonroot final stage; the
   build context is an allowlist.
-- `.github/workflows/ci.yml` — `make check`, then the amd64 image and its
+- `.github/workflows/ci.yml` — the sign-off of every PR commit
+  (`scripts/dco.sh`), `make check`, `js-test`, `make docs-check`, then the amd64 image and its
   container and API smoke tests (job `image`, read-only) on every PR and push
   to `dev` or `main`; on a push to `dev` (`:edge`) or a release tag
   (`vX.Y.Z`, `vX.Y.Z-rc.N`; other tags start nothing) the job `publish`,
   the only one with write permissions, pushes the amd64+arm64 image to GHCR
   with SBOM and provenance attestations attached as referrers (not in the
-  image index); a release candidate gets only its own tag. Actions are
+  image index); a release candidate gets only its own tag. The job `dist`
+  (read-only, every PR and push) runs `make dist` twice and compares the
+  archives; on a release tag only, the job `binaries` (the only one with
+  `contents: write`) attests the archives and puts them with `SHA256SUMS`
+  on a draft Release of the tag (a prerelease for an rc), never changing a
+  published one. Actions are
   pinned to commit SHAs; `.github/dependabot.yml` updates them, the Go modules
-  and the base images weekly.
+  and the base images weekly. `.github/ISSUE_TEMPLATE/` (bug, feature, no
+  blank issues, security reported privately) and the PR template carry the
+  issue-first rule and the sign-off.
 
 ## Commands
 
@@ -201,6 +303,10 @@ that makes it false.
 - `make notices` — regenerate `THIRD-PARTY-NOTICES.md` after a dependency
   or vendored-asset change; only permissive licenses are accepted.
 - `make hooks` — enable the git hooks.
+- `make dist` — the release archives in `dist/` (linux and darwin × amd64
+  and arm64, `hookwitness_<version>_<os>_<arch>.tar.gz` with the binary,
+  `LICENSE`, `THIRD-PARTY-NOTICES.md`, `README.md`) and `SHA256SUMS`;
+  reproducible: run twice on one commit, the archives are byte-identical.
 - `make image` — the container image `hookwitness:dev` (Docker); `make
   image-smoke` — the container scenario against it (Docker, curl, openssl).
 - `make api-smoke` — the API scenario against a freshly built binary (curl,
@@ -214,7 +320,8 @@ that makes it false.
 ## Scope
 
 - In the first release: the features above.
-- Out of scope: Kafka / MQTT / gRPC, users and RBAC, a hosted cloud version.
+- Out of scope: Kafka / MQTT / gRPC, roles beyond user and admin
+  (per-endpoint permissions, RBAC), SSO/OIDC, a hosted cloud version.
 
 ## Stack
 
@@ -243,7 +350,12 @@ Go, sqlite, templ, HTMX, Server-Sent Events, Docker.
   `:X.Y` there, never on `dev` before the image exists; `CHANGELOG.md` gets
   the version's entry, curated from `feat`/`fix`/`perf` commits), a
   `vX.Y.Z-rc.N` tag checked first, then the merge into `main`, the tag
-  `vX.Y.Z` on it, and the merge back into `dev`. A fix to a release is a
+  `vX.Y.Z` on it, and the merge back into `dev`. Each tag's CI leaves a draft
+  Release; before publishing it (`gh release edit <tag> --draft=false
+  --notes-file …`, an rc as a prerelease) check its assets: four archives
+  and `SHA256SUMS`, `sha256sum -c SHA256SUMS` passes, `gh attestation verify
+  <archive> --owner petroladkin` passes, and the linux/amd64 and
+  darwin/arm64 binaries' `version` print the tag. A fix to a release is a
   `hotfix/*` branch from `main`, released as the next patch. A pushed tag is
   never moved or deleted: fix forward.
 - Tests that measure wall-clock time assert only what runner load cannot

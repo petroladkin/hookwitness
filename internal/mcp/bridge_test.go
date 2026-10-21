@@ -47,9 +47,9 @@ func TestBridge(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	keys, _ := secret.Load("", filepath.Join(t.TempDir(), "hw.db.key"))
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	a := api.New(st, live.New(), log, api.Options{Prefix: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: make(chan struct{}), Version: "test"})
+	a := api.New(st, live.New(), log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: make(chan struct{}), Version: "test"})
 	mux := http.NewServeMux()
-	mux.Handle("/admin/mcp", Handler(a, api.Base("/admin"), "test", log, nil))
+	mux.Handle("/admin/mcp", Handler(a, api.Base("/admin"), "test", log, nil, 0))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -64,7 +64,7 @@ func TestBridge(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := cs.ListTools(context.Background(), nil)
-	if err != nil || len(list.Tools) != 12 {
+	if err != nil || len(list.Tools) != 16 {
 		t.Fatalf("tools through the bridge: %v %v", err, list)
 	}
 	res, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "create_endpoint", Arguments: map[string]any{"path": "/via/stdio"}})
@@ -79,5 +79,68 @@ func TestBridge(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the bridge did not end when the client closed")
+	}
+}
+
+// An admin at the root of its own port has its MCP at /mcp, not /admin/mcp:
+// a 404 there names the URL to give instead.
+func TestBridgeHintsOnNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	in, w := io.Pipe()
+	go io.WriteString(w, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"c","version":"1"}}}`+"\n")
+	out := nopWriteCloser{io.Discard}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	endpoint, _ := Endpoint(srv.URL)
+	err := Bridge(ctx, endpoint, srv.Client(), in, out)
+	if err == nil || !strings.Contains(err.Error(), srv.URL+"/mcp") {
+		t.Fatalf("err = %v, want a hint naming %s/mcp", err, srv.URL)
+	}
+}
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
+
+// The token goes only to the server's own origin: a redirect to another
+// origin (a sign-in gate, a mistyped URL) is followed without it.
+func TestWithTokenStaysOnOrigin(t *testing.T) {
+	var elsewhere []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		elsewhere = append(elsewhere, r.Header.Get("Authorization"))
+	}))
+	defer other.Close()
+	var here []string
+	own := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		here = append(here, r.Header.Get("Authorization"))
+		if r.URL.Path == "/away" {
+			http.Redirect(w, r, other.URL+"/login", http.StatusFound)
+			return
+		}
+		if r.URL.Path == "/stay" {
+			http.Redirect(w, r, "/admin/api/v1/me", http.StatusFound)
+		}
+	}))
+	defer own.Close()
+	c, err := WithToken(http.DefaultClient, own.URL+"/admin/mcp", "hkw_test_secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/stay", "/away"} {
+		resp, err := c.Get(own.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	if strings.Join(here, "|") != "Bearer hkw_test_secret|Bearer hkw_test_secret|Bearer hkw_test_secret" {
+		t.Errorf("own origin got %q", here)
+	}
+	if strings.Join(elsewhere, "|") != "" || len(elsewhere) != 1 {
+		t.Errorf("another origin got %q", elsewhere)
+	}
+	if _, err := WithToken(http.DefaultClient, "127.0.0.1:8080", "t"); err == nil {
+		t.Error("a server URL without a scheme was taken")
 	}
 }

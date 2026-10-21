@@ -81,7 +81,7 @@ func (h *Handler) recheck(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "re-check", err)
 		return
 	}
-	h.log.Info("verdicts re-checked", "path", ep.Path, "requests", n)
+	h.log.Info("verdicts re-checked", append([]any{"path", ep.Path, "requests", n}, who(r)...)...)
 	h.live.Publish(reg)
 	http.Redirect(w, r, h.regPath(reg)+"?rechecked="+strconv.Itoa(n), http.StatusSeeOther)
 }
@@ -147,4 +147,29 @@ func verdictClass(v string) string {
 		return "nc"
 	}
 	return v
+}
+
+// repeatShort is a repeat note for a register row, where room is short:
+// "same sig #N" (the row's title has the whole note).
+func repeatShort(note string) string {
+	short, _, _ := strings.Cut(note, ":")
+	return strings.Replace(short, "same signature as", "same sig", 1)
+}
+
+// repeatNote is the first note on a request's verdicts (the same signature
+// as an earlier request's), or "".
+func repeatNote(verdicts string) string {
+	if !strings.Contains(verdicts, `"note":`) {
+		return ""
+	}
+	var vs []auth.Verdict
+	if json.Unmarshal([]byte(verdicts), &vs) != nil {
+		return ""
+	}
+	for _, v := range vs {
+		if v.Note != "" {
+			return v.Note
+		}
+	}
+	return ""
 }

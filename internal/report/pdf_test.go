@@ -120,3 +120,67 @@ func TestPDFImageKinds(t *testing.T) {
 		}
 	}
 }
+
+// TestPDFFooterFits: the footer's "Generated <time> · <version>" line never
+// runs into "page N of M", however long the version; a release's and a dev
+// build's describe string are drawn whole, a longer one is shortened.
+func TestPDFFooterFits(t *testing.T) {
+	type drawnText struct {
+		x, y, w float64
+		s       string
+	}
+	for _, c := range []struct {
+		version string
+		whole   bool
+	}{
+		{"v1.0.0 (0123abc)", true},
+		{"v0.1.0-rc.1-55-g8a1e8e0 (8a1e8e0)", true},
+		{"v1.0.0-rc.12-1234-g0123456789ab-dirty-with-a-very-long-local-suffix (0123456789ab)", false},
+	} {
+		version := c.version
+		var drawn []drawnText
+		pdfTextHook = func(x, y, w float64, s string) { drawn = append(drawn, drawnText{x, y, w, s}) }
+		o := goldenOptions()
+		o.Version = version
+		render(t, PDF, o, fixture(t))
+		pdfTextHook = nil
+
+		var footers, labels []drawnText
+		for _, d := range drawn {
+			switch {
+			case strings.HasPrefix(d.s, "Generated "):
+				footers = append(footers, d)
+			case strings.HasPrefix(d.s, "page "):
+				labels = append(labels, d)
+			}
+		}
+		if len(footers) < 2 || len(footers) != len(labels) {
+			t.Fatalf("%s: %d footers and %d page labels, want one of each on every page (several pages)", version, len(footers), len(labels))
+		}
+		for i, f := range footers {
+			if gap := labels[i].x - (f.x + f.w); gap < 8 {
+				t.Errorf("%s: page %d: the footer ends %.1f pt before the page number, want at least 8", version, i+1, gap)
+			}
+			whole := strings.HasSuffix(f.s, " · "+version)
+			if whole != c.whole {
+				t.Errorf("%s: page %d: footer %q (whole: %v)", version, i+1, f.s, whole)
+			}
+			if !whole && !strings.HasSuffix(f.s, "…") {
+				t.Errorf("%s: page %d: a shortened footer %q does not end with an ellipsis", version, i+1, f.s)
+			}
+		}
+	}
+}
+
+// TestPDFRepeatNote: a verdict's note (the same signature as an earlier
+// request's) is drawn under it.
+func TestPDFRepeatNote(t *testing.T) {
+	var drawn []string
+	pdfTextHook = func(_, _, _ float64, s string) { drawn = append(drawn, s) }
+	defer func() { pdfTextHook = nil }()
+	render(t, PDF, goldenOptions(), fixture(t))
+	all := strings.Join(drawn, "\n")
+	if !strings.Contains(all, "same signature as #1: a replay, or a") {
+		t.Fatalf("the note is not drawn:\n%s", all)
+	}
+}

@@ -95,6 +95,7 @@
     "label": "GitHub signature",
     "result": "pass",
     "reason": "signature matches",
+    "note": "same signature as #1: a replay, or a redelivery of the same signed request",
     "at": "2026-10-11T12:00:01.250Z"
    },
    {

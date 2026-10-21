@@ -18,6 +18,7 @@ const (
 	FromCheck     = "check"     // a request check refused it
 	FromLimit     = "limit"     // the body was over the limit
 	FromUnmatched = "unmatched" // no endpoint at that path
+	FromOff       = "off"       // the endpoint at that path is off; answered as unmatched
 	FromBusy      = "busy"      // too many bodies were being read at once; 503, the body not kept
 )
 
@@ -118,6 +119,8 @@ func (o Outcome) Why() string {
 		return "body over the limit"
 	case FromUnmatched:
 		return "no endpoint at this path"
+	case FromOff:
+		return "the endpoint at this path is off"
 	case FromDefault:
 		return "default reply"
 	}

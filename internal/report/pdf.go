@@ -112,10 +112,18 @@ func (p *pdfWriter) font(family string, bold bool, size float64, c rgb) {
 	p.pdf.SetTextColor(c[0], c[1], c[2])
 }
 
+// pdfTextHook, when set (by tests), gets every string the PDF draws, with
+// its place and width: the text a reader sees, which the compressed glyph
+// streams do not show.
+var pdfTextHook func(x, y, w float64, s string)
+
 // text draws s with its top at y.
 func (p *pdfWriter) text(x, y float64, s string) {
 	if s == "" {
 		return
+	}
+	if pdfTextHook != nil {
+		pdfTextHook(x, y, p.width(s), s)
 	}
 	p.pdf.SetXY(x, y)
 	p.keep(p.pdf.Cell(nil, s))
@@ -171,14 +179,37 @@ func (p *pdfWriter) newPage() {
 	p.stroke(cInk, 0.8)
 	p.pdf.Line(margin, margin+12, pageW-margin, margin+12)
 	p.font(fMono, false, 7.5, cMuted)
+	// The page count is filled in at the end, into room for six digits.
+	const countW = 30
 	label := "page " + strconv.Itoa(p.pages) + " of "
-	p.text(pageW-margin-60-p.width(label), pageH-margin-8, label)
+	p.text(pageW-margin-countW-p.width(label), pageH-margin-8, label)
 	// A placeholder is written like Text, from the baseline, not the top.
-	p.pdf.SetXY(pageW-margin-60, pageH-margin-8+pdfAscent*7.5)
-	p.keep(p.pdf.PlaceHolderText("pages", 60))
+	p.pdf.SetXY(pageW-margin-countW, pageH-margin-8+pdfAscent*7.5)
+	p.keep(p.pdf.PlaceHolderText("pages", countW))
+	// The footer names the build; the running header already says it is
+	// Hookwitness's. A version too long for the room left of the page
+	// number (a local build's describe string) is cut with an ellipsis; the
+	// summary on the first page has it whole.
 	p.font(fMono, false, 7.5, cMuted)
-	p.text(margin, pageH-margin-8, "Generated "+stamp(p.h.Generated)+" by Hookwitness "+p.h.Version)
+	room := pageW - margin - countW - p.width(label) - 8 - margin
+	p.text(margin, pageH-margin-8, p.fit("Generated "+stamp(p.h.Generated)+" · "+p.h.Version, room))
 	p.y = bodyTop
+}
+
+// fit shortens s with an ellipsis until it is at most w wide in the
+// current font.
+func (p *pdfWriter) fit(s string, w float64) string {
+	if p.width(s) <= w {
+		return s
+	}
+	r := []rune(s)
+	for len(r) > 1 {
+		r = r[:len(r)-1]
+		if t := string(r) + "…"; p.width(t) <= w {
+			return t
+		}
+	}
+	return "…"
 }
 
 // place draws b, on a new page when it does not fit.
@@ -375,6 +406,9 @@ func (p *pdfWriter) head(h *Head) error {
 			p.place(b)
 		}
 	}
+	if h.Setup != nil {
+		p.setup(h)
+	}
 	// The heading goes with the first request, never alone at a page end.
 	p.pending = []block{gapBlock(10), {24, func(y float64) {
 		p.font(fSans, true, 11, cInk)
@@ -385,6 +419,82 @@ func (p *pdfWriter) head(h *Head) error {
 		p.pending = nil
 	}
 	return p.err
+}
+
+// setup draws the endpoint's setup section.
+func (p *pdfWriter) setup(h *Head) {
+	s := h.Setup
+	p.together([]block{gapBlock(10), {24, func(y float64) {
+		p.font(fSans, true, 11, cInk)
+		p.text(margin, y+6, "SETUP")
+	}}, p.plain(setupIntro(h))})
+	part := func(caption string, rows [][2]string, none string) {
+		p.place(p.caption(caption))
+		if len(rows) == 0 {
+			p.place(p.plain(none))
+			return
+		}
+		for _, b := range p.kv(rows, nil) {
+			p.place(b)
+		}
+	}
+	var rows [][2]string
+	for _, c := range s.Checks {
+		rows = append(rows, [2]string{strconv.Itoa(c.No) + " · " + c.Label, c.Detail})
+	}
+	part("Checks · in order", rows, "None.")
+	if len(s.Schemas) > 0 {
+		rows = nil
+		for _, sc := range s.Schemas {
+			rows = append(rows, [2]string{sc.Name, sc.Use})
+		}
+		part("Schemas", rows, "")
+	}
+	rows = nil
+	for _, r := range s.Rules {
+		rows = append(rows, [2]string{strconv.Itoa(r.No) + " · " + r.When, r.Then})
+	}
+	part("Rules · in order; the first that holds answers", rows, "None: every request gets the default reply.")
+	for _, r := range s.Rules {
+		if r.Reply != nil {
+			p.reply(r.ReplyTitle(), *r.Reply)
+		}
+	}
+	p.reply("Default reply", s.Default)
+	rows = nil
+	for _, v := range s.Vars {
+		rows = append(rows, [2]string{v.Name, v.Value})
+	}
+	part("Variables", rows, "None.")
+	rows = nil
+	for _, sc := range s.Secrets {
+		use := sc.Use
+		if use != "not used" {
+			use = "used by " + use
+		}
+		rows = append(rows, [2]string{sc.Name, sc.Kind + " · " + sc.State + " · " + use})
+	}
+	part("Secrets · named, never shown", rows, "None.")
+}
+
+// reply draws a configured reply under its caption.
+func (p *pdfWriter) reply(title string, r SetupReply) {
+	rows := [][2]string{{"Status", strconv.Itoa(r.Status)}, {"Delay", r.Delay}}
+	for _, hd := range r.Headers {
+		rows = append(rows, [2]string{hd.Name, hd.Value})
+	}
+	if line := r.BodyLine(); line != "" {
+		rows = append(rows, [2]string{"Body", line})
+	}
+	bs := append([]block{p.caption(title)}, p.kv(rows, nil)...)
+	p.together(bs)
+	if r.BodyLine() == "" {
+		p.place(p.caption("Body (a template)"))
+		for _, b := range p.monoLines(margin, contentW, 7.5, cText, false, strings.TrimRight(r.Body, "\n")) {
+			p.place(b)
+		}
+	}
+	p.place(gapBlock(4))
 }
 
 func (p *pdfWriter) widthAt(family string, bold bool, size float64, s string) float64 {
@@ -521,6 +631,9 @@ func (p *pdfWriter) item(it Item) error {
 			}
 			if v.Received != "" || v.Expected != "" {
 				top = append(top, p.monoLines(margin+10, contentW-10, 7, cMuted, false, "received "+v.Received+" · expected "+v.Expected)...)
+			}
+			if v.Note != "" {
+				top = append(top, p.monoLines(margin+10, contentW-10, 7, cText, false, v.Note)...)
 			}
 			for _, pr := range v.Problems {
 				top = append(top, p.monoLines(margin+10, contentW-10, 7, cText, false, pointer(pr)+"  "+pr.Keyword+"  "+pr.Message)...)

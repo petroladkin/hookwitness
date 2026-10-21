@@ -60,6 +60,8 @@ func TestSearchRequests(t *testing.T) {
 		"?json=/ok=false":                   "[2]",
 		"?json=/note=null":                  "[3]",
 		"?json=/tags/1=b":                   "[3]",
+		"?json=/tags/01=b":                  "[]", // RFC 6901: no leading zero, no sign
+		"?json=/tags/+1=b":                  "[]",
 		"?json=/tags=a":                     "[]",  // arrays and objects never match
 		"?json=/taskId=42&json=/state=done": "[1]", // all must match
 		"?json=/taskId=42&q=failed":         "[2]",

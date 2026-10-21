@@ -1,0 +1,315 @@
+package web
+
+import (
+	"strconv"
+
+	"github.com/petroladkin/hookwitness/internal/access"
+	"github.com/petroladkin/hookwitness/internal/store"
+)
+
+templ messagePage(nav navView, heading, msg string) {
+	@layout(nav, heading) {
+		<main class="sheet">
+			<h1 class="title">{ heading }</h1>
+			<p class="lede">{ msg }</p>
+			<p><a href={ templ.SafeURL(nav.Prefix + "/") }>Back to the endpoints</a></p>
+		</main>
+	}
+}
+
+templ loginPage(nav navView, v loginView) {
+	@layout(nav, "Log in") {
+		<main class="sheet login">
+			<h1 class="title">Log in</h1>
+			if !v.On {
+				<p class="lede">
+					Login is off: there are no users yet, so anyone who can open the admin can use it.
+					<a href={ templ.SafeURL(nav.Prefix + "/") }>Go to the endpoints</a>, or
+					<a href={ templ.SafeURL(nav.Prefix + "/users") }>add the first user</a> to turn login on.
+				</p>
+			} else {
+				<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/login") }>
+					if v.Err != "" {
+						<p class="error banner" role="alert">{ v.Err }</p>
+					}
+					<input type="hidden" name="next" value={ v.Next }/>
+					<label for="name">Name</label>
+					<input id="name" name="name" value={ v.Name } autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus?={ v.Name == "" }/>
+					<label for="password">Password</label>
+					<input id="password" name="password" type="password" autocomplete="current-password" required autofocus?={ v.Name != "" }/>
+					<div class="acts">
+						<button class="btn solid" type="submit">Log in</button>
+					</div>
+					<p class="help">Forgot the password? An admin sets a new one on the Users page, or on the server: <code>hookwitness user passwd { "<name>" }</code>.</p>
+				</form>
+			}
+		</main>
+	}
+}
+
+templ accountPage(nav navView, v accountView) {
+	@layout(nav, "Account") {
+		<main class="sheet">
+			<div class="title-row full">
+				<h1 class="title">{ nav.User }</h1>
+				<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/account?dialog=password") }>Change password</a>
+			</div>
+			<p class="lede">
+				if nav.Admin {
+					Admin: you manage endpoints and <a href={ templ.SafeURL(nav.Prefix + "/users") }>users</a>.
+				} else {
+					User: you manage endpoints, your password and your tokens.
+				}
+			</p>
+			if v.Saved != "" {
+				<p class="saved banner" role="status">{ v.Saved }</p>
+			}
+			<h2 class="sub">Tokens</h2>
+			<div class="toolbar">
+				<div class="toolbar-note">
+					<p class="note">A token lets a script or an agent use the REST API and MCP as you: send it as <code>Authorization: Bearer …</code>. It is shown once, when it is made.</p>
+				</div>
+				<a class="btn solid" href={ templ.SafeURL(nav.Prefix + "/account?dialog=token") }>New token</a>
+			</div>
+			@tokenTable(nav, v.Tokens, false)
+			if v.Dialog == "token" {
+				<dialog class="modal" data-modal data-close={ nav.Prefix + "/account" } open aria-labelledby="dialog-title">
+					<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/account/tokens") }>
+						<div class="modal-head">
+							<h2 id="dialog-title">New token</h2>
+							<a class="close" href={ templ.SafeURL(nav.Prefix + "/account") } aria-label="Close">×</a>
+						</div>
+						if v.Err != "" {
+							<p class="error banner" role="alert">Not made: { v.Err }</p>
+						}
+						<label for="token-name">Name</label>
+						<input id="token-name" name="name" value={ v.Form } placeholder="ci-pipeline" autocomplete="off" required autofocus/>
+						<p class="help">What uses it, so you know which one to revoke later.</p>
+						<div class="acts">
+							<button class="btn solid" type="submit">Make token</button>
+							<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/account") }>Cancel</a>
+						</div>
+					</form>
+				</dialog>
+			}
+			if v.NewToken != "" {
+				<dialog class="modal" data-modal data-close={ nav.Prefix + "/account" } open aria-labelledby="dialog-title">
+					<div class="card">
+						<div class="modal-head">
+							<h2 id="dialog-title">Token { v.NewName }</h2>
+							<a class="close" href={ templ.SafeURL(nav.Prefix + "/account") } aria-label="Close">×</a>
+						</div>
+						<p class="saved banner" role="status">Copy it now: you will not see it again.</p>
+						<label for="new-token">Token</label>
+						<input id="new-token" class="secret-once" value={ v.NewToken } readonly data-select/>
+						<div class="acts">
+							<button class="btn solid" type="button" data-copy="new-token">Copy</button>
+							<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/account") }>Done</a>
+						</div>
+					</div>
+				</dialog>
+			}
+			if v.Dialog == "password" {
+				<dialog class="modal" data-modal data-close={ nav.Prefix + "/account" } open aria-labelledby="dialog-title">
+					<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/account/password") }>
+						<div class="modal-head">
+							<h2 id="dialog-title">Change password</h2>
+							<a class="close" href={ templ.SafeURL(nav.Prefix + "/account") } aria-label="Close">×</a>
+						</div>
+						if v.Err != "" {
+							<p class="error banner" role="alert">Not changed: { v.Err }</p>
+						}
+						<input type="hidden" name="username" value={ nav.User } autocomplete="username"/>
+						<label for="current">Current password</label>
+						<input id="current" name="current" type="password" autocomplete="current-password" required autofocus/>
+						<label for="new">New password</label>
+						<input id="new" name="new" type="password" autocomplete="new-password" minlength={ strconv.Itoa(access.MinPassword) } required/>
+						<label for="again">New password again</label>
+						<input id="again" name="again" type="password" autocomplete="new-password" required/>
+						<p class="help">At least { strconv.Itoa(access.MinPassword) } characters. Your other logins end; this one stays.</p>
+						<div class="acts">
+							<button class="btn solid" type="submit">Change password</button>
+							<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/account") }>Cancel</a>
+						</div>
+					</form>
+				</dialog>
+			}
+		</main>
+	}
+}
+
+templ tokenTable(nav navView, ts []store.Token, owners bool) {
+	if len(ts) == 0 {
+		<p class="empty">No tokens.</p>
+	} else {
+		<div class="scroll">
+			<table class="eps tokens">
+				<thead>
+					<tr>
+						if owners {
+							<th>Owner</th>
+						}
+						<th>Name</th>
+						<th>Token</th>
+						<th>Made</th>
+						<th>Last used</th>
+						<th><span class="sr">Actions</span></th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, t := range ts {
+						<tr>
+							if owners {
+								<td>{ t.Owner }</td>
+							}
+							<td>{ t.Name }</td>
+							<td class="url">{ access.Shown(t.PublicID) }</td>
+							<td class="when made">{ lastSeen(t.CreatedAt) }</td>
+							<td class="when used">{ lastSeen(t.LastUsedAt) }</td>
+							<td class="acts">
+								<div class="row-acts">
+									if owners {
+										<form method="post" action={ templ.SafeURL(nav.Prefix + "/tokens/" + t.PublicID + "/revoke") } data-confirm={ "Revoke " + t.Owner + "'s token " + t.Name + "? Whatever uses it stops working at once." }>
+											<button class="btn quiet" type="submit">Revoke</button>
+										</form>
+									} else {
+										<form method="post" action={ templ.SafeURL(nav.Prefix + "/account/tokens/" + t.PublicID + "/revoke") } data-confirm={ "Revoke the token " + t.Name + "? Whatever uses it stops working at once." }>
+											<button class="btn quiet" type="submit">Revoke</button>
+										</form>
+									}
+								</div>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+templ usersPage(nav navView, v usersView) {
+	@layout(nav, "Users") {
+		<main class="sheet">
+			<h1 class="title">Users</h1>
+			<p class="lede">
+				if len(v.Users) == 0 {
+					Login is off while there are no users. The first user you add is an admin, and from then on everyone logs in:
+					the web UI, the REST API and MCP. Catch endpoints stay open to senders.
+				} else {
+					Users manage endpoints and their own password and tokens. Admins also manage users and everyone's tokens.
+				}
+			</p>
+			if v.Saved != "" {
+				<p class="saved banner" role="status">{ v.Saved }</p>
+			}
+			if v.Err != "" && v.Dialog == "" {
+				<p class="error banner" role="alert">{ v.Err }</p>
+			}
+			<div class="toolbar">
+				<div class="toolbar-note">
+					<p class="note">{ strconv.Itoa(len(v.Users)) } users · { strconv.Itoa(v.Admins) } admins</p>
+				</div>
+				<a class="btn solid" href={ templ.SafeURL(nav.Prefix + "/users?dialog=add") }>Add user</a>
+			</div>
+			if len(v.Users) > 0 {
+				<div class="scroll">
+					<table class="eps people">
+						<thead>
+							<tr><th>Name</th><th>Role</th><th>Added</th><th class="num">Tokens</th><th><span class="sr">Actions</span></th></tr>
+						</thead>
+						<tbody>
+							for _, u := range v.Users {
+								<tr>
+									<td>{ u.Name }</td>
+									<td>{ u.Role }</td>
+									<td class="when">{ lastSeen(u.CreatedAt) }</td>
+									<td class="num">{ strconv.Itoa(u.Tokens) }</td>
+									<td class="acts">
+										<div class="row-acts">
+											if v.lastAdmin(u) {
+												<span class="help" title="Make another user an admin first">the last admin</span>
+											} else if u.Role == store.RoleAdmin && u.Name == nav.User {
+												<span class="help" title="Another admin can change your role or remove you">you</span>
+											} else {
+												<form method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/role") }>
+													if u.Role == store.RoleAdmin {
+														<input type="hidden" name="role" value="user"/>
+														<button class="btn quiet" type="submit">Make user</button>
+													} else {
+														<input type="hidden" name="role" value="admin"/>
+														<button class="btn quiet" type="submit">Make admin</button>
+													}
+												</form>
+											}
+											<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users?dialog=password&name=" + u.Name) }>Set password</a>
+											if !v.lastAdmin(u) && u.Name != nav.User {
+												<form method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/remove") } data-confirm={ "Remove " + u.Name + " with their " + strconv.Itoa(u.Tokens) + " tokens?" }>
+													<button class="btn quiet" type="submit">Remove</button>
+												</form>
+											}
+										</div>
+									</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+				<h2 class="sub">Everyone's tokens</h2>
+				@tokenTable(nav, v.Tokens, true)
+			}
+			if v.Dialog == "add" {
+				<dialog class="modal" data-modal data-close={ nav.Prefix + "/users" } open aria-labelledby="dialog-title">
+					<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/users") }>
+						<div class="modal-head">
+							<h2 id="dialog-title">Add user</h2>
+							<a class="close" href={ templ.SafeURL(nav.Prefix + "/users") } aria-label="Close">×</a>
+						</div>
+						if v.Err != "" {
+							<p class="error banner" role="alert">Not added: { v.Err }</p>
+						}
+						<label for="name">Name</label>
+						<input id="name" name="name" value={ v.Form } autocomplete="off" autocapitalize="none" spellcheck="false" required autofocus/>
+						<p class="help">Letters, digits and <code>. _ -</code>; case does not matter.</p>
+						<label for="role">Role</label>
+						<select id="role" name="role">
+							if len(v.Users) == 0 {
+								<option value="admin" selected>admin (the first user is one)</option>
+							} else {
+								<option value="user" selected?={ v.FormRole != "admin" }>user</option>
+								<option value="admin" selected?={ v.FormRole == "admin" }>admin</option>
+							}
+						</select>
+						<label for="password">Password</label>
+						<input id="password" name="password" type="password" autocomplete="new-password" minlength={ strconv.Itoa(access.MinPassword) } required/>
+						<p class="help">At least { strconv.Itoa(access.MinPassword) } characters. Give it to them another way; they can change it on their account page.</p>
+						<div class="acts">
+							<button class="btn solid" type="submit">Add user</button>
+							<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users") }>Cancel</a>
+						</div>
+					</form>
+				</dialog>
+			}
+			if v.Dialog == "password" {
+				<dialog class="modal" data-modal data-close={ nav.Prefix + "/users" } open aria-labelledby="dialog-title">
+					<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + v.Form + "/password") }>
+						<div class="modal-head">
+							<h2 id="dialog-title">New password for { v.Form }</h2>
+							<a class="close" href={ templ.SafeURL(nav.Prefix + "/users") } aria-label="Close">×</a>
+						</div>
+						if v.Err != "" {
+							<p class="error banner" role="alert">Not set: { v.Err }</p>
+						}
+						<input type="hidden" name="username" value={ v.Form } autocomplete="username"/>
+						<label for="password">New password</label>
+						<input id="password" name="password" type="password" autocomplete="new-password" minlength={ strconv.Itoa(access.MinPassword) } required autofocus/>
+						<p class="help">Every login of { v.Form } ends; their tokens keep working.</p>
+						<div class="acts">
+							<button class="btn solid" type="submit">Set password</button>
+							<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users") }>Cancel</a>
+						</div>
+					</form>
+				</dialog>
+			}
+		</main>
+	}
+}
