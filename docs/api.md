@@ -75,7 +75,7 @@ naming the limit. See [MCP](agents.md#mcp).
 | 403 | `forbidden`, `session_required` | only an admin may do this; managing tokens and users needs a login, not a token |
 | 404 | `not_found` | no such endpoint, secret, request or route |
 | 409 | `duplicate_path`, `secret_in_use`, `conflict` | the path is taken; the secret is used by a check; too many concurrent changes |
-| 409 | `exists`, `last_admin`, `self_demotion`, `login_off` | a user or token name is taken; the change would leave no admin; an admin would make themselves a user; there are no users yet |
+| 409 | `exists`, `last_admin`, `self_demotion`, `self_removal`, `login_off` | a user or token name is taken; the change would leave no admin; an admin would make themselves a user or remove themselves; there are no users yet |
 | 412 | `stale_version` | the behaviour changed since you read it (`If-Match`) |
 | 413 | `too_large` | the body is over 1 MiB |
 | 415 | `unsupported_media_type` | a write without `Content-Type: application/json` |
@@ -465,7 +465,7 @@ admin.
 | `GET /users` | users with `name`, `role`, `created_at`, `tokens` (admins) |
 | `POST /users` `{"name","role","password"}` | adds a user (`role` `user` by default). `201`; `409 exists`; `422` naming the field |
 | `PATCH /users/{name}` `{"role"?, "password"?}` | changes a role or sets a password; either ends that user's logins. `409 last_admin` for the last admin, `409 self_demotion` when you would make yourself a user |
-| `DELETE /users/{name}` | removes a user with their tokens. `204`; `409 last_admin` |
+| `DELETE /users/{name}` | removes a user with their tokens. `204`; `409 last_admin`, `409 self_removal` when it is you |
 | `GET /tokens`, `DELETE /tokens/{id}` | everyone's tokens, with their `owner`; revoke any (admins) |
 
 ### OpenAPI

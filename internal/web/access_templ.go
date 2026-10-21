@@ -1113,7 +1113,7 @@ func usersPage(nav navView, v usersView) templ.Component {
 							return templ_7745c5c3_Err
 						}
 					} else if u.Role == store.RoleAdmin && u.Name == nav.User {
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 99, "<span class=\"help\" title=\"Another admin can change your role\">you</span> ")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 99, "<span class=\"help\" title=\"Another admin can change your role or remove you\">you</span> ")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
@@ -1168,7 +1168,7 @@ func usersPage(nav navView, v usersView) templ.Component {
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					if !v.lastAdmin(u) {
+					if !v.lastAdmin(u) && u.Name != nav.User {
 						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 107, "<form method=\"post\" action=\"")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err

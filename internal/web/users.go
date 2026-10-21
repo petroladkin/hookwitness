@@ -417,6 +417,10 @@ func (h *Handler) removeUser(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if id := access.From(r.Context()); id != nil && id.Name == pathUser(r) {
+		h.users(w, r, http.StatusConflict, usersView{Err: "You cannot remove yourself: another admin can."})
+		return
+	}
 	u, err := h.store.RemoveUser(r.Context(), pathUser(r))
 	if err != nil {
 		h.userError(w, r, "remove user", err)
