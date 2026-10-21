@@ -74,7 +74,7 @@ users), two roles (user, admin), a login limit per client address
 catcher replaces the session cookie's value in recorded `Cookie` headers.
 Replay: a caught request whose body was kept whole is sent again, byte for
 byte (Host replaced in place unless kept), to a URL from the UI, the API
-(`POST <prefix>/api/v1/requests/{id}/replays`) or MCP (`replay_request`);
+(`POST <prefix>/api/v1/requests/{id}/replays`) or MCP (`replay_request`), by an admin once login is on;
 the target's answer is kept with the request (newest 50); link-local and
 cloud-metadata addresses are refused on the address dialled, and
 `-replay-allow` narrows the targets or turns replay off. Setup files: an endpoint's setup (path,

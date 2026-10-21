@@ -524,7 +524,7 @@ func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var replayDialog *replayDialogView
-	if r.URL.Query().Has("replay") && ex != nil {
+	if r.URL.Query().Has("replay") && ex != nil && h.mayReplay(ctx) {
 		req, err := h.store.Request(ctx, ex.ID)
 		if err == nil {
 			replayDialog, err = h.replayDefaults(ctx, req, ex)
@@ -734,7 +734,7 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		}
 	}
 	v.Images = h.images(req, v.Verdicts, &v.Body)
-	v.CanReplay = !req.TooLarge && int64(len(req.Body)) >= req.Size
+	v.CanReplay = !req.TooLarge && int64(len(req.Body)) >= req.Size && h.mayReplay(ctx)
 	if req.Replays > 0 {
 		if v.Replays, err = h.replays(ctx, req.ID); err != nil {
 			return exhibitView{}, err

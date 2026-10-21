@@ -73,8 +73,10 @@ networks, separated by commas. `none` turns replay off.
 hookwitness serve -replay-allow 'localhost,host.docker.internal:3000,192.0.2.0/24'
 ```
 
-With login on, only a logged-in user or a token can replay, and each replay
-names who sent it.
+With login on, only an **admin** can send a replay (logged in, or with a
+personal token): a replay reaches whatever the server can reach, so it is
+not for every user. Users read the replays already made. Each replay names
+who sent it. While login is off, anyone who can open the admin can replay.
 
 ## From a container to your machine
 

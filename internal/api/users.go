@@ -14,9 +14,10 @@ import (
 type need int
 
 const (
-	needAny     need = iota // anyone authenticated
-	needSession             // a logged-in person, not a token: their own password and tokens
-	needAdmin               // an admin's session: users and everyone's tokens
+	needAny       need = iota // anyone authenticated
+	needSession               // a logged-in person, not a token: their own password and tokens
+	needAdmin                 // an admin's session: users and everyone's tokens
+	needAdminRole             // an admin, by login or token: sending replays
 )
 
 // loginOn reports whether the API wants credentials: a user exists, or a
@@ -47,7 +48,7 @@ func (h *Handler) guard(n need, fn http.HandlerFunc) http.HandlerFunc {
 		}
 		id := access.From(r.Context())
 		switch {
-		case n != needAny && h.o.Access == nil:
+		case (n == needSession || n == needAdmin) && h.o.Access == nil:
 			WriteError(w, http.StatusNotFound, "not_found", "users and tokens are not available on this server", "")
 			return
 		case id == nil && on:
@@ -56,7 +57,10 @@ func (h *Handler) guard(n need, fn http.HandlerFunc) http.HandlerFunc {
 		case id == nil && n == needSession:
 			WriteError(w, http.StatusConflict, "login_off", "login is off: there are no users yet, so there is no password or token of yours; add the first user (an admin) to turn login on", "")
 			return
-		case id != nil && n != needAny && id.Via != access.ViaSession:
+		case id != nil && n == needAdminRole && !id.Admin():
+			WriteError(w, http.StatusForbidden, "forbidden", "only an admin can replay requests: a replay reaches the server's own network", "")
+			return
+		case id != nil && n != needAny && n != needAdminRole && id.Via != access.ViaSession:
 			WriteError(w, http.StatusForbidden, "session_required", "managing tokens and users needs a login, not a token: use the web UI or hookwitness user", "")
 			return
 		case id != nil && n == needAdmin && !id.Admin():

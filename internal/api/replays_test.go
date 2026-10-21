@@ -127,8 +127,9 @@ func TestReplayAPI(t *testing.T) {
 	}
 }
 
-// With login on, only a logged-in user or a token may replay, and the
-// replay records who did.
+// With login on, only an admin may send a replay, by login or token (a
+// replay reaches the server's own network), and the replay records who did;
+// a user may read the recorded ones.
 func TestReplayNeedsLogin(t *testing.T) {
 	e := newUsersEnv(t)
 	ctx := context.Background()
@@ -151,12 +152,18 @@ func TestReplayNeedsLogin(t *testing.T) {
 	wantError(t, e.do("POST", path, body), 401, "unauthorized", "")
 	wantError(t, e.do("GET", path, ""), 401, "unauthorized", "")
 	for _, who := range []context.Context{e.as(t, "bob", access.ViaSession), e.as(t, "bob", access.ViaToken)} {
+		wantError(t, e.call(who, "POST", path, body), 403, "forbidden", "")
+	}
+	for _, who := range []context.Context{e.as(t, "ann", access.ViaSession), e.as(t, "ann", access.ViaToken)} {
 		rec := e.call(who, "POST", path, body)
-		if rec.Code != 201 || !strings.Contains(rec.Body.String(), `"by": "bob"`) {
-			t.Fatalf("bob: %d %s", rec.Code, rec.Body)
+		if rec.Code != 201 || !strings.Contains(rec.Body.String(), `"by": "ann"`) {
+			t.Fatalf("ann: %d %s", rec.Code, rec.Body)
 		}
 	}
-	if !strings.Contains(e.log.String(), "user=bob") {
+	if rec := e.call(e.as(t, "bob", access.ViaToken), "GET", path, ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"by": "ann"`) {
+		t.Fatalf("bob reads the replays: %d %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(e.log.String(), "user=ann") {
 		t.Fatalf("the log does not name the user:\n%s", e.log)
 	}
 }

@@ -114,7 +114,7 @@ until you PUT that secret's test value. `GET "$API/setup?id=$ID"` (MCP:
 Testing the receiving side instead (a handler that refuses real deliveries)?
 Catch a real delivery, then send it byte for byte to the handler:
 `curl -s -X POST "$API/requests/<id>/replays" -H 'Content-Type: application/json' -d '{"url":"http://localhost:3000/webhooks"}'`
-(MCP: `replay_request`). The answer comes back with `status`, `headers` and
+(MCP: `replay_request`; with login on, an admin's token). The answer comes back with `status`, `headers` and
 `body_text`. If the handler refuses the untouched original too, the bug is in
 its verification (e.g. hashing parsed JSON instead of the raw body), not in
 what arrived.

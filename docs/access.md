@@ -92,8 +92,9 @@ There are two, and no other permissions:
 - **user**: does everything with endpoints (create, behaviour, secrets,
   reports, clear, delete), changes their own password and manages their own
   tokens;
-- **admin**: also adds, changes and removes users, and sees and revokes
-  everyone's tokens on the **Users** page.
+- **admin**: also adds, changes and removes users, sees and revokes
+  everyone's tokens on the **Users** page, and sends
+  [replays](replay.md#which-targets), which reach the server's own network.
 
 ![The users page](images/users.webp)
 

@@ -263,15 +263,17 @@ func TestRouteMatrix(t *testing.T) {
 		}
 		sessionOnly := strings.Contains(p, "/me/") || strings.Contains(p, "/users") || strings.Contains(p, "/tokens")
 		adminOnly := strings.Contains(p, "/users") || strings.Contains(p, "/api/v1/tokens")
+		// Sending a replay: an admin, by login or token.
+		replaySend := method == "POST" && strings.HasSuffix(p, "/replays")
 		for _, c := range []struct {
 			who           string
 			cookie, token string
 			want          int // 0: anything but 401 and 403
 		}{
 			{"admin session", adminC, "", 0},
-			{"user session", userC, "", map[bool]int{true: http.StatusForbidden}[adminOnly]},
-			{"user token", "", userT, map[bool]int{true: http.StatusForbidden}[sessionOnly]},
-			{"machine token", "", machine, map[bool]int{true: http.StatusForbidden}[sessionOnly]},
+			{"user session", userC, "", map[bool]int{true: http.StatusForbidden}[adminOnly || replaySend]},
+			{"user token", "", userT, map[bool]int{true: http.StatusForbidden}[sessionOnly || replaySend]},
+			{"machine token", "", machine, map[bool]int{true: http.StatusForbidden}[sessionOnly || replaySend]},
 		} {
 			got := call(c.cookie, c.token)
 			if c.want == 0 && (got == 401 || got == 403) || c.want != 0 && got != c.want {

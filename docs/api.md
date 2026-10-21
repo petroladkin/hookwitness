@@ -400,7 +400,7 @@ answered ([Replaying a request](replay.md)).
 
 | Route | Does |
 |---|---|
-| `POST /requests/{id}/replays` `{"url": …}` | send it to `url` and wait for the answer (or the error). `201` with the replay. Optional: `"host": "received"` sends the caught `Host` line (default `"target"`: the URL's host and port), `"insecure_tls": true` accepts any https certificate, `"timeout_ms"` (default 30000, at most `-max-wait`). A target that refuses, times out or resets is still a replay, with `status` 0 and `error` set |
+| `POST /requests/{id}/replays` `{"url": …}` | send it to `url` and wait for the answer (or the error). `201` with the replay; admins only (`403 forbidden` for a user or the machine token). Optional: `"host": "received"` sends the caught `Host` line (default `"target"`: the URL's host and port), `"insecure_tls": true` accepts any https certificate, `"timeout_ms"` (default 30000, at most `-max-wait`). A target that refuses, times out or resets is still a replay, with `status` 0 and `error` set |
 | `GET /requests/{id}/replays` | its replays, newest first (the newest 50 are kept); `include=body` adds the answers' bodies |
 | `GET /replays/{id}` | one replay with its answer body |
 | `GET /replays/{id}/body` | the answer body as the target sent it (never decompressed, at most 1 MiB), with its `Content-Type`, always as a download |
