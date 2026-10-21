@@ -68,7 +68,9 @@ The UI, the API and MCP share port 8080 under `/admin` by default; to give
 them their own port and publish only the catch port, see [the admin on its
 own port](docs/deployment.md#the-admin-on-its-own-port). Until you add a
 user the admin has no login; add one before others can reach it ([users,
-login and tokens](docs/access.md)).
+login and tokens](docs/access.md)). [Setting up a shared
+server](docs/server.md) walks a team server through from the start: HTTPS,
+the first admin, backups.
 
 ## What it does
 

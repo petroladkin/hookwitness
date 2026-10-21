@@ -17,7 +17,8 @@ by task: what to click and what happens. [Українською](uk/README.md).
 6. [Reports](reports.md): Markdown, HTML and PDF evidence for a ticket;
    masking.
 7. [Configuration and deployment](deployment.md): Docker and its volume,
-   settings, the secret key, reverse proxies.
+   settings, the secret key, the admin on its own port, upgrading,
+   binaries.
 8. [Troubleshooting](troubleshooting.md): a secret but no verdict, a refused
    host name, unreadable secrets, 413, lost data.
 9. [Testing a sender with an AI agent](agents.md): the Claude Code skill and
@@ -28,6 +29,9 @@ by task: what to click and what happens. [Українською](uk/README.md).
     on another instance, secrets without values, endpoints at start.
 12. [Replaying a request to your handler](replay.md): send a caught request
     byte for byte to your own handler and keep its answer; which targets.
+13. [Setting up a shared server](server.md): from nothing to a team
+    server: HTTPS for senders, the first admin, the admin out of reach,
+    teammates and tokens, backups.
 
 Reference: the [REST API](api.md) (English only), and its OpenAPI 3.1
 description served at `/admin/api/v1/openapi.json`.

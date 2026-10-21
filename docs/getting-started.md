@@ -13,6 +13,14 @@ docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
   ghcr.io/petroladkin/hookwitness:0.1
 ```
 
+Or with a binary for Linux or macOS from the [releases](deployment.md#download-a-binary),
+put on your `PATH`:
+
+<!-- docs-check: skip: starts the server this check already runs -->
+```sh
+hookwitness serve
+```
+
 Or from source (Go 1.27 or newer):
 
 <!-- docs-check: skip: builds and starts the server this check already runs -->
@@ -36,6 +44,12 @@ created again. More in [Configuration and deployment](deployment.md).
 
 Open <http://127.0.0.1:8080/admin/>. The **Endpoints** page lists the paths
 Hookwitness catches; it starts empty.
+
+A dashed **No login** line sits under the header: there are no users yet,
+so whoever can open this page can use it. On your own machine that is fine.
+Before anyone else can reach it, add a user ([Users, login and
+tokens](access.md)), or set the server up for a team as in [Setting up a
+shared server](server.md).
 
 1. Click **New endpoint**.
 2. Type the path the sender should call, say `/stripe/webhooks`, or leave it
@@ -82,3 +96,5 @@ answered.
 - [Authorization checks and secrets](authorization.md): is it correctly signed?
 - [JSON Schema checks](schemas.md): does the event keep its contract?
 - [Reports](reports.md): attach the evidence to a ticket.
+- [Setting up a shared server](server.md): HTTPS for senders, a login for
+  the team, backups.
