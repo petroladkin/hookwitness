@@ -333,6 +333,10 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 	if in.Password != nil && writeInvalid(w, access.CheckPassword(*in.Password)) {
 		return
 	}
+	if id := access.From(r.Context()); id != nil && in.Role != nil && *in.Role == store.RoleUser && id.Name == name {
+		WriteError(w, http.StatusConflict, "self_demotion", "you cannot make yourself a user: another admin can", "")
+		return
+	}
 	if _, err := h.store.UserByName(r.Context(), name); err != nil {
 		h.userError(w, "change user", name, err)
 		return
@@ -365,6 +369,10 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) removeUser(w http.ResponseWriter, r *http.Request) {
 	name, ok := h.userName(w, r)
 	if !ok {
+		return
+	}
+	if id := access.From(r.Context()); id != nil && id.Name == name {
+		WriteError(w, http.StatusConflict, "self_removal", "you cannot remove yourself: another admin can", "")
 		return
 	}
 	u, err := h.store.RemoveUser(r.Context(), name)

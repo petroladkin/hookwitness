@@ -228,6 +228,8 @@ templ usersPage(nav navView, v usersView) {
 										<div class="row-acts">
 											if v.lastAdmin(u) {
 												<span class="help" title="Make another user an admin first">the last admin</span>
+											} else if u.Role == store.RoleAdmin && u.Name == nav.User {
+												<span class="help" title="Another admin can change your role or remove you">you</span>
 											} else {
 												<form method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/role") }>
 													if u.Role == store.RoleAdmin {
@@ -240,7 +242,7 @@ templ usersPage(nav navView, v usersView) {
 												</form>
 											}
 											<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users?dialog=password&name=" + u.Name) }>Set password</a>
-											if !v.lastAdmin(u) {
+											if !v.lastAdmin(u) && u.Name != nav.User {
 												<form method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/remove") } data-confirm={ "Remove " + u.Name + " with their " + strconv.Itoa(u.Tokens) + " tokens?" }>
 													<button class="btn quiet" type="submit">Remove</button>
 												</form>

@@ -89,7 +89,8 @@ There are two, and no other permissions:
 ![The users page](images/users.webp)
 
 The last admin can be neither removed nor demoted: make another user an
-admin first.
+admin first. An admin can neither make themselves a user nor remove
+themselves either: another admin can.
 
 ## Tokens for scripts and agents
 

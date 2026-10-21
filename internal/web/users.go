@@ -369,6 +369,10 @@ func (h *Handler) setRole(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "A role is user or admin.", http.StatusBadRequest)
 		return
 	}
+	if id := access.From(r.Context()); id != nil && role == store.RoleUser && id.Name == pathUser(r) {
+		h.users(w, r, http.StatusConflict, usersView{Err: "You cannot make yourself a user: another admin can."})
+		return
+	}
 	u, err := h.store.SetRole(r.Context(), pathUser(r), role)
 	if err != nil {
 		h.userError(w, r, "set role", err)
@@ -411,6 +415,10 @@ func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) removeUser(w http.ResponseWriter, r *http.Request) {
 	if h.auth == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if id := access.From(r.Context()); id != nil && id.Name == pathUser(r) {
+		h.users(w, r, http.StatusConflict, usersView{Err: "You cannot remove yourself: another admin can."})
 		return
 	}
 	u, err := h.store.RemoveUser(r.Context(), pathUser(r))
