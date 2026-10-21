@@ -53,7 +53,7 @@ first admin are in [Users, login and tokens](access.md#login-is-off-until-the-fi
 ```yaml
 services:
   hookwitness:
-    image: ghcr.io/petroladkin/hookwitness:0.1
+    image: ghcr.io/petroladkin/hookwitness:0.2
     restart: unless-stopped
     ports: ["127.0.0.1:8081:8081"]   # the admin, on the server's localhost only
     volumes: ["hookwitness:/data"]

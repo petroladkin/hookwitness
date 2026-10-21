@@ -140,7 +140,7 @@ applied stops the start with one line saying why.
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
   -v "$PWD/payments-webhooks.hookwitness.json:/setup.json:ro" -e HOOKWITNESS_IMPORT=/setup.json \
-  ghcr.io/petroladkin/hookwitness:0.1
+  ghcr.io/petroladkin/hookwitness:0.2
 ```
 
 **On a running server:** `hookwitness apply <file>` does the same through

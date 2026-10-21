@@ -141,7 +141,7 @@ curl -s -X POST 'http://127.0.0.1:8080/admin/api/v1/setup?on_conflict=replace' -
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
   -v "$PWD/payments-webhooks.hookwitness.json:/setup.json:ro" -e HOOKWITNESS_IMPORT=/setup.json \
-  ghcr.io/petroladkin/hookwitness:0.1
+  ghcr.io/petroladkin/hookwitness:0.2
 ```
 
 **На запущеному сервері:** `hookwitness apply <file>` робить те саме через

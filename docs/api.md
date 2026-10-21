@@ -585,7 +585,7 @@ curl -s -X POST $API/requests/$REQ/replays -H 'Content-Type: application/json' \
 
 <!-- docs-check: skip: starts a container; scripts/docker-smoke.sh runs it in CI -->
 ```sh
-docker run -d --name hookwitness -p 127.0.0.1:8080:8080 ghcr.io/petroladkin/hookwitness:0.1
+docker run -d --name hookwitness -p 127.0.0.1:8080:8080 ghcr.io/petroladkin/hookwitness:0.2
 ```
 
 - Without a volume every run starts empty, which suits tests. Add
@@ -605,7 +605,7 @@ Compose, for a sender under test:
 ```yaml
 services:
   hookwitness:
-    image: ghcr.io/petroladkin/hookwitness:0.1
+    image: ghcr.io/petroladkin/hookwitness:0.2
     ports: ["127.0.0.1:8080:8080"]           # the API and UI for the test on the host
     environment:
       HOOKWITNESS_ADMIN_HOSTS: hookwitness   # the API for tests inside the network

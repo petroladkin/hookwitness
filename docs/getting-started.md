@@ -10,7 +10,7 @@ With Docker:
 <!-- docs-check: skip: starts a long-running container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
-  ghcr.io/petroladkin/hookwitness:0.1
+  ghcr.io/petroladkin/hookwitness:0.2
 ```
 
 Or with a binary for Linux or macOS from the [releases](deployment.md#download-a-binary),

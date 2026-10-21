@@ -91,8 +91,8 @@ in the `/data` volume) is built, smoke-tested and published to GHCR by CI.
 Release tags also get binaries: archives for linux and darwin × amd64 and
 arm64 with `SHA256SUMS` and a provenance attestation, on a draft Release
 the release step publishes (`make dist`).
-Released: 0.1.0 (`CHANGELOG.md`); the documentation tells users to run the
-image `:0.1` (`TestDocsImageTag`), and `main` holds the tagged releases.
+Released: 0.1.0 and 0.2.0 (`CHANGELOG.md`); the documentation tells users
+to run the image `:0.2` (`TestDocsImageTag`), and `main` holds the tagged releases.
 This section must describe what is true now — update it in the same change
 that makes it false.
 

@@ -10,19 +10,19 @@ server](server.md).
 <!-- docs-check: skip: starts a container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
-  ghcr.io/petroladkin/hookwitness:0.1
+  ghcr.io/petroladkin/hookwitness:0.2
 ```
 
 The UI is at <http://127.0.0.1:8080/admin/>; webhooks go to any other path of
 port 8080. Images are built for linux/amd64 and linux/arm64, with these tags:
 
-- `:0.1` (used in these pages) follows the newest 0.1.x release: fixes, no
+- `:0.2` (used in these pages) follows the newest 0.2.x release: fixes, no
   breaking changes;
-- `:X.Y.Z`, such as `:0.1.0`, is one release and never changes;
+- `:X.Y.Z`, such as `:0.2.0`, is one release and never changes;
 - `:latest` is the newest release, whatever its version;
 - `:edge` follows the development branch, with no promises.
 
-Release candidates (`:0.1.0-rc.1`) have only their own tag.
+Release candidates (`:0.2.0-rc.1`) have only their own tag.
 
 ### Keep the data in a volume
 
@@ -48,7 +48,7 @@ key keeps the requests but loses the secrets.
 ```yaml
 services:
   hookwitness:
-    image: ghcr.io/petroladkin/hookwitness:0.1
+    image: ghcr.io/petroladkin/hookwitness:0.2
     ports: ["127.0.0.1:8080:8080"]
     volumes: ["hookwitness:/data"]
     restart: unless-stopped
@@ -63,7 +63,7 @@ volumes:
 - Has a health check (`hookwitness health`, which asks `/healthz`); `docker
   ps` shows it.
 - Carries a signed build provenance and an SBOM:
-  `gh attestation verify oci://ghcr.io/petroladkin/hookwitness:0.1 --owner petroladkin`.
+  `gh attestation verify oci://ghcr.io/petroladkin/hookwitness:0.2 --owner petroladkin`.
 - `make image` builds it locally; `make image-smoke` runs the scenario CI runs
   against it.
 
@@ -130,7 +130,7 @@ database once:
 <!-- docs-check: skip: needs the server stopped and a container; tested by the store and command tests -->
 ```sh
 docker stop hookwitness
-docker run --rm -v hookwitness:/data ghcr.io/petroladkin/hookwitness:0.1 db compact -db /data/hookwitness.db
+docker run --rm -v hookwitness:/data ghcr.io/petroladkin/hookwitness:0.2 db compact -db /data/hookwitness.db
 docker start hookwitness
 ```
 
@@ -185,7 +185,7 @@ keep the admin port on localhost:
 docker run -d --name hookwitness -p 8080:8080 -p 127.0.0.1:8081:8081 \
   -e HOOKWITNESS_ADMIN_ADDR=:8081 -e HOOKWITNESS_ADMIN_PREFIX=/ \
   -e HOOKWITNESS_PUBLIC_URL=http://hooks.example.com:8080 \
-  -v hookwitness:/data ghcr.io/petroladkin/hookwitness:0.1
+  -v hookwitness:/data ghcr.io/petroladkin/hookwitness:0.2
 ```
 
 The UI is then at <http://127.0.0.1:8081/>, the API at
@@ -221,6 +221,11 @@ the API, the flags and the stored data. From 0.1:
   tokens](access.md).
 - A 0.1 database keeps its largest size until compacted once
   ([The database's size](#the-databases-size)).
+- Catch replies always carry `Content-Security-Policy: sandbox`, also when
+  the endpoint sets a policy of its own (sent next to it), and never a
+  `Set-Cookie` of the login cookie ([Scripted replies](replies.md)).
+- Once login is on, only an admin replays requests
+  ([Replaying a request to your handler](replay.md)).
 - The image's tag in these pages moves with each minor version (`:0.1`,
   `:0.2`): a tag such as `:0.1` never moves to the next minor version, so
   upgrading is changing the tag.

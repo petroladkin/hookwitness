@@ -10,7 +10,7 @@ Catch webhooks, get a verdict, attach the evidence.
 <!-- docs-check: skip: starts a long-running container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
-  ghcr.io/petroladkin/hookwitness:0.1
+  ghcr.io/petroladkin/hookwitness:0.2
 ```
 
 <img src="docs/images/demo.gif" width="760" alt="A 20-second run: GitHub webhooks arrive live on the register; the third is answered 503 by a rule; one signed with the wrong secret turns red and its page says the signature does not match; then the report is downloaded and opened.">
@@ -25,10 +25,10 @@ docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
 
 Self-hosted: a container image, or one binary
 ([download](docs/deployment.md#download-a-binary) for Linux or macOS, or
-build it from source). **Status: 0.1, the first release.** The catcher,
-scripted replies, verdicts, reports, the REST API and the MCP server work;
-until 1.0, a minor version (0.2) may change the API or the flags, and the
-[changelog](CHANGELOG.md) says how.
+build it from source). **Status: 0.2.** The catcher, scripted replies,
+verdicts, reports, the REST API and the MCP server work, with users and
+login, replay and setup files; until 1.0, a minor version (0.3) may
+change the API or the flags, and the [changelog](CHANGELOG.md) says how.
 
 ## A short tour
 

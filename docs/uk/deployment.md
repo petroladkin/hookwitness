@@ -9,20 +9,20 @@
 <!-- docs-check: skip: starts a container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
-  ghcr.io/petroladkin/hookwitness:0.1
+  ghcr.io/petroladkin/hookwitness:0.2
 ```
 
 Інтерфейс — на <http://127.0.0.1:8080/admin/>; вебхуки йдуть на будь-який
 інший шлях порту 8080. Образи зібрано для linux/amd64 і linux/arm64, з такими
 тегами:
 
-- `:0.1` (його вживають ці сторінки) іде за найновішим релізом 0.1.x:
+- `:0.2` (його вживають ці сторінки) іде за найновішим релізом 0.2.x:
   виправлення, без несумісних змін;
-- `:X.Y.Z`, наприклад `:0.1.0`, — один реліз, він ніколи не змінюється;
+- `:X.Y.Z`, наприклад `:0.2.0`, — один реліз, він ніколи не змінюється;
 - `:latest` — найновіший реліз, хоч якої версії;
 - `:edge` іде за гілкою розробки, без жодних обіцянок.
 
-Кандидати в релізи (`:0.1.0-rc.1`) мають лише власний тег.
+Кандидати в релізи (`:0.2.0-rc.1`) мають лише власний тег.
 
 ### Тримайте дані в томі
 
@@ -49,7 +49,7 @@ docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
 ```yaml
 services:
   hookwitness:
-    image: ghcr.io/petroladkin/hookwitness:0.1
+    image: ghcr.io/petroladkin/hookwitness:0.2
     ports: ["127.0.0.1:8080:8080"]
     volumes: ["hookwitness:/data"]
     restart: unless-stopped
@@ -64,7 +64,7 @@ volumes:
 - Має перевірку здоров'я (`hookwitness health`, що питає `/healthz`);
   `docker ps` її показує.
 - Несе підписане походження збірки (provenance) і SBOM:
-  `gh attestation verify oci://ghcr.io/petroladkin/hookwitness:0.1 --owner petroladkin`.
+  `gh attestation verify oci://ghcr.io/petroladkin/hookwitness:0.2 --owner petroladkin`.
 - `make image` збирає його локально; `make image-smoke` запускає той самий
   сценарій, що й CI.
 
@@ -129,7 +129,7 @@ Ctrl-C або SIGTERM зупиняє сервер акуратно: запити
 <!-- docs-check: skip: needs the server stopped and a container; tested by the store and command tests -->
 ```sh
 docker stop hookwitness
-docker run --rm -v hookwitness:/data ghcr.io/petroladkin/hookwitness:0.1 db compact -db /data/hookwitness.db
+docker run --rm -v hookwitness:/data ghcr.io/petroladkin/hookwitness:0.2 db compact -db /data/hookwitness.db
 docker start hookwitness
 ```
 
@@ -184,7 +184,7 @@ API і MCP. Задайте `HOOKWITNESS_ADMIN_ADDR`, щоб дати адмін�
 docker run -d --name hookwitness -p 8080:8080 -p 127.0.0.1:8081:8081 \
   -e HOOKWITNESS_ADMIN_ADDR=:8081 -e HOOKWITNESS_ADMIN_PREFIX=/ \
   -e HOOKWITNESS_PUBLIC_URL=http://hooks.example.com:8080 \
-  -v hookwitness:/data ghcr.io/petroladkin/hookwitness:0.1
+  -v hookwitness:/data ghcr.io/petroladkin/hookwitness:0.2
 ```
 
 Тоді інтерфейс за адресою <http://127.0.0.1:8081/>, API —
@@ -220,6 +220,12 @@ binary»), тож повернення назад — це відновленн�
   ввімкнути — у [Користувачах, вході й токенах](access.md).
 - База з 0.1 тримає свій найбільший розмір, доки її один раз не стиснути
   ([Розмір бази](#розмір-бази)).
+- Відповіді на шляхах для вебхуків завжди мають `Content-Security-Policy:
+  sandbox`, і тоді, коли ендпоінт задає власну політику (її надіслано поруч),
+  і ніколи не мають `Set-Cookie` з cookie входу (див. [Сценарії
+  відповідей](replies.md)).
+- Коли вхід увімкнено, повторювати запити може лише адміністратор
+  (див. [Повтор запиту на ваш обробник](replay.md)).
 - Тег образу на цих сторінках змінюється з кожною мінорною версією (`:0.1`,
   `:0.2`): тег на кшталт `:0.1` ніколи не переходить на наступну мінорну
   версію, тож оновлення — це зміна тегу.
