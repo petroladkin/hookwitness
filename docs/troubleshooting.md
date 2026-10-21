@@ -27,6 +27,22 @@ container itself and went with it. Run it with a named volume
 [Configuration and deployment](deployment.md#keep-the-data-in-a-volume). What
 was in the removed container cannot be recovered.
 
+## The container stops at start: "cannot create the first admin"
+
+With `HOOKWITNESS_ADMIN_PASSWORD_FILE` set, the server reads that file at
+every start, and stops when it cannot:
+
+- `permission denied`: the image runs as uid 65532, which cannot read a file
+  owned by you with mode 600. `sudo chown 65532 <file>`, or `chmod 644
+  <file>`.
+- `no such file or directory`: the file is gone. Once the first admin
+  exists, remove `HOOKWITNESS_ADMIN_USER` and `HOOKWITNESS_ADMIN_PASSWORD_FILE`
+  (and the secret) instead.
+- `at least 12 characters`: the password is too short; the file holds one
+  line, the password.
+
+See [Setting up a shared server](server.md#2-the-password-of-the-first-admin).
+
 ## The UI says it does not answer to the host name
 
 ```text

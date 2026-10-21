@@ -16,16 +16,22 @@ than loopback.
 ![The endpoints page with login off](images/login-off.webp)
 
 The first user turns login on for the web UI, the REST API and MCP. It is
-always an admin (otherwise nobody could manage users). There are three ways
-to add it:
+always an admin (otherwise nobody could manage users). There are four ways
+to add it; pick by how the server runs:
 
-- **The Users page.** Click *Add a user* in that dashed line, give a name
-  and a password of at least 12 characters, and log in with them.
-- **The environment, for Docker and compose:** `HOOKWITNESS_ADMIN_USER` and
+- **The Users page**, when you can open the admin yourself first (on your
+  machine, or through an SSH tunnel). Click *Add a user* in that dashed
+  line, give a name and a password of at least 12 characters, and log in
+  with them.
+- **The environment**, for Docker and compose, so that the admin is never
+  open, not even for a minute: `HOOKWITNESS_ADMIN_USER` and
   `HOOKWITNESS_ADMIN_PASSWORD_FILE` create the first admin at start, but
   only on a database without users. A restart or a redeploy creates nothing
   and logs that it skipped; editing the password file later changes nothing
   (change the password on the account page or with the command below).
+  The server reads the file at every start while the variable is set and
+  stops if it cannot, so the image's user (uid 65532) must be able to read
+  it: `sudo chown 65532 admin_password.txt`, or mode 644.
 
   ```yaml
   services:
@@ -44,8 +50,10 @@ to add it:
     hookwitness:
   ```
 
-- **The command line,** on the server's database (the server may be
-  running):
+  [Setting up a shared server](server.md) builds a whole server this way.
+
+- **The command line**, on the server's database (the server may be
+  running), for a server you reach by SSH:
 
   <!-- docs-check: skip: works on the server's own database -->
   ```sh
@@ -53,13 +61,14 @@ to add it:
   docker exec -it hookwitness /hookwitness user add ann --admin
   ```
 
-Or through the API, while login is still off:
+- **The API**, from a script that sets up a fresh server, while login is
+  still off:
 
-```sh
-curl -s -X POST http://127.0.0.1:8080/admin/api/v1/users -H 'Content-Type: application/json' \
-  -d '{"name":"ann","role":"admin","password":"correct-horse-battery"}' | jq -r '.name + " " + .role'
-# ann admin
-```
+  ```sh
+  curl -s -X POST http://127.0.0.1:8080/admin/api/v1/users -H 'Content-Type: application/json' \
+    -d '{"name":"ann","role":"admin","password":"correct-horse-battery"}' | jq -r '.name + " " + .role'
+  # ann admin
+  ```
 
 ## Logging in
 

@@ -2,6 +2,8 @@
 
 How to run Hookwitness for longer than an afternoon: in Docker with its data
 in a volume, with its settings, its secret key, and behind a reverse proxy.
+For a whole server for a team, step by step, see [Setting up a shared
+server](server.md).
 
 ## Docker
 
@@ -202,9 +204,30 @@ An endpoint may now use a path under `/admin`. If the admin later moves back
 under the prefix on the catch port, it covers such an endpoint, which then
 catches nothing; the server names those endpoints in a warning at start.
 
+## Upgrading
+
+Back up the volume (or the database and its key) first, then run the new
+image or binary on the same data; with Docker, pull the new tag and create
+the container again with the same `-v hookwitness:/data`. The server brings
+the database up to date at start, and the changes are one way: an older
+version refuses a database a newer one has opened ("database schema is
+newer than this binary"), so going back means restoring the backup.
+
+[The changelog](../CHANGELOG.md) lists, for each version, what changed in
+the API, the flags and the stored data. From 0.1:
+
+- Login is still off until the first user; nothing changes for a server
+  that should stay open on localhost. To turn it on, see [Users, login and
+  tokens](access.md).
+- A 0.1 database keeps its largest size until compacted once
+  ([The database's size](#the-databases-size)).
+- The image's tag in these pages moves with each minor version (`:0.1`,
+  `:0.2`): a tag such as `:0.1` never moves to the next minor version, so
+  upgrading is changing the tag.
+
 ## Download a binary
 
-From 1.0 on, every release carries an archive for Linux and macOS on amd64
+From 0.2 on, every release carries an archive for Linux and macOS on amd64
 and arm64, `hookwitness_<version>_<os>_<arch>.tar.gz`, and a `SHA256SUMS`
 file. An archive unpacks into a directory of the same name holding the
 binary, `LICENSE`, `THIRD-PARTY-NOTICES.md` and `README.md`. The binary is
@@ -212,7 +235,7 @@ static (built without cgo) and needs nothing else.
 
 <!-- docs-check: skip: downloads from a published release -->
 ```sh
-v=1.0.0 os=linux arch=amd64   # os: linux or darwin; arch: amd64 or arm64
+v=0.2.0 os=linux arch=amd64   # os: linux or darwin; arch: amd64 or arm64
 base=https://github.com/petroladkin/hookwitness/releases/download/v$v
 curl -fsSLO "$base/hookwitness_${v}_${os}_${arch}.tar.gz"
 curl -fsSLO "$base/SHA256SUMS"
@@ -225,7 +248,7 @@ tar -xzf "hookwitness_${v}_${os}_${arch}.tar.gz"
 `SHA256SUMS` shows the download is whole. `gh attestation verify` (the
 [GitHub CLI](https://cli.github.com/)) shows the archive was built by this
 repository's CI from the release tag. `version` prints the tag and its
-commit, `v1.0.0 (…)`. Then put the binary on your `PATH` and run
+commit, `v0.2.0 (…)`. Then put the binary on your `PATH` and run
 `hookwitness serve`, as in [Build from source](#build-from-source).
 
 The macOS binary is not signed by Apple. `curl` does not mark what it
@@ -256,8 +279,8 @@ it is up.
 ## Which build is running
 
 Every place that names Hookwitness names the build as `<version> (<commit>)`,
-for example `v0.1.0 (5a45bb4)`: the line at the bottom of the Endpoints page
-(and the logo's tooltip on every page), `hookwitness version`, and the
+for example `v0.1.0 (5a45bb4)`: the line at the foot of every page (and
+the logo's tooltip), `hookwitness version`, and the
 "Generated … by Hookwitness" line of every report. So a report attached to a
 ticket says which build caught its requests. Released images say their tag
 (`v1.2.0 (…)`), the `:edge` image says `edge`, `make build` says what
