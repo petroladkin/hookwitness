@@ -84,6 +84,9 @@ type Options struct {
 	Generated time.Time // when it is written
 	BodyLimit int       // bytes of a body shown; 0 is BodyLimit
 	NoImages  bool      // list images without showing them (smaller files)
+	// Setup is the endpoint's behaviour, shown in a setup section; nil
+	// leaves the section out, and the Unmatched register never has one.
+	Setup *emulate.Config
 	// Fonts holds the UI's woff2 files (vendor/<family>/<file>.woff2) that
 	// an HTML report embeds; nil writes the HTML with system fonts only.
 	Fonts fs.FS
@@ -186,6 +189,7 @@ type Head struct {
 	Generated time.Time
 	Version   string
 	Masked    []string // the masked header names, as given, sorted
+	Setup     *Setup   // the endpoint's setup when asked for; nil otherwise
 
 	Count    int
 	Outcomes []Count // answers by class, in a fixed order
@@ -287,6 +291,9 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 		}
 	}
 	slices.SortFunc(h.Masked, func(a, b string) int { return cmp.Compare(strings.ToLower(a), strings.ToLower(b)) })
+	if h.Endpoint != "Unmatched" && o.Setup != nil {
+		h.Setup = describeSetup(*o.Setup, h.mask) // after the mask: masked headers' values stay masked there too
+	}
 
 	classes := map[string]int{}
 	checks := map[int]*CheckCount{}

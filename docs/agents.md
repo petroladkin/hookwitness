@@ -98,6 +98,17 @@ Other clients take the same in their configuration file:
 }
 ```
 
+With the admin on its own port ([Configuration and
+deployment](deployment.md#the-admin-on-its-own-port)), MCP is on that port:
+`http://127.0.0.1:8081/mcp` when the admin is at its root. Give the bridge the
+full URL then: `hookwitness mcp -url http://127.0.0.1:8081/mcp`.
+
+With login on ([Users, login and tokens](access.md)), MCP needs a token:
+`--header "Authorization: Bearer <token>"` for a client that speaks HTTP,
+`-token-file <file>` for the bridge (see [MCP with a
+token](access.md#mcp-with-a-token)). The agent then acts as the token's
+owner.
+
 Check that the server answers MCP:
 
 ```sh
@@ -107,6 +118,11 @@ curl -s -X POST http://127.0.0.1:8080/admin/mcp \
   | grep -o '"name":"hookwitness"'
 # "name":"hookwitness"
 ```
+
+Each client holds a session, and the server keeps at most 32 open at once
+(`-mcp-max-sessions`). One more is refused at `initialize` with `503` and
+the error "too many MCP sessions (limit 32)". A session closed by its client
+frees its place at once; an idle one, after 30 minutes.
 
 The tools are task-shaped. Each result is a summary line, then compact JSON.
 
@@ -119,10 +135,14 @@ The tools are task-shaped. Each result is a summary line, then compact JSON.
 | `wait_for_request` | waits for the next request that matches (verdict, status, text, a JSON value), up to 300 s, and returns it in full |
 | `list_requests`, `get_request` | requests with the same filters; one in full, its body cut at 16 KiB with its size |
 | `expect` | asserts that N matching requests arrive within a time: pass, or fail with what arrived and the reasons |
+| `switch_endpoint` | turns an endpoint off (its path goes to Unmatched, everything else kept) or on again |
 | `reset_endpoint`, `recheck`, `delete_endpoint` | reset the counter or clear requests, verify again, delete |
+| `export_endpoint`, `import_endpoints` | an endpoint's setup as a file (secret names and kinds, never values); endpoints created, or replaced, from one ([Sharing a setup](sharing.md)) |
+| `replay_request` | sends a caught request byte for byte to a URL (your handler) and returns its answer: status, headers, body, timings or the error ([Replaying a request](replay.md)); `get_request` lists a request's replays |
 
-`delete_endpoint` and `reset_endpoint` are marked destructive, and the
+`delete_endpoint`, `reset_endpoint` and `import_endpoints` (it can replace an endpoint's behaviour) are marked destructive, and the
 reading tools read-only, so a client can ask you before the destructive ones.
+`replay_request` is the one tool that reaches outside the server (open world).
 A session looks like this:
 
 1. `create_endpoint` with `/github/events`, then give its URL to the sender;

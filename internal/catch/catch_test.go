@@ -13,6 +13,7 @@ import (
 
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/store"
+	"github.com/petroladkin/hookwitness/internal/wire"
 )
 
 func setup(t *testing.T, maxBody int64) (*Handler, *store.Store, *bytes.Buffer) {
@@ -180,5 +181,33 @@ func TestPublishesToItsRegister(t *testing.T) {
 	case <-wake:
 	default:
 		t.Fatal("no live notification for the endpoint")
+	}
+}
+
+// A browser logged in to the admin on another port of the same host sends
+// its login cookie to catch paths too: its value is never kept.
+func TestSessionCookieNeverRecorded(t *testing.T) {
+	h, st, _ := setup(t, 1<<20)
+	ctx := context.Background()
+	ep, _ := st.CreateEndpoint(ctx, "/c")
+	req := httptest.NewRequest("POST", "/c", strings.NewReader("{}"))
+	hs := []wire.Header{{Name: "Host", Value: "x"}, {Name: "cookie", Value: "a=1; hookwitness_session=SECRETSESSIONVALUE; b=2"}, {Name: "Cookie", Value: "c=3"}}
+	rec := httptest.NewRecorder()
+	h.Catch(rec, req, hs, true)
+	rs, _ := st.Requests(ctx, ep.ID, 0, 1)
+	got, _ := st.Request(ctx, rs[0].ID)
+	if got.Headers[1].Value != "a=1; hookwitness_session=[hookwitness session]; b=2" || got.Headers[2].Value != "c=3" || got.Headers[1].Name != "cookie" {
+		t.Fatalf("headers %v", got.Headers)
+	}
+	for in, want := range map[string]string{
+		"hookwitness_session=x":                             "hookwitness_session=[hookwitness session]",
+		"hookwitness_session_other=x":                       "hookwitness_session_other=x",
+		"a=hookwitness_session":                             "a=hookwitness_session",
+		"a=1;hookwitness_session=x;b":                       "a=1;hookwitness_session=[hookwitness session];b",
+		"a=1; hookwitness_session=x; hookwitness_session=y": "a=1; hookwitness_session=[hookwitness session]; hookwitness_session=[hookwitness session]",
+	} {
+		if got := RedactSession(in); got != want {
+			t.Errorf("RedactSession(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

@@ -196,3 +196,23 @@ func TestLostKeyKeepsEnforcedEndpointsClosed(t *testing.T) {
 		t.Fatalf("verdict %q", r.Verdict)
 	}
 }
+
+// A secret imported without its value: the enforced check gives n/v
+// "secret GH not set" and lets the request through.
+func TestUnsetSecretNeverRefuses(t *testing.T) {
+	h, st, _ := setup(t, 1<<20)
+	withKeys(t, h)
+	url := serve(t, h)
+	ep := configure(t, st, "/gh", emulate.Config{Default: emulate.Reply{Status: 200},
+		Secrets: []emulate.Secret{{Name: "GH", Kind: emulate.SecretKey}},
+		Checks:  []emulate.Check{{Kind: emulate.KindGitHub, Secret: "GH", Enforce: true}}})
+	resp, _, err := do(t, http.DefaultClient, "POST", url+"/gh", `{"a":1}`, "X-Hub-Signature-256", ghSignature("gh_test", `{"a":1}`))
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("an unset secret refused: %v %v", resp, err)
+	}
+	r, out := lastOutcome(t, st, ep)
+	vs := verdictsOf(t, r)
+	if r.Verdict != "n/v" || len(vs) != 1 || vs[0].Reason != "secret GH not set" || out.Counter != 1 {
+		t.Fatalf("verdict %q %+v, counter %d", r.Verdict, vs, out.Counter)
+	}
+}

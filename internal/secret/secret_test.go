@@ -156,3 +156,17 @@ func BenchmarkMatchTokenUncached(b *testing.B) {
 		k.MatchToken(rec, "wrong") //nolint:errcheck // failures are not cached
 	}
 }
+
+// TestDigestKeyed: a digest is long, keyed, stable, its own subkey's (not a
+// fingerprint's prefix) and does not contain the value.
+func TestDigestKeyed(t *testing.T) {
+	k := testKey(t)
+	other, _ := Load(base64.StdEncoding.EncodeToString([]byte("fedcba9876543210fedcba9876543210")), "")
+	d := k.Digest("sha256=abc")
+	if len(d) != 64 || d != k.Digest("sha256=abc") || d == other.Digest("sha256=abc") || d == k.Digest("sha256=abd") {
+		t.Fatalf("digest %q", d)
+	}
+	if strings.HasPrefix(d, k.Fingerprint("sha256=abc")) || strings.Contains(d, "abc") {
+		t.Fatalf("digest %q shares the fingerprint or shows the value", d)
+	}
+}

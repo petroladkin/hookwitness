@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -48,6 +49,8 @@ var (
 	idempotent  = &sdk.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(false), OpenWorldHint: ptr(false)}
 	additive    = &sdk.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false)}
 	destructive = &sdk.ToolAnnotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(false)}
+	outward     = &sdk.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(true)} // reaches outside the server
+	replacing   = &sdk.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)}
 )
 
 // Filters narrow the requests a tool looks at, as the API's list does.
@@ -123,8 +126,13 @@ func (s *tools) register(srv *sdk.Server) {
 		Description: "List an endpoint's requests (or the Unmatched register: endpoint \"unmatched\"), newest first; with after, the newer ones oldest first. Filters as in wait_for_request."},
 		s.listRequests)
 	sdk.AddTool(srv, &sdk.Tool{Name: "get_request", Annotations: readOnly,
-		Description: "One request in full: method, path, query, headers in the order sent, the body (cut at 16 KiB with its size), what was answered, and every verdict with its reason and schema problems."},
+		Description: "One request in full: method, path, query, headers in the order sent, the body (cut at 16 KiB with its size), what was answered, every verdict with its reason and schema problems, and its replays (target, status or error)."},
 		s.getRequest)
+	sdk.AddTool(srv, &sdk.Tool{Name: "replay_request", Annotations: outward,
+		Description: "Send a caught request again, byte for byte, to a URL (e.g. your own handler at http://localhost:3000/webhooks) and return what it answered: status, headers in order, body (cut at 16 KiB), timings, or the error. " +
+			"The body and the header lines go as they arrived; only Host becomes the target's (host: received keeps it). Use it to tell a handler's verification bug from bytes changed on the way. " +
+			"Redirects are not followed. Link-local and cloud-metadata addresses are refused, and the server may allow fewer targets (-replay-allow)."},
+		s.replayRequest)
 	sdk.AddTool(srv, &sdk.Tool{Name: "expect", Annotations: readOnly,
 		Description: "Assert that count requests matching the filters arrive at an endpoint within within_s seconds (default 30, at most 300), counting from after (default: now). " +
 			"Returns pass with the matching requests, or fail with what arrived instead and the reasons of their verdicts."},
@@ -135,6 +143,19 @@ func (s *tools) register(srv *sdk.Server) {
 	sdk.AddTool(srv, &sdk.Tool{Name: "recheck", Annotations: idempotent,
 		Description: "Verify an endpoint's kept requests again with its current checks, secrets and schemas, e.g. after fixing a secret. Only verdicts change."},
 		s.recheck)
+	sdk.AddTool(srv, &sdk.Tool{Name: "switch_endpoint", Annotations: idempotent,
+		Description: "Turn an endpoint off (enabled false) or on (enabled true). Off keeps its path, behaviour, secrets, requests and counter; " +
+			"requests to its path are answered 404 and kept in the Unmatched register until it is on again."},
+		s.switchEndpoint)
+	sdk.AddTool(srv, &sdk.Tool{Name: "export_endpoint", Annotations: readOnly,
+		Description: "Export endpoints' setup as a hookwitness setup file: path, default reply, rules, checks, variables, schemas and the names and kinds of secrets (never their values). " +
+			"Save the setup object as the named .hookwitness.json file; import_endpoints, the UI, the API or hookwitness apply recreate the endpoints from it on any instance."},
+		s.exportEndpoint)
+	sdk.AddTool(srv, &sdk.Tool{Name: "import_endpoints", Annotations: replacing,
+		Description: "Create endpoints from a hookwitness setup file (the object export_endpoint gives, or a .hookwitness.json file's content), all or none. " +
+			"Their secrets are created without values: checks that use them give n/v until set_secret gives each value. " +
+			"A path that is already an endpoint is refused unless on_conflict is replace, which replaces its behaviour (its requests, counter and on/off state stay; secrets of the same name and kind keep their values). Importing the same file again changes nothing."},
+		s.importEndpoints)
 	sdk.AddTool(srv, &sdk.Tool{Name: "delete_endpoint", Annotations: destructive,
 		Description: "Delete an endpoint with its behaviour, secrets and requests."},
 		s.deleteEndpoint)
@@ -165,7 +186,17 @@ func (s *tools) listEndpoints(ctx context.Context, _ *sdk.CallToolRequest, _ str
 		return nil, nil, err
 	}
 	eps, _ := out["endpoints"].([]any)
-	return result(fmt.Sprintf("%d endpoint(s)", len(eps)), out)
+	off := 0
+	for _, ep := range eps {
+		if m, _ := ep.(map[string]any); m["enabled"] == false {
+			off++
+		}
+	}
+	summary := fmt.Sprintf("%d endpoint(s)", len(eps))
+	if off > 0 {
+		summary += fmt.Sprintf(", %d off (requests to an off endpoint go to Unmatched)", off)
+	}
+	return result(summary, out)
 }
 
 func (s *tools) getEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in EndpointIn) (*sdk.CallToolResult, map[string]any, error) {
@@ -185,7 +216,37 @@ func (s *tools) getEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in Endp
 		return nil, nil, err
 	}
 	ep["behaviour"] = b
-	return result(fmt.Sprintf("%v (endpoint %v): %v request(s) kept", ep["path"], num(ep["id"]), num(ep["requests"])), ep)
+	summary := fmt.Sprintf("%v (endpoint %v): %v request(s) kept", ep["path"], num(ep["id"]), num(ep["requests"]))
+	if ep["enabled"] == false {
+		summary += "; off: requests to it go to Unmatched"
+	}
+	return result(summary, ep)
+}
+
+type SwitchIn struct {
+	Endpoint string `json:"endpoint" jsonschema:"the endpoint: its id or its exact path"`
+	Enabled  *bool  `json:"enabled" jsonschema:"false turns it off, true on"`
+}
+
+func (s *tools) switchEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in SwitchIn) (*sdk.CallToolResult, map[string]any, error) {
+	if in.Enabled == nil {
+		return nil, nil, errors.New("say enabled: false to turn the endpoint off, true to turn it on")
+	}
+	p, err := s.c.endpointPath(ctx, in.Endpoint)
+	if err != nil {
+		return nil, nil, err
+	}
+	if p == "/unmatched" {
+		return nil, nil, errors.New("the Unmatched register cannot be turned off")
+	}
+	ep, err := s.c.call(ctx, http.MethodPatch, p, nil, map[string]bool{"enabled": *in.Enabled})
+	if err != nil {
+		return nil, nil, err
+	}
+	if *in.Enabled {
+		return result(fmt.Sprintf("%v is on: it catches again with its behaviour and counter", ep["path"]), ep)
+	}
+	return result(fmt.Sprintf("%v is off: requests to it are answered 404 and kept in the Unmatched register", ep["path"]), ep)
 }
 
 type ConfigureIn struct {
@@ -391,7 +452,65 @@ func (s *tools) getRequest(ctx context.Context, _ *sdk.CallToolRequest, in GetIn
 		return nil, nil, err
 	}
 	s.cut(r)
+	if num(r["replays"]) > 0 {
+		list, err := s.c.get(ctx, "/requests/"+strconv.FormatInt(in.ID, 10)+"/replays", nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		var brief []map[string]any
+		rs, _ := list["replays"].([]any)
+		for _, x := range rs {
+			rp, _ := x.(map[string]any)
+			brief = append(brief, map[string]any{"id": rp["id"], "created_at": rp["created_at"], "url": rp["url"],
+				"status": rp["status"], "error": rp["error"], "duration_ms": rp["duration_ms"]})
+		}
+		r["replays"] = brief
+	}
 	return result(describe(r), r)
+}
+
+type ReplayIn struct {
+	RequestID   int64  `json:"request_id" jsonschema:"the id of the caught request to send again"`
+	URL         string `json:"url" jsonschema:"where to send it: http or https, with the path and query, e.g. http://localhost:3000/webhooks/github"`
+	Host        string `json:"host,omitempty" jsonschema:"target (default): Host is the URL's host and port; received: the Host line as caught"`
+	InsecureTLS bool   `json:"insecure_tls,omitempty" jsonschema:"https: accept any certificate (a self-signed local handler)"`
+	TimeoutMS   int64  `json:"timeout_ms,omitempty" jsonschema:"milliseconds for the whole exchange; default 30000"`
+}
+
+func (s *tools) replayRequest(ctx context.Context, _ *sdk.CallToolRequest, in ReplayIn) (*sdk.CallToolResult, map[string]any, error) {
+	body := map[string]any{"url": in.URL, "insecure_tls": in.InsecureTLS}
+	if in.Host != "" {
+		body["host"] = in.Host
+	}
+	if in.TimeoutMS != 0 {
+		body["timeout_ms"] = in.TimeoutMS
+	}
+	rp, err := s.c.call(ctx, http.MethodPost, "/requests/"+strconv.FormatInt(in.RequestID, 10)+"/replays", nil, body)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, k := range []string{"body_text", "body_base64"} {
+		if v, ok := rp[k].(string); ok && len(v) > MaxBody {
+			limit := MaxBody
+			for k == "body_text" && limit > 0 && !utf8Start(v[limit]) {
+				limit--
+			}
+			rp[k] = v[:limit]
+			rp["body_cut"] = true
+			rp["body_url"] = "http://" + s.c.host + s.c.base + "/replays/" + strconv.FormatInt(int64(num(rp["id"])), 10) + "/body"
+		}
+	}
+	target := in.URL
+	if u, err := url.Parse(in.URL); err == nil {
+		target = u.Scheme + "://" + u.Host + u.EscapedPath()
+	}
+	summary := fmt.Sprintf("replayed request %d to %s: ", in.RequestID, target)
+	if e, ok := rp["error"].(map[string]any); ok {
+		summary += fmt.Sprintf("no answer (%v: %v)", e["kind"], e["message"])
+	} else {
+		summary += fmt.Sprintf("%v in %v ms", num(rp["status"]), num(rp["duration_ms"]))
+	}
+	return result(summary, rp)
 }
 
 type WaitIn struct {
@@ -646,6 +765,100 @@ func describe(r map[string]any) string {
 		if rs := reasons(r); len(rs) > 0 {
 			s += " (" + strings.Join(rs, "; ") + ")"
 		}
+		for _, n := range notes(r) {
+			s += "; " + n
+		}
 	}
 	return s
+}
+
+// notes are the verdicts' notes in short ("same signature as #1"); the
+// result keeps them whole.
+func notes(r map[string]any) []string {
+	var out []string
+	vs, _ := r["verdicts"].([]any)
+	for _, v := range vs {
+		vm, _ := v.(map[string]any)
+		if n, _ := vm["note"].(string); n != "" {
+			short, _, _ := strings.Cut(n, ":")
+			out = append(out, short)
+		}
+	}
+	return out
+}
+
+// ---- setup files -------------------------------------------------------------
+
+type ExportIn struct {
+	Endpoints []string `json:"endpoints,omitempty" jsonschema:"the endpoints to export: ids or exact paths; empty for all of them"`
+}
+
+func (s *tools) exportEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in ExportIn) (*sdk.CallToolResult, map[string]any, error) {
+	q := url.Values{}
+	for _, ref := range in.Endpoints {
+		p, err := s.c.endpointPath(ctx, ref)
+		if err != nil {
+			return nil, nil, err
+		}
+		id, ok := strings.CutPrefix(p, "/endpoints/")
+		if !ok {
+			return nil, nil, errors.New("the Unmatched register has no setup to export")
+		}
+		q.Add("id", id)
+	}
+	hdr, b, err := s.c.do(ctx, http.MethodGet, "/setup", q, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	var file map[string]any
+	if err := json.Unmarshal(b, &file); err != nil {
+		return nil, nil, err
+	}
+	name := "endpoints.hookwitness.json"
+	if _, params, err := mime.ParseMediaType(hdr.Get("Content-Disposition")); err == nil && params["filename"] != "" {
+		name = params["filename"]
+	}
+	eps, _ := file["endpoints"].([]any)
+	return result(fmt.Sprintf("Setup of %d endpoint(s): save the setup object as %s; secret names and kinds are in it, their values are not in it", len(eps), name),
+		map[string]any{"file_name": name, "setup": file})
+}
+
+type ImportIn struct {
+	Setup      map[string]any `json:"setup" jsonschema:"the setup file: {hookwitness: 1, endpoints: [...]}, as export_endpoint gives it"`
+	OnConflict string         `json:"on_conflict,omitempty" jsonschema:"fail (default): a path that is already an endpoint refuses the import; replace: replace that endpoint's behaviour"`
+}
+
+func (s *tools) importEndpoints(ctx context.Context, _ *sdk.CallToolRequest, in ImportIn) (*sdk.CallToolResult, map[string]any, error) {
+	if in.Setup == nil {
+		return nil, nil, errors.New("give the setup file's content as setup")
+	}
+	q := url.Values{}
+	if in.OnConflict != "" {
+		q.Set("on_conflict", in.OnConflict)
+	}
+	out, err := s.c.call(ctx, http.MethodPost, "/setup", q, in.Setup)
+	if err != nil {
+		return nil, nil, err
+	}
+	var lines []string
+	unset := false
+	eps, _ := out["endpoints"].([]any)
+	for _, e := range eps {
+		m, _ := e.(map[string]any)
+		line := fmt.Sprintf("%v %v (endpoint %v)", m["result"], m["path"], num(m["id"]))
+		if names, _ := m["secrets_not_set"].([]any); len(names) > 0 {
+			var ns []string
+			for _, n := range names {
+				ns = append(ns, fmt.Sprint(n))
+			}
+			line += ", secrets not set: " + strings.Join(ns, ", ")
+			unset = true
+		}
+		lines = append(lines, line)
+	}
+	summary := "Imported: " + strings.Join(lines, "; ")
+	if unset {
+		summary += ". Checks over a secret that is not set give n/v until set_secret gives its value"
+	}
+	return result(summary, out)
 }

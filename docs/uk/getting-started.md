@@ -10,7 +10,15 @@
 <!-- docs-check: skip: starts a long-running container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
-  ghcr.io/petroladkin/hookwitness:0.1
+  ghcr.io/petroladkin/hookwitness:0.2
+```
+
+Або з готовим бінарником для Linux чи macOS із [релізів](deployment.md#завантажити-бінарник),
+покладеним у `PATH`:
+
+<!-- docs-check: skip: starts the server this check already runs -->
+```sh
+hookwitness serve
 ```
 
 Або з вихідного коду (Go 1.27 або новіший):
@@ -38,6 +46,12 @@ curl -s http://127.0.0.1:8080/healthz
 
 Відкрийте <http://127.0.0.1:8080/admin/>. Сторінка **Endpoints** показує
 шляхи, які ловить Hookwitness; спершу вона порожня.
+
+Під шапкою стоїть пунктирний рядок **No login**: користувачів ще немає, тож
+сторінкою може користуватися будь-хто, хто її відкриє. На власній машині це
+нормально. Перш ніж до неї зможе дістатися хтось інший, додайте користувача
+([Користувачі, вхід і токени](access.md)) або налаштуйте сервер для команди,
+як у [Сервері для команди](server.md).
 
 1. Натисніть **New endpoint**.
 2. Введіть шлях, на який має надсилати відправник, наприклад `/stripe/webhooks`,
@@ -85,3 +99,5 @@ hex-перегляд для бінарних даних) і що відпові�
   підписано?
 - [Перевірки JSON Schema](schemas.md): чи тримає подія свій контракт?
 - [Звіти](reports.md): додайте докази до тікета.
+- [Сервер для команди](server.md): HTTPS для відправників, вхід для
+  команди, резервні копії.

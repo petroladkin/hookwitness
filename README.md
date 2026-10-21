@@ -10,7 +10,7 @@ Catch webhooks, get a verdict, attach the evidence.
 <!-- docs-check: skip: starts a long-running container; scripts/docker-smoke.sh runs this command in CI -->
 ```sh
 docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
-  ghcr.io/petroladkin/hookwitness:0.1
+  ghcr.io/petroladkin/hookwitness:0.2
 ```
 
 <img src="docs/images/demo.gif" width="760" alt="A 20-second run: GitHub webhooks arrive live on the register; the third is answered 503 by a rule; one signed with the wrong secret turns red and its page says the signature does not match; then the report is downloaded and opened.">
@@ -23,9 +23,11 @@ docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
 - **Evidence for the ticket.** A Markdown, HTML or PDF report of what arrived
   and what was answered.
 
-Self-hosted: a container image, or one binary built from source. **Status:
-0.1, the first release.** The catcher, scripted replies, verdicts, reports,
-the REST API and the MCP server work; until 1.0, a minor version (0.2) may
+Self-hosted: a container image, or one binary
+([download](docs/deployment.md#download-a-binary) for Linux or macOS, or
+build it from source). **Status: 0.2.** The catcher, scripted replies,
+verdicts, reports, the REST API and the MCP server work, with users and
+login, replay and setup files; until 1.0, a minor version (0.3) may
 change the API or the flags, and the [changelog](CHANGELOG.md) says how.
 
 ## A short tour
@@ -33,7 +35,7 @@ change the API or the flags, and the [changelog](CHANGELOG.md) says how.
 | | |
 |---|---|
 | ![The register of /github/webhooks with its strip and verdicts](docs/images/register.webp) | ![A request whose bearer token failed, with the reason](docs/images/auth-fail.webp) |
-| **The register.** Requests arrive live, with their answer and verdict; the strip shows the last two minutes. | **A request in full.** Headers in the order sent, the body, the answer, and why a check failed. |
+| **The register.** Requests arrive live, with their answer and verdict; the strip shows the last two minutes, or up to six hours. | **A request in full.** Headers in the order sent, the body, the answer, and why a check failed. |
 | ![The Rules tab with the rule every 3rd → 500](docs/images/behaviour-rules.webp) | ![A request whose body failed its JSON Schema, problems marked](docs/images/schema-fail.webp) |
 | **Behaviour.** Checks, rules, the default reply, variables, secrets and schemas, one tab each. | **JSON Schema.** The problems listed and marked in the body. |
 
@@ -62,6 +64,14 @@ github.com/petroladkin/hookwitness/cmd/hookwitness@latest`, or `make build &&
 bin/hookwitness serve` in a clone. [Getting started](docs/getting-started.md)
 walks through it.
 
+The UI, the API and MCP share port 8080 under `/admin` by default; to give
+them their own port and publish only the catch port, see [the admin on its
+own port](docs/deployment.md#the-admin-on-its-own-port). Until you add a
+user the admin has no login; add one before others can reach it ([users,
+login and tokens](docs/access.md)). [Setting up a shared
+server](docs/server.md) walks a team server through from the start: HTTPS,
+the first admin, backups.
+
 ## What it does
 
 - **[Endpoints and the register](docs/endpoints.md)**: exact paths, a live
@@ -81,6 +91,11 @@ walks through it.
   everything the UI does, plus long-poll waits and an `expect` assertion for
   agents; an [agent skill](docs/agents.md) for testing senders with Claude
   Code.
+- **[Users and tokens](docs/access.md)**: login for a shared server, two
+  roles, personal tokens for scripts, CI and MCP.
+- **[Replay](docs/replay.md)**: send a caught request byte for byte to your
+  own handler and keep its answer, to tell a verification bug from bytes
+  changed on the way.
 
 ## How it compares
 

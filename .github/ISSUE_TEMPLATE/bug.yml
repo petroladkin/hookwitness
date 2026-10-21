@@ -1,0 +1,42 @@
+name: Bug
+description: Hookwitness does something other than the documentation says.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`hookwitness version`, or the line at the foot of any page of the UI."
+      placeholder: hookwitness v0.2.0 (bb4bab0)
+    validations:
+      required: true
+  - type: dropdown
+    id: runs
+    attributes:
+      label: How it runs
+      options:
+        - the container image
+        - a binary
+        - built from source
+    validations:
+      required: true
+  - type: textarea
+    id: did
+    attributes:
+      label: What you did
+      description: The steps, the endpoint's setup (Export setup on its Behaviour page leaves secret values out), the commands.
+    validations:
+      required: true
+  - type: textarea
+    id: saw
+    attributes:
+      label: What you saw, and what you expected
+      description: The answer, the verdict, the page; and what the documentation led you to expect.
+    validations:
+      required: true
+  - type: textarea
+    id: transcript
+    attributes:
+      label: A request transcript
+      description: A curl command and its output, or the request from a Markdown report. Take out secrets, tokens and personal data first.
+      render: text

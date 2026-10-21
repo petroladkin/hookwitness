@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -50,10 +51,10 @@ func TestEndpointLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id, _, err := s.EndpointByPath(ctx, "/a/"); err != nil || id != b.ID {
+	if id, _, _, err := s.EndpointByPath(ctx, "/a/"); err != nil || id != b.ID {
 		t.Fatalf("by path /a/: %d, %v", id, err)
 	}
-	if _, _, err := s.EndpointByPath(ctx, "/a"); !errors.Is(err, ErrNotFound) {
+	if _, _, _, err := s.EndpointByPath(ctx, "/a"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("/a must not match /a/: %v", err)
 	}
 
@@ -273,6 +274,88 @@ func TestDeliveries(t *testing.T) {
 	}
 }
 
+// TestDeliveryNumbers: the numbers of a whole page from one query are the
+// ones Deliveries gives row by row, across registers sharing a body.
+func TestDeliveryNumbers(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	a, _ := s.CreateEndpoint(ctx, "/a")
+	b, _ := s.CreateEndpoint(ctx, "/b")
+	var rs []Request
+	for i := range 120 {
+		reg := a.ID
+		switch i % 5 {
+		case 3:
+			reg = b.ID
+		case 4:
+			reg = Unmatched
+		}
+		r := sample(reg, []string{"evt-1", "evt-2", "", "evt-3", "evt-1", "evt-1"}[i%6])
+		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+			t.Fatal(err)
+		}
+		rs = append(rs, *r)
+	}
+	got, err := s.DeliveryNumbers(ctx, rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rs {
+		want, _ := s.Deliveries(ctx, r)
+		if got[r.ID] != want {
+			t.Fatalf("request %d: %d, Deliveries says %d", r.ID, got[r.ID], want)
+		}
+	}
+	if n, err := s.DeliveryNumbers(ctx, nil); err != nil || len(n) != 0 {
+		t.Fatalf("no requests: %v %v", n, err)
+	}
+}
+
+// TestEachSelectedPagesByBytes: bodies are read in pages of about
+// PageBytes (at least one request), and every request is visited once, in
+// order.
+func TestEachSelectedPagesByBytes(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	ep, _ := s.CreateEndpoint(ctx, "/big")
+	var ids []int64
+	for i := range 10 {
+		r := sample(ep.ID, strings.Repeat(string(rune('a'+i)), 400))
+		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, r.ID)
+	}
+	big := sample(ep.ID, strings.Repeat("z", 5000)) // over the budget alone
+	if err := s.AddRequest(ctx, big, 1000, nil); err != nil {
+		t.Fatal(err)
+	}
+	ids = append(ids, big.ID)
+	oldBytes, oldHook := PageBytes, pageHook
+	t.Cleanup(func() { PageBytes, pageHook = oldBytes, oldHook })
+	PageBytes = 1000
+	var pages []int
+	// A page ends with the request that reaches the budget: 3 × 400 bytes,
+	// and the 5000-byte one ends the page it joins.
+	pageHook = func(rows, _ int) { pages = append(pages, rows) }
+	var seen []int64
+	if err := s.EachRequest(ctx, ep.ID, func(r Request) error { seen = append(seen, r.ID); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(seen) != fmt.Sprint(ids) {
+		t.Fatalf("visited %v, want %v", seen, ids)
+	}
+	if fmt.Sprint(pages) != "[3 3 3 2 0]" {
+		t.Fatalf("pages %v", pages)
+	}
+	// Without bodies the pages are by count only.
+	pages = nil
+	s.EachSelected(ctx, ep.ID, Selection{}, false, func(Request) error { return nil })
+	if fmt.Sprint(pages) != "[11]" {
+		t.Fatalf("pages without bodies %v", pages)
+	}
+}
+
 // TestConcurrentAdds is AC-9 at the storage level: 100 concurrent writers to
 // one endpoint, every request stored with a distinct number.
 func TestConcurrentAdds(t *testing.T) {
@@ -310,7 +393,7 @@ func TestConfigAndCounter(t *testing.T) {
 	if err := s.SetConfig(ctx, ep.ID, `{"default":{"status":418}}`); err != nil {
 		t.Fatal(err)
 	}
-	if _, cfg, _ := s.EndpointByPath(ctx, "/cfg"); cfg != `{"default":{"status":418}}` {
+	if _, cfg, _, _ := s.EndpointByPath(ctx, "/cfg"); cfg != `{"default":{"status":418}}` {
 		t.Fatalf("config %q", cfg)
 	}
 	if err := s.SetConfig(ctx, 999, "{}"); !errors.Is(err, ErrNotFound) {
@@ -348,12 +431,12 @@ func TestConfigAndCounter(t *testing.T) {
 	if got, _ := s.Request(ctx, r.ID); got.Status != 503 || got.Outcome != `{"delay_ms":12}` {
 		t.Fatalf("after update: %d %q", got.Status, got.Outcome)
 	}
-	changed, _ := s.RequestsChanged(ctx, ep.ID, r.ID, time.Now().Add(-time.Minute).UnixMilli())
+	changed, seq, _ := s.RequestsChanged(ctx, ep.ID, r.ID, 0)
 	if len(changed) != 1 || changed[0].ID != r.ID {
 		t.Fatalf("changed rows %+v, want only the updated one", changed)
 	}
-	if later, _ := s.RequestsChanged(ctx, ep.ID, r.ID, time.Now().Add(time.Minute).UnixMilli()); len(later) != 0 {
-		t.Fatal("rows changed before since must not be listed")
+	if later, _, _ := s.RequestsChanged(ctx, ep.ID, r.ID, seq); len(later) != 0 {
+		t.Fatal("rows changed up to the watermark must not be listed again")
 	}
 	if got, _ := s.Request(ctx, refused.ID); got.Outcome != `{"action":"refused"}` || got.Status != 400 {
 		t.Fatalf("refused stored as %d %q", got.Status, got.Outcome)
@@ -578,5 +661,53 @@ func TestListByContent(t *testing.T) {
 	}
 	if _, err := s.List(ctx, ep.ID, ListQuery{Match: counting, Limit: 1}); err != nil || asked != 1 {
 		t.Fatalf("Match asked %d times for a limit of 1 (%v)", asked, err)
+	}
+}
+
+// KeptFrom is where a register's kept requests begin when older ones are
+// gone (pruned past the retention, or cleared): the strip shades the time
+// before it as not kept.
+func TestKeptFrom(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	ep, err := s.CreateEndpoint(ctx, "/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.KeptFrom(ctx, ep.ID); err != nil || ok {
+		t.Fatalf("empty register: %v %v", ok, err)
+	}
+	at := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
+	add := func(reg int64, i int) {
+		r := sample(reg, "x")
+		r.ReceivedAt = at.Add(time.Duration(i) * time.Minute)
+		if err := s.AddRequest(ctx, r, 3, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 3 {
+		add(ep.ID, i)
+	}
+	if _, ok, _ := s.KeptFrom(ctx, ep.ID); ok {
+		t.Fatal("nothing pruned yet")
+	}
+	add(ep.ID, 3) // the 4th prunes the 1st
+	from, ok, err := s.KeptFrom(ctx, ep.ID)
+	if err != nil || !ok || !from.Equal(at.Add(time.Minute)) {
+		t.Fatalf("after pruning: %v %v %v", from, ok, err)
+	}
+	if err := s.ClearRequests(ctx, ep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.KeptFrom(ctx, ep.ID); ok {
+		t.Fatal("a cleared register has no kept requests to begin")
+	}
+	add(ep.ID, 10)
+	if from, ok, _ := s.KeptFrom(ctx, ep.ID); !ok || !from.Equal(at.Add(10*time.Minute)) {
+		t.Fatalf("after a clear: %v %v", from, ok)
+	}
+	add(Unmatched, 0)
+	if _, ok, _ := s.KeptFrom(ctx, Unmatched); ok {
+		t.Fatal("Unmatched: its first request")
 	}
 }

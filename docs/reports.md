@@ -13,7 +13,8 @@ Hookwitness answered and every verdict, with a summary on top.
      picked by number (`3, 5-9`);
    - **Images in the requests**: shown in HTML and PDF, or listed only, for a
      smaller file. Markdown always lists them;
-   - **Mask header values**: which headers to hide (below).
+   - **Mask header values**: which headers to hide (below);
+   - **Add the endpoint's setup**: off by default (below).
 3. Click **Download report**.
 
 ![The Report dialog: HTML, all 6 kept, images shown, header masking](images/report-dialog.webp)
@@ -31,6 +32,8 @@ Hookwitness answered and every verdict, with a summary on top.
   headers, the body (pretty JSON; binary as its size and SHA-256; cut at 64 KiB
   with the full size and SHA-256), what Hookwitness answered, every verdict
   with its reason and schema problems, and its images.
+
+- **Setup**, when you tick it: how the endpoint was set up (below).
 
 Times are UTC with milliseconds. The same requests and options always give
 the same Markdown and HTML, apart from the generation time.
@@ -64,6 +67,26 @@ An excerpt of a Markdown report:
 | 2 · JSON Schema by header X-GitHub-Event | 5 | 1 | 3 | 1 |
 ````
 
+## The endpoint's setup
+
+A report says what arrived and what the verdicts were; with **Add the
+endpoint's setup** ticked it also says how the endpoint was set up, so a
+reader of the ticket does not have to ask how it was tested:
+
+- the checks in order: what each checks, its secret, whether it is
+  enforced and how it refuses;
+- the schemas and the checks that use them, and how a schema is chosen;
+- the rules in order (condition and action), each rule's reply and the
+  default reply: status, delay, headers, body template;
+- the variables;
+- the secrets by name and kind, and whether each is set. A secret's value
+  never reaches a report, nor anything made from it.
+
+It is the setup when the report is generated, and the section says so with
+that time. Hookwitness keeps no history of setups: if you changed the
+behaviour while testing, the requests may have been answered by an earlier
+one. The Unmatched register has no setup, so its report has no such section.
+
 ## Masking
 
 Masking is off by default: the values are test values. When a report leaves
@@ -75,7 +98,7 @@ the report says which headers were masked.
 ## With the API
 
 `GET /endpoints/{id}/report?format=html|md|pdf` takes the same choices as
-the dialog; see the [API reference](api.md#reports). In the example, `1` is
+the dialog (`setup=true` adds the setup); see the [API reference](api.md#reports). In the example, `1` is
 the endpoint's id, which is 1 for the first endpoint of a fresh server.
 
 <!-- docs-check: setup: stripe_endpoint -->
@@ -84,4 +107,7 @@ API=http://127.0.0.1:8080/admin/api/v1
 curl -s -d '{"type":"invoice.paid"}' http://127.0.0.1:8080/stripe/webhooks   # 200
 curl -s "$API/endpoints/1/report?format=md" | head -1
 # # Hookwitness report · /stripe/webhooks
+curl -s "$API/endpoints/1/report?format=md&setup=true" | grep -A5 '^\*\*Default reply' | tail -2
+# | Status | 200 |
+# | Delay | none |
 ```

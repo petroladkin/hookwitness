@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 )
 
 func TestVerdictsStored(t *testing.T) {
@@ -52,15 +51,15 @@ func TestSetVerdictsLeavesTheAnswer(t *testing.T) {
 	r := sample(ep.ID, "{}")
 	r.Status, r.Outcome, r.Verdict = 202, `{"action":"reply"}`, "pass"
 	s.AddRequest(ctx, r, 10, nil)
-	before := time.Now().UnixMilli()
-	if err := s.SetVerdicts(ctx, r.ID, "fail", `[{"result":"fail"}]`); err != nil {
+	before, _ := s.ChangeSeq(ctx)
+	if err := s.SetVerdicts(ctx, r.ID, "fail", `[{"result":"fail"}]`, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Request(ctx, r.ID)
 	if got.Verdict != "fail" || got.Verdicts != `[{"result":"fail"}]` || got.Status != 202 || got.Outcome != r.Outcome {
 		t.Fatalf("%+v", got)
 	}
-	changed, _ := s.RequestsChanged(ctx, ep.ID, r.ID, before)
+	changed, _, _ := s.RequestsChanged(ctx, ep.ID, r.ID, before)
 	if len(changed) != 1 {
 		t.Fatal("a re-check must refresh live rows")
 	}

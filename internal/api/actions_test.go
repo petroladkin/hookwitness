@@ -213,3 +213,41 @@ func TestReportFailsBeforeWriting(t *testing.T) {
 		wantError(t, rec, http.StatusInternalServerError, "internal", "")
 	}
 }
+
+// setup=true adds the endpoint's setup to its report, secrets only named;
+// the Unmatched register has no setup to show.
+func TestReportSetup(t *testing.T) {
+	e := newEnv(t)
+	ep := e.endpoint(t, "/pay")
+	e.add(t, ep.ID, `{}`, nil)
+	e.do("PUT", fmt.Sprintf("/endpoints/%d/secrets/TOK", ep.ID), `{"kind":"token","value":"tok_test_value"}`)
+	_, tag := e.behaviour(t, ep.ID)
+	if rec := e.do("PUT", fmt.Sprintf("/endpoints/%d/behaviour", ep.ID),
+		`{"checks":[{"kind":"bearer","secret":"TOK","enforce":true}],"rules":[{"when":{"kind":"every","n":2},"do":"reply","reply":{"status":503}}]}`,
+		"If-Match", tag); rec.Code != 200 {
+		t.Fatalf("behaviour: %d %s", rec.Code, rec.Body)
+	}
+	b, _ := e.behaviour(t, ep.ID)
+	fingerprint, hash := b.Secrets[0].Fingerprint, e.stored(t, ep.ID).Secrets[0].Hash
+	for _, f := range []string{"md", "html"} {
+		if out := e.do("GET", fmt.Sprintf("/endpoints/%d/report?format=%s", ep.ID, f), "").Body.String(); strings.Contains(out, "Setup") {
+			t.Fatalf("%s: a setup section without asking", f)
+		}
+		out := e.do("GET", fmt.Sprintf("/endpoints/%d/report?format=%s&setup=true", ep.ID, f), "").Body.String()
+		for _, want := range []string{"Setup", "Bearer token", "every 2nd", "TOK", "token or password"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("%s: lacks %q:\n%s", f, want, out)
+			}
+		}
+		if strings.Contains(out, "tok_test_value") || fingerprint == "" || strings.Contains(out, fingerprint) || hash == "" || strings.Contains(out, hash) {
+			t.Fatalf("%s: a secret's value or fingerprint in the report", f)
+		}
+	}
+	if rec := e.do("GET", fmt.Sprintf("/endpoints/%d/report?format=pdf&setup=true", ep.ID), ""); rec.Code != 200 {
+		t.Fatalf("pdf: %d", rec.Code)
+	}
+	wantError(t, e.do("GET", fmt.Sprintf("/endpoints/%d/report?format=md&setup=yes", ep.ID), ""), http.StatusUnprocessableEntity, "invalid", "setup")
+	if un := e.do("GET", "/unmatched/report?format=md&setup=true", ""); un.Code != 200 || strings.Contains(un.Body.String(), "Setup") {
+		t.Fatalf("unmatched with setup: %d", un.Code)
+	}
+}

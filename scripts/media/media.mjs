@@ -8,6 +8,8 @@
 // the README's demo GIF, Docker (ffmpeg runs in a container). The social
 // preview goes to <out dir>/../media.
 // With names, only those shots are taken. `make media` runs it.
+// MEDIA_WIDTH (default 1280) and MEDIA_SCHEME (light or dark) take the same
+// shots at another width or in the other theme, for evidence elsewhere.
 import { spawn, execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -128,13 +130,14 @@ const cdp = (method, params = {}) => new Promise((ok, fail) => {
 });
 const js = async (expression) => (await cdp("Runtime.evaluate", { expression, awaitPromise: true })).result.value;
 await cdp("Page.enable");
-await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false });
-await cdp("Emulation.setEmulatedMedia", { media: "", features: [{ name: "prefers-color-scheme", value: "light" }] });
+const WIDTH = Number(process.env.MEDIA_WIDTH) || 1280;
+await cdp("Emulation.setDeviceMetricsOverride", { width: WIDTH, height: 800, deviceScaleFactor: 2, mobile: WIDTH < 600 });
+await cdp("Emulation.setEmulatedMedia", { media: "", features: [{ name: "prefers-color-scheme", value: process.env.MEDIA_SCHEME || "light" }] });
 
 // shot navigates, optionally runs a step (a click, a choice), and captures
 // the page down to its last element, at most maxHeight CSS pixels; with a
 // selector, only that element (a dialog) with a margin.
-async function shot(name, url, { step, maxHeight = 800, selector } = {}) {
+async function shot(name, url, { step, maxHeight = 800, selector, pad = 16 } = {}) {
   if (only.length && !only.includes(name)) return;
   await cdp("Page.navigate", { url });
   await sleep(900);
@@ -145,11 +148,11 @@ async function shot(name, url, { step, maxHeight = 800, selector } = {}) {
   const bottom = await js(`Math.ceil(Math.max(...[...document.body.querySelectorAll("*")]
     .filter((e) => !e.children.length && e.offsetParent && !e.closest("dialog:not([open])"))
     .map((e) => e.getBoundingClientRect().bottom + scrollY)) + 24)`);
-  let clip = { x: 0, y: 0, width: 1280, height: Math.min(bottom, maxHeight), scale: 1 };
+  let clip = { x: 0, y: 0, width: WIDTH, height: Math.min(bottom, maxHeight), scale: 1 };
   if (selector) {
     const r = JSON.parse(await js(`(() => { const b = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
       return JSON.stringify({ x: b.x, y: b.y + scrollY, width: b.width, height: b.height }); })()`));
-    clip = { x: Math.max(0, r.x - 16), y: Math.max(0, r.y - 16), width: Math.min(1280, r.width + 32), height: Math.min(r.height + 32, maxHeight), scale: 1 };
+    clip = { x: Math.max(0, r.x - pad), y: Math.max(0, r.y - pad), width: Math.min(WIDTH, r.width + 2 * pad), height: Math.min(r.height + 2 * pad, maxHeight), scale: 1 };
   }
   const { data } = await cdp("Page.captureScreenshot", { format: "webp", quality: 88, captureBeyondViewport: true, clip });
   const file = join(outDir, `${name}.webp`);
@@ -206,6 +209,26 @@ for (const [i, e] of events.entries()) {
   });
 }
 await shot("register", `${UI}/e/${gh}`);
+
+// docs/endpoints.md, "Light or dark": the switch in the masthead's menu set
+// against the system (Dark on a light system), the menu left open to show
+// it, then back to Auto for the other shots.
+if (!only.length || only.includes("theme")) {
+  const against = (process.env.MEDIA_SCHEME || "light") === "dark" ? "light" : "dark";
+  await shot("theme", `${UI}/e/${gh}`, { maxHeight: 520, step: `document.querySelector('details.acct').open = true; document.querySelector('form.theme button[value=${against}]').click()` });
+  await js(`document.querySelector('form.theme button[value=auto]').click()`);
+  await sleep(300);
+}
+
+// docs/endpoints.md, "Turning an endpoint off": /stripe/webhooks off, one
+// delivery to it lands in Unmatched, then it is on again.
+await api("PATCH", `/endpoints/${stripe}`, { enabled: false });
+await send("/stripe/webhooks", JSON.stringify({ type: "invoice.paid", id: "evt_2" }), { "User-Agent": "curl/8.7.1" });
+await shot("endpoints-off", `${UI}/`);
+await shot("register-off", `${UI}/e/${stripe}`, { maxHeight: 520 });
+const offRow = (await api("GET", "/unmatched/requests?limit=1")).json.requests[0].id;
+await shot("unmatched-off", `${UI}/e/unmatched/r/${offRow}`, { maxHeight: 620 });
+await api("PATCH", `/endpoints/${stripe}`, { enabled: true });
 
 // docs/replies.md: /billing/notify fails every 3rd delivery, /billing/retry
 // fails the first two with Retry-After: 2, /slack/events echoes the
@@ -311,7 +334,9 @@ if (!only.length || only.includes("strip")) {
   await at(67); await send("/payments/webhooks", b, auth);
   await at(72); await send("/payments/webhooks", b, auth);         // the same body again
   await at(73);
-  await shot("strip", `${UI}/e/${pay}`, { selector: "section.strip", step: "new Promise((r) => setTimeout(r, 300))" });
+  await shot("strip", `${UI}/e/${pay}`, { selector: "section.strip", pad: 0, step: "new Promise((r) => setTimeout(r, 300))" });
+  // docs/sharing.md starts its own /payments/webhooks from nothing.
+  await api("DELETE", `/endpoints/${pay}`);
 }
 
 // README.md, the demo: a GIF of one real run. Webhooks arrive live, every
@@ -422,8 +447,9 @@ if (!only.length || only.includes("social")) {
   h1{margin:0;font:400 116px/1 "Saira Stencil One",sans-serif;letter-spacing:.04em;color:#24308C;text-transform:uppercase}
   p{margin:0;font:400 42px/1.25 "Atkinson Hyperlegible",sans-serif;color:#17201B}
   small{font:400 21px/1.4 "Martian Mono",monospace;color:#58695F}
-  /* the strip shot carries a margin of its neighbours: show the strip only */
-  div{position:absolute;left:0;bottom:28px;width:1280px;height:150px;overflow:hidden}
+  /* the strip shot carries a margin of its neighbours and the range buttons
+     under the axis: show the strip and its axis labels only */
+  div{position:absolute;left:0;bottom:46px;width:1280px;height:132px;overflow:hidden}
   img{display:block;width:1280px;margin:-17px 0 0 0}
 </style>
 <main><h1>Hookwitness</h1>
@@ -439,8 +465,114 @@ if (!only.length || only.includes("social")) {
   await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 2, mobile: false });
 }
 
+// docs/sharing.md: the developer's /payments/webhooks (an enforced Stripe
+// check over STRIPE_SECRET, the first two deliveries answered 503), its
+// file reviewed for import where the path is taken, and the file imported
+// under another path, its secret not set.
+const payments = (await api("POST", "/endpoints", { path: "/payments/webhooks" })).json.id;
+await api("PUT", `/endpoints/${payments}/secrets/STRIPE_SECRET`, { kind: "key", value: "whsec_test_stripe" });
+await behave(payments, {
+  rules: [{ when: { kind: "first", n: 2 }, do: "reply", reply: { status: 503, headers: [{ name: "Retry-After", value: "2" }] } }],
+  checks: [{ kind: "stripe", secret: "STRIPE_SECRET", enforce: true }] });
+const setupFile = await (await fetch(`${API}/setup?id=${payments}`)).text();
+await shot("setup-import", `${UI}/?edit=import`, { selector: dialog, maxHeight: 1200, step: steps(
+  type("text", setupFile), "document.querySelector('dialog[open] button[value=review]').click()") });
+const copy = JSON.parse(setupFile);
+copy.endpoints[0].path = "/qa/payments/webhooks";
+const qa = (await api("POST", "/setup", copy)).json.endpoints[0].id;
+await shot("setup-unset", `${UI}/e/${qa}/behaviour?tab=secrets`, { maxHeight: 620 });
+
+// docs/replay.md: the reader's own handler (here on port 3000 when it is
+// free) refuses GitHub's deliveries: it checks the signature over the JSON
+// it parsed and wrote back, not over the bytes that arrived. A caught
+// delivery replayed to it, untouched, is refused too.
+if (!only.length || ["replay-dialog", "replay-answer"].some((n) => only.includes(n))) {
+  const { createServer: httpServer } = await import("node:http");
+  const handler = httpServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      const reserialized = JSON.stringify(JSON.parse(raw || "{}"), null, 2); // the bug
+      const ok = req.headers["x-hub-signature-256"] === "sha256=" + hmac("gh_test_secret", reserialized);
+      res.writeHead(ok ? 204 : 401, { "Content-Type": "application/json", "X-Request-Id": "req_7f3a" });
+      res.end(ok ? "" : '{"error":"signature mismatch"}');
+    });
+  });
+  const hport = await new Promise((ok) => {
+    handler.once("error", async () => { handler.removeAllListeners("error"); const p = await freePort(); handler.listen(p, "127.0.0.1", () => ok(p)); });
+    handler.listen(3000, "127.0.0.1", () => ok(3000));
+  });
+  const delivery = await byNo(gh, 1);
+  const target = `http://localhost:${hport}/webhooks/github`;
+  await shot("replay-dialog", `${UI}/e/${gh}/r/${delivery}?replay`, { selector: dialog, maxHeight: 1000, step: type("url", target) });
+  await api("POST", `/requests/${delivery}/replays`, { url: target });
+  // Wide, the exhibit scrolls on its own: bring its Replays to the top.
+  // Narrow, the page scrolls: shoot the section itself.
+  await shot("replay-answer", `${UI}/e/${gh}/r/${delivery}`, WIDTH < 821 ? { selector: "#replays", maxHeight: 1600 } : { maxHeight: 800,
+    step: `(() => { const x = document.getElementById("exhibit"), r = document.getElementById("replays");
+      if (x.scrollHeight > x.clientHeight) x.scrollTop = r.offsetTop - x.offsetTop - 12; else r.scrollIntoView(); })()` });
+  handler.close();
+}
+
 // docs/troubleshooting.md, docs/deployment.md: the UI opened by a name that
 // is not allowed.
 await shot("host-refused", `http://hooks.example.com:${port}/admin/`, { maxHeight: 80 });
+
+// docs/access.md: login, last, since the first user turns it on for the API
+// too. First the endpoints page with login off; then the first admin, added
+// through the API as the page shows, a user with a token, and the pages.
+if (!only.length || ["login-off", "login", "users", "token-new"].some((n) => only.includes(n))) {
+  if (!only.length || only.includes("login-off")) {
+    if ((await api("GET", "/endpoints")).json.endpoints.length === 0) await api("POST", "/endpoints", { path: "/stripe/webhooks" });
+  }
+  await shot("login-off", `${UI}/`, { maxHeight: 230 });
+  await api("POST", "/users", { name: "ann", role: "admin", password: "correct-horse-battery" });
+  const login = await fetch(`${UI}/login`, { method: "POST", redirect: "manual",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "name=ann&password=correct-horse-battery" });
+  const cookie = login.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  const as = { Cookie: cookie };
+  await api("POST", "/users", { name: "bob", role: "user", password: "bob-password-123" }, as);
+  await api("POST", "/users", { name: "carol", role: "admin", password: "carol-password-1" }, as);
+  // Tokens of bob and ann, as their account pages would make them.
+  const bobLogin = await fetch(`${UI}/login`, { method: "POST", redirect: "manual",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "name=bob&password=bob-password-123" });
+  const bob = { Cookie: bobLogin.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ") };
+  await api("POST", "/me/tokens", { name: "ci-pipeline" }, bob);
+  await api("POST", "/me/tokens", { name: "claude-code" }, as);
+  await shot("login", `${UI}/login`, { maxHeight: 520,
+    step: `document.querySelector('[name=name]').value = 'ann'` });
+  // The browser logs in as ann through the form.
+  await cdp("Page.navigate", { url: `${UI}/login` });
+  await sleep(700);
+  await js(`(() => { document.querySelector('[name=name]').value = 'ann';
+    document.querySelector('[name=password]').value = 'correct-horse-battery';
+    document.querySelector('form.card').submit(); })()`);
+  await sleep(900);
+  await shot("users", `${UI}/users`, { maxHeight: 900 });
+  await shot("token-new", `${UI}/account?dialog=token`, { selector: dialog, step: steps(
+    type("name", "agent"), "document.querySelector('dialog[open] form').submit()") });
+  // Logged in as an admin the masthead is at its longest: no page may
+  // scroll sideways, and the page under the masthead ends where it ends.
+  const ep = (await api("GET", "/endpoints", undefined, as)).json.endpoints[0]?.id
+    ?? (await api("POST", "/endpoints", { path: "/stripe/webhooks" }, as)).json.id;
+  const bad = [];
+  for (const w of [390, 1280, 2000]) {
+    await cdp("Emulation.setDeviceMetricsOverride", { width: w, height: 800, deviceScaleFactor: 1, mobile: w < 600 });
+    for (const page of ["/", `/e/${ep}`, `/e/${ep}/behaviour`, "/users", "/account"]) {
+      await cdp("Page.navigate", { url: `${UI}${page}` });
+      await sleep(700);
+      // Against the width set, not innerWidth: a phone zooms out to fit
+      // what overflows, and innerWidth grows with it.
+      const m = JSON.parse(await js(`JSON.stringify({ scroll: document.documentElement.scrollWidth, view: ${w},
+        mast: document.querySelector(".mast").getBoundingClientRect().right,
+        page: document.querySelector("main").getBoundingClientRect().right })`));
+      if (m.scroll > m.view) bad.push(`${page} at ${w} px scrolls sideways: ${m.scroll} > ${m.view}`);
+      if (Math.abs(m.mast - m.page) > 1) bad.push(`${page} at ${w} px: the page ends at ${m.page}, the masthead at ${m.mast}`);
+    }
+  }
+  await cdp("Emulation.setDeviceMetricsOverride", { width: WIDTH, height: 800, deviceScaleFactor: 2, mobile: WIDTH < 600 });
+  if (bad.length) throw new Error(`layout:\n  ${bad.join("\n  ")}`);
+  console.log("layout: no sideways scroll, pages line up with the masthead");
+}
 ws.close();
 process.exit(0);

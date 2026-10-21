@@ -35,15 +35,37 @@ type Catcher interface {
 type Options struct {
 	DB          Pinger
 	Log         *slog.Logger
-	AdminPrefix string       // e.g. /admin; the web UI owns it and every path under it
+	AdminPrefix string       // e.g. /admin; the web UI owns it and every path under it ("" = all, on its own listener)
 	Admin       http.Handler // the web UI, given the full path
 	Catch       Catcher      // everything else
 }
 
-// New returns the server's root handler. It routes on the raw request path:
-// /healthz and the admin prefix are reserved, every other path is caught
-// as the sender wrote it (no cleaning, no redirects).
+// New returns the server's root handler when the admin shares the catch
+// listener. It routes on the raw request path: /healthz and the admin prefix
+// are reserved, every other path is caught as the sender wrote it (no
+// cleaning, no redirects).
 func New(o Options) http.Handler {
+	return root(o, func(p string) bool {
+		return o.Admin != nil && (p == o.AdminPrefix || strings.HasPrefix(p, o.AdminPrefix+"/"))
+	}, o.Catch)
+}
+
+// CatchRoot is the root handler of the catch listener when the admin has
+// its own: /healthz, and every other path is caught (the admin prefix too).
+func CatchRoot(o Options) http.Handler {
+	return root(o, func(string) bool { return false }, o.Catch)
+}
+
+// AdminRoot is the root handler of the admin's own listener: /healthz, the
+// admin under its prefix ("" = the whole port), and 404 for anything else.
+// Nothing is caught there.
+func AdminRoot(o Options) http.Handler {
+	return root(o, func(p string) bool {
+		return o.AdminPrefix == "" || p == o.AdminPrefix || strings.HasPrefix(p, o.AdminPrefix+"/")
+	}, nil)
+}
+
+func root(o Options, admin func(path string) bool, c Catcher) http.Handler {
 	health := http.NewServeMux()
 	health.HandleFunc("GET /healthz", healthz(o.DB, o.Log))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,10 +76,10 @@ func New(o Options) http.Handler {
 		switch {
 		case p == "/healthz":
 			health.ServeHTTP(w, r)
-		case o.Admin != nil && (p == o.AdminPrefix || strings.HasPrefix(p, o.AdminPrefix+"/")):
+		case o.Admin != nil && admin(p):
 			o.Admin.ServeHTTP(w, r)
-		case o.Catch != nil:
-			o.Catch.Catch(w, r, headers, ok)
+		case c != nil:
+			c.Catch(w, r, headers, ok)
 		default:
 			http.NotFound(w, r)
 		}

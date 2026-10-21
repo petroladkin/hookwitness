@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -69,6 +70,9 @@ func (h *Handler) draftDefaults(ctx context.Context, ep store.Endpoint, ex *exhi
 	return v, err
 }
 
+// errDraftBytes stops reading requests for a draft past catch.MaxDraftBytes.
+var errDraftBytes = errors.New("draft bytes")
+
 // draftView is what the schema editor shows of a draft.
 type draftView struct {
 	From     string   // which requests it came from
@@ -88,13 +92,16 @@ func (h *Handler) openDraft(ctx context.Context, ep store.Endpoint, cfg emulate.
 	switch {
 	case q.Get("by") == "value" || (q.Get("by") == "" && q.Has("value")):
 		val := q.Get("value")
-		total := 0
+		total, held := 0, 0
 		err = h.store.EachSelected(ctx, ep.ID, store.Selection{}, true, func(r store.Request) error {
 			if catch.DiscriminatorValue(cfg, r) == val {
 				total++
 				reqs = append(reqs, r)
-				if len(reqs) > catch.MaxDraftRequests {
-					reqs = reqs[1:] // the newest ones
+				held += len(r.Body)
+				// The newest ones, as many as the count and the bytes allow.
+				for len(reqs) > catch.MaxDraftRequests || held > catch.MaxDraftBytes && len(reqs) > 1 {
+					held -= len(reqs[0].Body)
+					reqs = reqs[1:]
 				}
 			}
 			return nil
@@ -119,10 +126,17 @@ func (h *Handler) openDraft(ctx context.Context, ep store.Endpoint, cfg emulate.
 		if len(nos) == 0 {
 			return nil, "give the request numbers, such as 3 or 5-9", nil
 		}
+		held := 0
 		err = h.store.EachSelected(ctx, ep.ID, store.Selection{Nos: nos}, true, func(r store.Request) error {
+			if held += len(r.Body); held > catch.MaxDraftBytes {
+				return errDraftBytes
+			}
 			reqs = append(reqs, r)
 			return nil
 		})
+		if errors.Is(err, errDraftBytes) {
+			return nil, catch.DraftBytesMessage(), nil
+		}
 		if err != nil {
 			return nil, "", err
 		}

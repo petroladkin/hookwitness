@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -220,5 +222,188 @@ func TestCheckKeyLogsItsError(t *testing.T) {
 	checkKey(context.Background(), st, keys, "hw.db.key", slog.New(slog.NewTextHandler(&logs, nil)))
 	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "cannot check the secret key against the database") {
 		t.Fatalf("log: %s", logs.String())
+	}
+}
+
+// startServe runs serve with JSON logs until the test ends and returns its
+// startup line once it is logged.
+func startServe(t *testing.T, args ...string) (start map[string]any, log *syncBuffer, stop func() int) {
+	t.Helper()
+	db := filepath.Join(t.TempDir(), "hw.db")
+	log = &syncBuffer{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int, 1)
+	go func() {
+		done <- run(ctx, append([]string{"serve", "-log-format", "json", "-db", db}, args...), noenv, os.Stdout, log)
+	}()
+	stopped := false
+	stop = func() int {
+		if stopped {
+			return 0
+		}
+		stopped = true
+		cancel()
+		select {
+		case code := <-done:
+			return code
+		case <-time.After(15 * time.Second):
+			t.Fatal("serve did not stop")
+			return -1
+		}
+	}
+	t.Cleanup(func() { stop() })
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		for line := range strings.SplitSeq(log.String(), "\n") {
+			if strings.Contains(line, `"msg":"hookwitness started"`) {
+				if err := json.Unmarshal([]byte(line), &start); err != nil {
+					t.Fatalf("startup line is not JSON: %v", err)
+				}
+				return start, log, stop
+			}
+		}
+		select {
+		case code := <-done:
+			done <- code
+			t.Fatalf("serve exited %d before starting; log: %s", code, log.String())
+		default:
+		}
+	}
+	t.Fatalf("no startup line; log: %s", log.String())
+	return nil, nil, nil
+}
+
+func get(t *testing.T, url string) (int, string) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+// The admin on its own address: the catch listener catches every path but
+// /healthz (the prefix too), the admin answers only on its address, both
+// stop together.
+func TestServeWithASeparateAdmin(t *testing.T) {
+	start, log, stop := startServe(t, "-addr", "127.0.0.1:0", "-admin-addr", "127.0.0.1:0")
+	catchAddr, _ := start["addr"].(string)
+	adminAddr, _ := start["admin_addr"].(string)
+	if catchAddr == "" || adminAddr == "" || catchAddr == adminAddr {
+		t.Fatalf("startup line: %v", start)
+	}
+	if ui, _ := start["ui"].(string); ui != "http://"+adminAddr+"/admin/" {
+		t.Errorf("ui %q", ui)
+	}
+	if a, _ := start["api"].(string); a != "http://"+adminAddr+"/admin/api/v1" {
+		t.Errorf("api %q", a)
+	}
+	for _, a := range []string{catchAddr, adminAddr} {
+		if code, _ := get(t, "http://"+a+"/healthz"); code != 200 {
+			t.Errorf("healthz on %s: %d", a, code)
+		}
+	}
+	if code, _ := get(t, "http://"+catchAddr+"/admin/"); code != 404 {
+		t.Errorf("/admin/ on the catch port: %d, want 404 (caught into Unmatched)", code)
+	}
+	if code, body := get(t, "http://"+adminAddr+"/admin/api/v1/unmatched/requests"); code != 200 || !strings.Contains(body, `"path": "/admin/"`) {
+		t.Errorf("Unmatched on the admin: %d %s", code, body)
+	}
+	if code, body := get(t, "http://"+adminAddr+"/admin/"); code != 200 || !strings.Contains(body, "Hookwitness") {
+		t.Errorf("UI on the admin port: %d", code)
+	}
+	if code, _ := get(t, "http://"+adminAddr+"/stripe"); code != 404 {
+		t.Errorf("a catch path on the admin port: %d, want 404", code)
+	}
+	if code, _ := get(t, "http://"+adminAddr+"/admin/api/v1/unmatched/requests"); code != 200 {
+		t.Errorf("second read: %d", code)
+	}
+	if code := stop(); code != 0 {
+		t.Fatalf("exit %d; log: %s", code, log.String())
+	}
+	for _, a := range []string{catchAddr, adminAddr} {
+		if c, err := net.DialTimeout("tcp", a, time.Second); err == nil {
+			c.Close()
+			t.Errorf("%s still accepts after the stop", a)
+		}
+	}
+}
+
+// The admin at the root of its own port.
+func TestServeAdminAtTheRoot(t *testing.T) {
+	start, _, _ := startServe(t, "-addr", "127.0.0.1:0", "-admin-addr", "127.0.0.1:0", "-admin-prefix", "/")
+	adminAddr, _ := start["admin_addr"].(string)
+	if ui, _ := start["ui"].(string); ui != "http://"+adminAddr+"/" {
+		t.Errorf("ui %q", ui)
+	}
+	if code, _ := get(t, "http://"+adminAddr+"/"); code != 200 {
+		t.Errorf("UI at the root: %d", code)
+	}
+	if code, _ := get(t, "http://"+adminAddr+"/api/v1/endpoints"); code != 200 {
+		t.Errorf("API at the root: %d", code)
+	}
+}
+
+// The admin's port taken: exit 1 naming it, and the catch port is free again.
+func TestServeAdminAddrTaken(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	catchAddr := free.Addr().String()
+	free.Close()
+	var out syncBuffer
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second) // a serve that started anyway ends
+	defer cancel()
+	code := run(ctx, []string{"serve", "-log-format", "json", "-db", filepath.Join(t.TempDir(), "hw.db"),
+		"-addr", catchAddr, "-admin-addr", busy.Addr().String()}, noenv, os.Stdout, &out)
+	if code != 1 || !strings.Contains(out.String(), busy.Addr().String()) {
+		t.Fatalf("exit %d; log: %s", code, out.String())
+	}
+	ln, err := net.Listen("tcp", catchAddr)
+	if err != nil {
+		t.Fatalf("the catch port stayed taken: %v", err)
+	}
+	ln.Close()
+}
+
+func TestServeSameAddressRefused(t *testing.T) {
+	var out bytes.Buffer
+	code := run(context.Background(), []string{"serve", "-addr", "127.0.0.1:8080", "-admin-addr", "127.0.0.1:8080"}, noenv, &out, &out)
+	if got := strings.TrimSpace(out.String()); code != 2 || strings.Count(got, "\n") != 0 || !strings.Contains(got, "the same address") {
+		t.Fatalf("exit %d: %q", code, got)
+	}
+}
+
+// Back on a shared layout, an endpoint under the admin prefix is shadowed by
+// the admin: the start says so, naming it.
+func TestServeWarnsAboutShadowedEndpoints(t *testing.T) {
+	ctx := context.Background()
+	db := filepath.Join(t.TempDir(), "hw.db")
+	st, err := store.Open(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.CreateEndpoint(ctx, "/admin/stripe")
+	st.CreateEndpoint(ctx, "/github")
+	st.Close()
+	log := &syncBuffer{}
+	cctx, cancel := context.WithCancel(ctx)
+	done := make(chan int, 1)
+	go func() {
+		done <- run(cctx, []string{"serve", "-log-format", "json", "-db", db, "-addr", "127.0.0.1:0"}, noenv, os.Stdout, log)
+	}()
+	defer func() { cancel(); <-done }()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && !strings.Contains(log.String(), "hookwitness started"); time.Sleep(20 * time.Millisecond) {
+	}
+	s := log.String()
+	if !strings.Contains(s, "shadowed") || !strings.Contains(s, "/admin/stripe") || strings.Contains(s, `"/github"`) {
+		t.Fatalf("log: %s", s)
 	}
 }

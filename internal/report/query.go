@@ -23,6 +23,7 @@ type Query struct {
 	Words     string // the selection in words, for the report's header
 	Mask      []string
 	NoImages  bool
+	Setup     bool // show the endpoint's setup
 }
 
 // FieldError is a parameter at fault and why.
@@ -32,7 +33,7 @@ func (e *FieldError) Error() string { return e.Field + ": " + e.Message }
 
 // ParseQuery reads format, scope (all, range with from/to, picked with
 // pick), mask (repeated) and mask_other (comma-separated), images
-// (shown, listed). Times are UTC: datetime-local values or RFC 3339.
+// (shown, listed), setup (true, false; a form's checkbox sends "true"). Times are UTC: datetime-local values or RFC 3339.
 func ParseQuery(q url.Values) (Query, error) {
 	var rq Query
 	bad := func(field, msg string) (Query, error) { return rq, &FieldError{field, msg} }
@@ -42,6 +43,13 @@ func ParseQuery(q url.Values) (Query, error) {
 	}
 	rq.Format = f
 	rq.NoImages = q.Get("images") == "listed"
+	switch q.Get("setup") {
+	case "true":
+		rq.Setup = true
+	case "", "false":
+	default:
+		return bad("setup", "true or false")
+	}
 	sel := &rq.Selection
 	switch q.Get("scope") {
 	case "all", "":

@@ -20,7 +20,7 @@ steps: `create_endpoint`, `set_secret`, `configure_endpoint`,
 ## 1. Start it
 
 ```sh
-docker run -d --rm --name hookwitness -p 127.0.0.1:8080:8080 ghcr.io/petroladkin/hookwitness:0.1
+docker run -d --rm --name hookwitness -p 127.0.0.1:8080:8080 ghcr.io/petroladkin/hookwitness:0.2
 HW=http://localhost:8080
 API=$HW/admin/api/v1
 until curl -fs $HW/healthz >/dev/null; do sleep 0.5; done
@@ -29,6 +29,11 @@ until curl -fs $HW/healthz >/dev/null; do sleep 0.5; done
 - Already running? `curl -fs $HW/healthz` answers `{"status":"ok",…}` — reuse it.
 - `--rm` without a volume: every run starts empty. Stop with `docker stop hookwitness`.
 - The UI for a human is at `$HW/admin/` (the same data, live).
+- A shared server may have login on: the API then answers `401`. Ask the user
+  for a token (from their account page in the UI) and send it with every
+  call: `AUTH="Authorization: Bearer $(cat token-file)"`, `curl -H "$AUTH" …`
+  (MCP: `--header "Authorization: Bearer …"`). Never print the token. A fresh
+  container you start yourself has no users, so no token is needed there.
 
 ## 2. Create an endpoint and point the sender at it
 
@@ -40,6 +45,9 @@ ID=$(printf '%s\n' "$EP" | jq .id); URL=$(printf '%s\n' "$EP" | jq -r .url)    #
 - Create the endpoint before triggering the sender: an unknown path is
   answered `404` (and kept in the Unmatched register).
 - Reuse an existing one: `curl -s "$API/endpoints?path=/orders/events" | jq '.endpoints[0]'`.
+  If its `enabled` is `false` it is off (its requests go to Unmatched with a
+  `404`); turn it on first:
+  `curl -s -X PATCH $API/endpoints/$ID -H 'Content-Type: application/json' -d '{"enabled":true}'`.
 - Configure the app under test with the webhook URL:
   - app on the host → `$URL`;
   - app in a container → `http://host.docker.internal:8080/orders/events`
@@ -71,6 +79,9 @@ PUT: `"schemas":[{"name":"OrderPaid","text":"<schema JSON as a string>"}]`,
 `"select":{"from":"body","key":"/type","map":[{"value":"order.paid","schema":"OrderPaid"}],"default":"V1"}`
 (`default`, one name or a list, covers unmapped or missing values; without it they are `n/c`).
 A failed schema verdict lists `problems` (`path`, `keyword`, `message`).
+A passing signature that repeats an earlier kept request's carries `note`
+("same signature as #N: …"): a sender that re-signs its retries (Stripe,
+Standard Webhooks) should never get one; GitHub's redeliveries do.
 No schema yet? Catch one real delivery, then
 `POST $API/endpoints/$ID/schema-draft` with `{"requests":[<id>]}` returns a draft
 (`name`, `text`; nothing stored) to review and PUT into `schemas`.
@@ -81,7 +92,8 @@ rules, `POST $API/endpoints/<id>/recheck` re-verifies kept requests after you
 fix a secret or schema. `?verdict=fail` (or `status=401`) on a request list
 finds the failures; `GET $API/unmatched/requests` shows requests that went to
 a wrong path (a typo in the sender's URL). `GET $API/endpoints/<id>/report?format=md`
-is evidence to attach; `$API/openapi.json` describes every route.
+is evidence to attach (add `&setup=true` so it also says how the endpoint was
+set up: checks, rules, replies, secret names); `$API/openapi.json` describes every route.
 A string the schema marks `"contentEncoding":"base64","contentMediaType":"image/png"`
 (or `image/jpeg`, `image/gif`, `image/webp`, `image/*`; a `data:image/...` URL
 works too) is checked to really be that image; the request's `images` list it
@@ -91,6 +103,21 @@ what the sender put in the image.
 `enforce: true` refuses failures with 401; without it the request gets the
 normal reply and only its `verdict` says `fail` — use that first to observe a
 sender without breaking it.
+
+Given a setup file (`*.hookwitness.json`, e.g. from a teammate or a ticket)?
+Skip the PUTs: `curl -s -X POST "$API/setup?on_conflict=replace" -H 'Content-Type: application/json' --data-binary @file.hookwitness.json`
+creates (or updates) its endpoints at once (MCP: `import_endpoints`). It holds
+no secret values: each name in `secrets_not_set` is a check that gives `n/v`
+until you PUT that secret's test value. `GET "$API/setup?id=$ID"` (MCP:
+`export_endpoint`) saves your own setup to hand back with the results.
+
+Testing the receiving side instead (a handler that refuses real deliveries)?
+Catch a real delivery, then send it byte for byte to the handler:
+`curl -s -X POST "$API/requests/<id>/replays" -H 'Content-Type: application/json' -d '{"url":"http://localhost:3000/webhooks"}'`
+(MCP: `replay_request`; with login on, an admin's token). The answer comes back with `status`, `headers` and
+`body_text`. If the handler refuses the untouched original too, the bug is in
+its verification (e.g. hashing parsed JSON instead of the raw body), not in
+what arrived.
 
 Fault scripting (same PUT, add `rules`): `{"when":{"kind":"first","n":2},"do":"reply","reply":{"status":503}}`
 fails the first two deliveries (retries); `"do":"timeout"` hangs; `"do":"drop"`

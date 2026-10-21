@@ -98,7 +98,7 @@ func TestHoldReleasesTheBody(t *testing.T) {
 func TestTemplateDataBeforeTheTransaction(t *testing.T) {
 	h, _, _ := setup(t, 1<<20)
 	req := &store.Request{EndpointID: 1, Method: "POST", Path: "/p", Body: []byte("{}")}
-	pl := h.plan(req, emulate.Config{Default: emulate.Reply{Status: 200, Body: "{{.N}}"}}.String(), false)
+	pl := h.plan(req, emulate.Config{Default: emulate.Reply{Status: 200, Body: "{{.N}}"}}.String(), false, false)
 	data := pl.data
 	if data == nil {
 		t.Fatal("no template data before the transaction")

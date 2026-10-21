@@ -8,7 +8,7 @@ webhooks and read them with their verdicts. Everything is JSON.
 - [Conventions and errors](#conventions-and-errors)
 - [Routes](#routes): [endpoints](#endpoints), [behaviour](#behaviour),
   [secrets](#secrets), [requests](#requests), [actions](#actions),
-  [reports](#reports), [OpenAPI](#openapi)
+  [reports](#reports), [users and tokens](#users-and-tokens), [OpenAPI](#openapi)
 - [Recipes](#recipes): [wait for a webhook](#wait-for-a-webhook-and-read-its-verdict),
   [wait for one task's callback](#wait-for-the-callback-of-one-task),
   [Basic credentials](#require-basic-credentials),
@@ -18,25 +18,42 @@ webhooks and read them with their verdicts. Everything is JSON.
 ## Access
 
 The API lives under the admin prefix: `http://<host>:8080/admin/api/v1`
-(`-admin-prefix` / `HOOKWITNESS_ADMIN_PREFIX` moves it with the UI). It has
-the UI's access rules and no login of its own yet:
+(`-admin-prefix` / `HOOKWITNESS_ADMIN_PREFIX` moves it with the UI; with
+`-admin-addr` / `HOOKWITNESS_ADMIN_ADDR` it moves to the admin's own port,
+`http://<host>:8081/api/v1` when the prefix is `/`). An endpoint's `url` is
+built on `-public-url` / `HOOKWITNESS_PUBLIC_URL` when it is set. It has
+the UI's access rules:
+
+- **Credentials, once login is on.** While there are no users it is open.
+  Once a user exists (or a machine token is set,
+  `HOOKWITNESS_API_TOKEN_FILE`), every route needs a token as
+  `Authorization: Bearer <token>` (from the account page, or `POST
+  /me/tokens`), or the web UI's login cookie; without them `401
+  unauthorized`, with a wrong or revoked token `401 invalid_token`, both with
+  `WWW-Authenticate: Bearer`. A token acts as its owner, with the owner's
+  role as it is now. See [Users, login and tokens](access.md).
 
 - It answers only when called by IP address, `localhost`, or a host name
   listed in `-admin-hosts` / `HOOKWITNESS_ADMIN_HOSTS`; any other name gets
   `421 wrong_host` (this stops a web page from reaching it through a domain
-  pointed at your machine).
+  pointed at your machine). A request with a valid token is answered on any
+  name.
 - Writes (`POST`, `PUT`) must send `Content-Type: application/json`, else
   `415`; a write sent by a web page from another site is refused (`403
   cross_origin`). curl and HTTP client libraries are not affected.
-- Keep it on localhost or a trusted network: whoever reaches it can configure
-  endpoints and make the server verify with your test secrets.
+- Without users, keep it on localhost or a trusted network: whoever reaches
+  it can configure endpoints and make the server verify with your test
+  secrets.
 
 Catch endpoints themselves (where senders deliver webhooks) answer to any
 host name: only the admin prefix is restricted.
 
 The same server answers MCP at `/admin/mcp` (Streamable HTTP), with the same
-access rules; its tools are built on these routes. See
-[MCP](agents.md#mcp).
+access rules (with login on, a token: a login cookie is not enough); its
+tools are built on these routes and act as the token's owner. At most
+`-mcp-max-sessions` sessions (32 by default) are open at once: one more is
+refused at `initialize` with `503`, `Retry-After: 30` and a JSON-RPC error
+naming the limit. See [MCP](agents.md#mcp).
 
 ## Conventions and errors
 
@@ -53,9 +70,12 @@ access rules; its tools are built on these routes. See
 | Status | `code` | When |
 |---|---|---|
 | 400 | `bad_json`, `unknown_field` | the body is not valid JSON, has an unknown field or a wrong type (`field` names it) |
+| 401 | `unauthorized`, `invalid_token` | login is on and the request has no credentials, or a token that is not valid |
 | 403 | `cross_origin` | a write from a web page on another site |
+| 403 | `forbidden`, `session_required` | only an admin may do this; managing tokens and users needs a login, not a token |
 | 404 | `not_found` | no such endpoint, secret, request or route |
 | 409 | `duplicate_path`, `secret_in_use`, `conflict` | the path is taken; the secret is used by a check; too many concurrent changes |
+| 409 | `exists`, `last_admin`, `self_demotion`, `self_removal`, `login_off` | a user or token name is taken; the change would leave no admin; an admin would make themselves a user or remove themselves; there are no users yet |
 | 412 | `stale_version` | the behaviour changed since you read it (`If-Match`) |
 | 413 | `too_large` | the body is over 1 MiB |
 | 415 | `unsupported_media_type` | a write without `Content-Type: application/json` |
@@ -79,16 +99,16 @@ into the Unmatched register with a `404`.
 
 | Route | Does |
 |---|---|
-| `GET /endpoints` | all endpoints, by path; `?path=/x` finds one (an empty list when there is none) |
+| `GET /endpoints` | all endpoints, by path; `?path=/x` finds one (an empty list when there is none); `?enabled=true` or `false` only those on or off |
 | `POST /endpoints` | create: `{"path": "/x"}`; no path or an empty one picks a random path. `201`, `Location` |
 | `GET /endpoints/{id}` | one endpoint |
-| `PATCH /endpoints/{id}` | change its path: `{"path": "/y"}`, validated as on create; its requests and behaviour stay. `200` with the endpoint |
+| `PATCH /endpoints/{id}` | change its path, `{"path": "/y"}` (validated as on create; its requests and behaviour stay), turn it off or on, `{"enabled": false}`, or both at once (both change or, on an error, neither). `200` with the endpoint |
 | `DELETE /endpoints/{id}` | delete it and its requests. `204` |
 
 ```console
 $ curl -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/orders/events"}'
 201
-{"id":1,"path":"/orders/events","url":"http://localhost:8080/orders/events","requests":0,"counter":0,"created_at":"2026-10-12T17:28:06.808Z"}
+{"id":1,"path":"/orders/events","url":"http://localhost:8080/orders/events","requests":0,"counter":0,"enabled":true,"created_at":"2026-10-12T17:28:06.808Z"}
 ```
 
 - `url` is where senders deliver: the path on the host name you called the
@@ -96,6 +116,10 @@ $ curl -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/
   name, e.g. from another container).
 - `requests` is how many are kept; `counter` how many passed the checks since
   the rule counter was last reset; `last_request_at` appears once one arrived.
+- `enabled` is `false` for an endpoint that is off: it keeps its path,
+  behaviour, secrets, requests and counter, and requests to its path are
+  answered `404` and kept in the Unmatched register (outcome `source` `off`).
+  A new endpoint is on.
 - Paths are letters, digits and `. _ ~ -` segments; `/healthz` and the admin
   prefix are reserved (`422`, field `path`). A taken path is `409
   duplicate_path`.
@@ -196,6 +220,33 @@ The document (fields left out take their zero value; `default.status` 0 means 20
 - Validation errors are `422` with `field` pointing at the part:
   `rules[1]`, `checks[0]`, `default`, `vars`.
 
+### Setup files
+
+An endpoint's setup (path, behaviour, the names and kinds of its secrets) as
+a file to share between instances ([Sharing a setup](sharing.md)). The file
+never holds a secret's value, hash or fingerprint.
+
+| Route | Does |
+|---|---|
+| `GET /setup` | the setup file of `?id=<id>` (repeat it for several) or of every endpoint; `Content-Disposition` names it `<path>.hookwitness.json` |
+| `POST /setup` | create the file's endpoints, all or none; `201` when it created one, else `200`, with `{"endpoints": [{"id", "path", "result", "secrets_not_set"}]}`. `?on_conflict=replace` replaces the behaviour of an endpoint already at a path (its requests, counter and on/off state stay; a secret of the same name and kind keeps its value); without it a taken path is `409 duplicate_path` |
+
+```console
+$ curl -X POST $API/setup -H 'Content-Type: application/json' --data-binary @payments-webhooks.hookwitness.json
+201
+{"endpoints":[{"id":3,"path":"/payments/webhooks","result":"created","secrets_not_set":["STRIPE_SECRET"]}]}
+```
+
+- `result` is `created`, `replaced` or `unchanged` (the same setup applied
+  again); importing the same file twice changes nothing.
+- An imported secret has no value (`"set": false` in the behaviour): checks
+  that use it give `n/v` "secret NAME not set" and never refuse. Give the
+  value with `PUT /endpoints/{id}/secrets/{name}`.
+- A file that is not a setup (`"hookwitness": 1` missing), of a newer
+  format, with an unknown field, an invalid path or behaviour is `422
+  invalid_setup`, its message naming the problem; nothing is imported. Over
+  16 MiB is `413`.
+
 ### Secrets
 
 Signing keys and passwords that checks use. They are **write-only**: a value
@@ -210,8 +261,11 @@ goes in and never comes back; answers show a fingerprint.
 $ curl -X PUT $API/endpoints/1/secrets/ORDERS_PASSWORD -H 'Content-Type: application/json' \
     -d '{"kind":"token","value":"test-password"}'
 200
-{"name":"ORDERS_PASSWORD","kind":"token","fingerprint":"3f6d2964","used_by":[]}
+{"name":"ORDERS_PASSWORD","kind":"token","fingerprint":"3f6d2964","set":true,"used_by":[]}
 ```
+
+- `set` is `false` for a secret imported from a setup file without its
+  value (`fingerprint` is empty then); this call gives it one.
 
 - `kind`: `token` for bearer tokens and Basic passwords (stored as a salted
   hash), `key` for signing keys (stored encrypted).
@@ -240,7 +294,7 @@ A list item:
 
 ```json
 {"id":1,"endpoint_id":1,"no":1,"received_at":"2026-10-12T17:28:07.433Z","method":"POST","path":"/orders/events",
- "query":"","status":200,"verdict":"pass","body_size":28,"body_kept":true,"content_type":"application/json"}
+ "query":"","status":200,"verdict":"pass","body_size":28,"body_kept":true,"content_type":"application/json","replays":0}
 ```
 
 - `status` is what hookwitness answered (`0` while a timeout still holds it).
@@ -266,7 +320,8 @@ One request adds:
 - `body_text` when the body is valid UTF-8, else `body_base64`; neither when
   the body was not kept.
 - `outcome` says what was done: `source` (`default`, `rule` with `rule` and
-  `label`, `check` with the refusing `check`, `limit`), `action` (`reply`,
+  `label`, `check` with the refusing `check`, `limit`, `busy`, `unmatched`
+  for a path without an endpoint, `off` for an endpoint that is off), `action` (`reply`,
   `timeout`, `drop`, `refused`, `error`, `abandoned`), the reply sent
   (`status`, `headers` as `{name, value}`, the first 64 KiB of `body`),
   `delay_ms`, `waited_ms` for a timeout, `counter`. `abandoned`: the sender
@@ -278,7 +333,11 @@ One request adds:
   1-based position), `label`, `result`, `reason`, `at`; a failed schema check
   adds `problems` (up to 20 of `{path, keyword, message}`, `path` a JSON
   pointer into the body) and `total`; a schema check that declares images
-  adds `images` (see below).
+  adds `images` (see below); a signature check adds `expected` and
+  `received`, and `note` when the signature passed and repeats one an
+  earlier kept request of the endpoint carried ("same signature as #N: a
+  replay, or a redelivery of the same signed request"; the result is not
+  changed by it).
 - `images` lists the pictures in the body: those a schema declares
   (`source: "schema"`), `data:image/...` strings no schema declares
   (`"data URL"`), and a body that is itself an image (`"body"`, `path` "").
@@ -334,6 +393,36 @@ printf '%s\n' "$D" | jq -c '{name, exists}'   # the name is suggested from the p
 # {"name":"Events","exists":false}
 ```
 
+### Replays
+
+A caught request sent again to a URL, byte for byte, and what that target
+answered ([Replaying a request](replay.md)).
+
+| Route | Does |
+|---|---|
+| `POST /requests/{id}/replays` `{"url": …}` | send it to `url` and wait for the answer (or the error). `201` with the replay; admins only (`403 forbidden` for a user or the machine token). Optional: `"host": "received"` sends the caught `Host` line (default `"target"`: the URL's host and port), `"insecure_tls": true` accepts any https certificate, `"timeout_ms"` (default 30000, at most `-max-wait`). A target that refuses, times out or resets is still a replay, with `status` 0 and `error` set |
+| `GET /requests/{id}/replays` | its replays, newest first (the newest 50 are kept); `include=body` adds the answers' bodies |
+| `GET /replays/{id}` | one replay with its answer body |
+| `GET /replays/{id}/body` | the answer body as the target sent it (never decompressed, at most 1 MiB), with its `Content-Type`, always as a download |
+
+Refusals: `409 body_not_kept` when the body was not kept whole (over the
+limit, or cut in Unmatched); `422 invalid` (field `url`, `host` or
+`timeout_ms`): not http or https, a user name or password in the URL, a
+timeout out of range; `422 target_refused` (field `url`): a link-local or
+cloud-metadata address, also through a name resolving to one, or a target
+outside `-replay-allow`, with the rule in the message; `503 busy` when 4
+replays are running or `-max-inflight` is spent (`Retry-After`). A request
+carries `"replays"`: how many it has.
+
+```json
+{"id":3,"request_id":12,"created_at":"2026-10-19T09:14:02.118Z","by":"ann","url":"http://localhost:3000/webhooks/github",
+ "host":"target","insecure_tls":false,"timeout_ms":30000,"line":"POST /webhooks/github HTTP/1.1",
+ "sent":[["Host","localhost:3000"],["X-GitHub-Event","pull_request"],["X-Hub-Signature-256","sha256=5c1f…"],["Content-Length","73"]],
+ "notes":[],"proto":"HTTP/1.1","status":401,"reason":"Unauthorized",
+ "headers":[["Content-Type","application/json"],["Content-Length","30"]],"body_size":30,"body_cut":false,
+ "duration_ms":4,"ttfb_ms":3,"error":null,"body_text":"{\"error\":\"signature mismatch\"}"}
+```
+
 ### Reports
 
 | Route | Does |
@@ -344,7 +433,10 @@ printf '%s\n' "$D" | jq -c '{name, exists}'   # the name is suggested from the p
 Parameters as in the UI's dialog: `format` (`md`, `html`, `pdf`; required),
 `scope` (`all`, `range` with `from` / `to`, `picked` with `pick=3,5-9`),
 `mask` (a header name; repeat it) and `mask_other` (comma-separated),
-`images` (`shown` or `listed`). Times are RFC 3339 (`2026-10-13T09:00:00Z`) or
+`images` (`shown` or `listed`), `setup` (`true` adds the endpoint's setup:
+checks, schemas, rules, replies, variables, and secrets by name, kind and
+whether they are set, never a value; the Unmatched register has none, so
+it is ignored there). Times are RFC 3339 (`2026-10-13T09:00:00Z`) or
 a date-time without a zone, read as UTC. A wrong parameter is `422 invalid`
 naming it.
 
@@ -353,6 +445,28 @@ naming it.
 curl -s -o report.pdf -w '%{http_code}\n' "$API/endpoints/1/report?format=pdf&scope=picked&pick=3-5&mask=Authorization"
 # 200
 ```
+
+### Users and tokens
+
+The caller, their tokens, and (for admins) users and everyone's tokens.
+Everything but `GET /me` needs a login (the web UI's cookie, or the
+session of a script that logged in at `<prefix>/login`): a token gets `403
+session_required`, so a leaked token cannot make others. While there are no
+users the user routes are open, to add the first one, which must be an
+admin.
+
+| Route | Does |
+|---|---|
+| `GET /me` | who the caller is: `{"login":true,"name","role","via"}` (`via`: `session`, `token`, `machine token`), or `{"login":false}` while login is off |
+| `PUT /me/password` `{"current","new"}` | changes your password (at least 12 characters); your other logins end. `204`; `422` (field `current` or `new`) |
+| `GET /me/tokens` | your tokens: `id`, `name`, `shown` (`hkw_<id>_…`), `created_at`, `last_used_at`; never the value |
+| `POST /me/tokens` `{"name"}` | makes a token; the answer's `token` is the value, **shown this once**. `201`; `409 exists` for a name you use |
+| `DELETE /me/tokens/{id}` | revokes one of yours: refused from its next request. `204` |
+| `GET /users` | users with `name`, `role`, `created_at`, `tokens` (admins) |
+| `POST /users` `{"name","role","password"}` | adds a user (`role` `user` by default). `201`; `409 exists`; `422` naming the field |
+| `PATCH /users/{name}` `{"role"?, "password"?}` | changes a role or sets a password; either ends that user's logins. `409 last_admin` for the last admin, `409 self_demotion` when you would make yourself a user |
+| `DELETE /users/{name}` | removes a user with their tokens. `204`; `409 last_admin`, `409 self_removal` when it is you |
+| `GET /tokens`, `DELETE /tokens/{id}` | everyone's tokens, with their `owner`; revoke any (admins) |
 
 ### OpenAPI
 
@@ -448,11 +562,30 @@ curl -s -o /dev/null -w '%{http_code}\n' -d "$BODY" -H "X-Hub-Signature-256: sha
 The same pattern works for `stripe`, `standard` (a `whsec_` key), `hmac` and
 `bearer`; see the table under [Behaviour](#behaviour).
 
+### Replay a request to your handler
+
+Your handler refuses a provider's delivery. Send the caught original to it
+unchanged and read its answer: if it refuses that too, its verification is
+wrong, not the bytes. Here a second endpoint that checks the same GitHub
+signature stands in for the handler:
+
+<!-- docs-check: setup: api handler -->
+```sh
+BODY='{"action":"opened"}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac gh_test_secret | awk '{print $2}')
+curl -s -o /dev/null -d "$BODY" -H "X-Hub-Signature-256: sha256=$SIG" $URL   # 200
+REQ=$(curl -s "$API/endpoints/$ID/requests?limit=1" | jq '.requests[0].id')
+HANDLER=${URL%/orders/events}/handler   # yours: http://localhost:3000/webhooks/github
+curl -s -X POST $API/requests/$REQ/replays -H 'Content-Type: application/json' \
+  -d "{\"url\":\"$HANDLER\"}" | jq -c '{status, error}'
+# {"status":200,"error":null}
+```
+
 ## Testing a sender in Docker
 
 <!-- docs-check: skip: starts a container; scripts/docker-smoke.sh runs it in CI -->
 ```sh
-docker run -d --name hookwitness -p 127.0.0.1:8080:8080 ghcr.io/petroladkin/hookwitness:0.1
+docker run -d --name hookwitness -p 127.0.0.1:8080:8080 ghcr.io/petroladkin/hookwitness:0.2
 ```
 
 - Without a volume every run starts empty, which suits tests. Add
@@ -472,7 +605,7 @@ Compose, for a sender under test:
 ```yaml
 services:
   hookwitness:
-    image: ghcr.io/petroladkin/hookwitness:0.1
+    image: ghcr.io/petroladkin/hookwitness:0.2
     ports: ["127.0.0.1:8080:8080"]           # the API and UI for the test on the host
     environment:
       HOOKWITNESS_ADMIN_HOSTS: hookwitness   # the API for tests inside the network

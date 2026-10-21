@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"math/rand/v2"
 	"net/url"
+	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -29,9 +30,16 @@ var migrationFS embed.FS
 // newer hookwitness than this one.
 var ErrSchemaTooNew = errors.New("database schema is newer than this binary")
 
+// ErrInUse is returned by Open while the database is being compacted, and
+// by Compact while another process has it open (a running server).
+var ErrInUse = errors.New("the database is in use by another process")
+
+var errLocked = errors.New("locked")
+
 // Store is an open, migrated database.
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	lock *os.File // a shared lock on <db>.lock while open (Compact takes it exclusively)
 	// wmu serialises writes inside this process: SQLite has one writer at a
 	// time anyway, and queueing here is cheaper than retrying SQLITE_BUSY.
 	wmu sync.Mutex
@@ -55,8 +63,16 @@ func open(ctx context.Context, dbPath string, migrations fs.FS) (*Store, error) 
 	if err != nil {
 		return nil, err
 	}
+	lock, err := lockFile(dbPath+".lock", false)
+	if errors.Is(err, errLocked) {
+		return nil, fmt.Errorf("open %s: %w: it is being compacted (hookwitness db compact); try again when that ends", dbPath, ErrInUse)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open %s: lock: %w", dbPath, err)
+	}
 	db, err := sql.Open("sqlite", dsn(dbPath))
 	if err != nil {
+		lock.Close()
 		return nil, fmt.Errorf("open %s: %w", dbPath, err)
 	}
 	// Two processes starting on the same new file race for the switch to WAL,
@@ -78,9 +94,10 @@ func open(ctx context.Context, dbPath string, migrations fs.FS) (*Store, error) 
 	}
 	if err != nil {
 		db.Close()
+		lock.Close()
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, lock: lock}, nil
 }
 
 // setupRetry bounds how long Open keeps retrying a busy database.
@@ -92,6 +109,12 @@ func setup(ctx context.Context, db *sql.DB, dbPath string, ms []migration) error
 	}
 	return migrate(ctx, db, ms)
 }
+
+const createSchemaMigrations = `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version    INTEGER PRIMARY KEY,
+		name       TEXT NOT NULL,
+		applied_at TEXT NOT NULL
+	) STRICT`
 
 // isUnique reports a UNIQUE constraint violation.
 func isUnique(err error) bool {
@@ -120,10 +143,14 @@ var uriPath = strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23")
 // dsn builds the modernc.org/sqlite connection string. The pragmas are set on
 // every new connection of the pool, not once, in this order: busy_timeout
 // first, so that switching to WAL waits for a lock instead of failing at once
-// when another process opens the same new file.
+// when another process opens the same new file; auto_vacuum before WAL,
+// whose switch writes the file's first page: a new database gets
+// incremental auto-vacuum (space can go back to the file system, Reclaim),
+// an existing one keeps its mode (Compact converts it).
 func dsn(dbPath string) string {
 	q := url.Values{}
 	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", "auto_vacuum(INCREMENTAL)")
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_txlock", "immediate")
@@ -159,11 +186,7 @@ func loadMigrations(fsys fs.FS) ([]migration, error) {
 }
 
 func migrate(ctx context.Context, db *sql.DB, ms []migration) error {
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-		version    INTEGER PRIMARY KEY,
-		name       TEXT NOT NULL,
-		applied_at TEXT NOT NULL
-	) STRICT`); err != nil {
+	if _, err := db.ExecContext(ctx, createSchemaMigrations); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 	var current int
@@ -228,4 +251,10 @@ func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 }
 
 // Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	err := s.db.Close()
+	if s.lock != nil {
+		s.lock.Close()
+	}
+	return err
+}

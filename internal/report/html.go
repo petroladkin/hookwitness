@@ -23,11 +23,15 @@ func newHTML(w io.Writer, fonts fs.FS) *htmlWriter {
 }
 
 func (x *htmlWriter) head(h *Head) error {
+	css := ""
+	if h.Setup != nil {
+		css = setupCSS
+	}
 	return htmlTemplates.ExecuteTemplate(x.w, "head", struct {
 		*Head
 		CSS   template.CSS
 		Strip strip
-	}{h, template.CSS(fontFaces(x.fonts) + reportCSS), newStrip(h)})
+	}{h, template.CSS(fontFaces(x.fonts) + reportCSS + css), newStrip(h)})
 }
 
 func (x *htmlWriter) item(it Item) error {
@@ -100,7 +104,17 @@ var htmlTemplates = template.Must(template.New("report").Funcs(template.FuncMap{
 	"dataURI": func(img ItemImage) template.URL {
 		return template.URL("data:" + img.Type + ";base64," + base64.StdEncoding.EncodeToString(img.Data))
 	},
-	"size":   func(n int) string { return size(int64(n)) },
+	"size":       func(n int) string { return size(int64(n)) },
+	"setupIntro": setupIntro,
+	"replyOf": func(title string, r SetupReply) struct {
+		Title string
+		Reply SetupReply
+	} {
+		return struct {
+			Title string
+			Reply SetupReply
+		}{title, r}
+	},
 	"top":    func() float64 { return stripTop },
 	"base":   func() float64 { return stripBase },
 	"w":      func() float64 { return stripW },
@@ -178,7 +192,35 @@ const htmlSource = `{{define "head" -}}
 {{end}}{{else}}<tr><td class="none">None.</td></tr>
 {{end}}</table>
 </section>
-<h2 class="requests-title">Requests</h2>
+{{with .Setup}}<section class="setup">
+<h2>Setup</h2>
+<p class="intro">{{setupIntro $.Head}}</p>
+<table class="kv3">
+<caption>Checks · in order</caption>
+{{range .Checks}}<tr><td class="n">{{.No}}</td><th scope="row">{{.Label}}</th><td>{{.Detail}}</td></tr>
+{{else}}<tr><td class="none">None.</td></tr>
+{{end}}</table>
+{{if .Schemas}}<table class="kv">
+<caption>Schemas</caption>
+{{range .Schemas}}<tr><th scope="row">{{.Name}}</th><td>{{.Use}}</td></tr>
+{{end}}</table>
+{{end}}<table class="kv3">
+<caption>Rules · in order; the first that holds answers</caption>
+{{range .Rules}}<tr><td class="n">{{.No}}</td><th scope="row">{{.When}}</th><td>{{.Then}}</td></tr>
+{{else}}<tr><td class="none">None: every request gets the default reply.</td></tr>
+{{end}}</table>
+{{range .Rules}}{{if .Reply}}{{template "reply" (replyOf .ReplyTitle .Reply)}}{{end}}{{end}}{{template "reply" (replyOf "Default reply" .Default)}}<table class="kv">
+<caption>Variables</caption>
+{{range .Vars}}<tr><th scope="row"><code>{{.Name}}</code></th><td><code>{{.Value}}</code></td></tr>
+{{else}}<tr><td class="none">None.</td></tr>
+{{end}}</table>
+<table class="kv">
+<caption>Secrets · named, never shown</caption>
+{{range .Secrets}}<tr><th scope="row">{{.Name}}</th><td>{{.Kind}} · <span class="{{if eq .State "not set"}}hot{{end}}">{{.State}}</span> · {{if eq .Use "not used"}}not used{{else}}used by {{.Use}}{{end}}</td></tr>
+{{else}}<tr><td class="none">None.</td></tr>
+{{end}}</table>
+</section>
+{{end}}<h2 class="requests-title">Requests</h2>
 {{if not .Count}}<p class="none">No requests in the selection.</p>
 {{end}}{{end}}
 
@@ -197,7 +239,7 @@ const htmlSource = `{{define "head" -}}
 {{if .Verdicts}}<section class="verdicts">
 <h3>Verdicts</h3>
 <ul>
-{{range .Verdicts}}<li class="v-{{lower (printf "%s" .Result)}}"><b>{{.Label}}: {{.Result}}</b>{{if .Reason}} — {{.Reason}}{{end}}{{if or .Received .Expected}}<div class="sig">received <code>{{.Received}}</code> · expected <code>{{.Expected}}</code></div>{{end}}{{if .Problems}}
+{{range .Verdicts}}<li class="v-{{lower (printf "%s" .Result)}}"><b>{{.Label}}: {{.Result}}</b>{{if .Reason}} — {{.Reason}}{{end}}{{if or .Received .Expected}}<div class="sig">received <code>{{.Received}}</code> · expected <code>{{.Expected}}</code></div>{{end}}{{if .Note}}<div class="note">{{.Note}}</div>{{end}}{{if .Problems}}
 <table class="problems">{{range .Problems}}<tr><th>{{pointer .}}</th><td><code>{{.Keyword}}</code></td><td>{{.Message}}</td></tr>{{end}}</table>{{if gt .Total (len .Problems)}}<div class="more">and {{sub .Total (len .Problems)}} more</div>{{end}}{{end}}</li>
 {{end}}</ul>
 </section>
@@ -221,6 +263,20 @@ const htmlSource = `{{define "head" -}}
 {{end}}{{if .Body.Cut}}<p class="note">Cut at {{size .Body.Shown}}.</p>
 {{end}}</section>
 </article>
+{{end}}
+
+{{define "reply" -}}
+<div class="reply">
+<h3>{{.Title}}</h3>
+<table class="kv">
+<tr><th scope="row">Status</th><td>{{.Reply.Status}}</td></tr>
+<tr><th scope="row">Delay</th><td>{{.Reply.Delay}}</td></tr>
+{{range .Reply.Headers}}<tr><th scope="row"><code>{{.Name}}</code></th><td><code>{{.Value}}</code></td></tr>
+{{end}}{{with .Reply.BodyLine}}<tr><th scope="row">Body</th><td>{{.}}</td></tr>
+{{end}}</table>
+{{if not .Reply.BodyLine}}<p class="note">Body (a template)</p>
+<pre class="body">{{.Reply.Body}}</pre>
+{{end}}</div>
 {{end}}
 
 {{define "end" -}}
@@ -307,6 +363,7 @@ th,td{text-align:left;padding:4px 12px 4px 0;border-bottom:1px solid var(--rule)
 .problems{margin-top:4px}
 .problems th{font:400 12px var(--f-data)}
 .more{font-size:12px;color:var(--muted)}
+.verdicts .note{font-size:12px;font-weight:600}
 .note{font:400 12px/1.4 var(--f-data);text-transform:none;letter-spacing:0;color:var(--muted);overflow-wrap:anywhere}
 pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var(--rule);font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .json .k{color:var(--ink)}.json .s{color:var(--text)}.json .n{color:var(--ink-soft)}
@@ -329,4 +386,17 @@ pre.body{margin:0;padding:10px 12px;background:var(--paper);border:1px solid var
   a{color:inherit;text-decoration:none}
 }
 @page{size:A4;margin:15mm}
+`
+
+// setupCSS styles the setup section, added only to a report that has one.
+const setupCSS = `.setup .intro{margin:0 0 12px;color:var(--muted);font-size:13px}
+.setup table{width:100%;margin:0 0 16px}
+.kv3{table-layout:fixed}
+.kv3 .n{width:2.5em;font:600 13px var(--f-data);color:var(--ink)}
+.kv3 th{width:30%;font-weight:400}
+.kv3 td,.kv3 th{overflow-wrap:anywhere}
+.reply{margin:0 0 16px;padding-left:10px;border-left:3px solid var(--ink-soft)}
+.reply h3{margin-top:0}
+.reply table{margin:0 0 6px}
+.reply .note{margin:6px 0 4px}
 `

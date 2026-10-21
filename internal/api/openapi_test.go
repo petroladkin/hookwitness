@@ -105,7 +105,8 @@ func TestAnswersMatchTheirSchemas(t *testing.T) {
 	r := e.add(t, ep.ID, `{"a":1}`, func(r *store.Request) {
 		r.Verdict = "fail"
 		r.Verdicts = `[{"check":1,"label":"Basic credentials","result":"fail","reason":"no Authorization header","at":"2026-10-13T10:00:00Z"},
-			{"check":2,"label":"JSON Schema S","result":"pass","reason":"matches S","at":"2026-10-13T10:00:00Z"}]`
+			{"check":2,"label":"JSON Schema S","result":"pass","reason":"matches S","at":"2026-10-13T10:00:00Z",
+			"note":"same signature as #1: a replay, or a redelivery of the same signed request"}]`
 		r.Outcome = `{"source":"default","action":"reply","status":202}`
 	})
 	e.add(t, store.Unmatched, "", func(r *store.Request) { r.Path, r.Status = "/typo", 404 })
@@ -120,6 +121,10 @@ func TestAnswersMatchTheirSchemas(t *testing.T) {
 		{"GET", fmt.Sprintf("/requests/%d", r.ID), "", "Request"},
 		{"POST", fmt.Sprintf("/endpoints/%d/recheck", ep.ID), "{}", "Rechecked"},
 		{"PUT", fmt.Sprintf("/endpoints/%d/secrets/K", ep.ID), `{"kind":"key","value":"whsec_dGVzdA=="}`, "Secret"},
+		{"GET", "/setup", "", "Setup"},
+		{"POST", "/setup?on_conflict=replace", `{"hookwitness":1,"endpoints":[{"path":"/hooks","default":{"status":200},"secrets":[{"name":"PW","kind":"token"}]},{"path":"/new","default":{"status":200},"secrets":[{"name":"X","kind":"key"}]}]}`, "SetupResult"},
+		{"GET", "/endpoints/2/behaviour", "", "Behaviour"},
+		{"POST", "/setup", `{"hookwitness":2,"endpoints":[]}`, "Error"},
 		{"GET", "/endpoints/999", "", "Error"},
 		{"PATCH", fmt.Sprintf("/endpoints/%d", ep.ID), `{"path":"bad"}`, "Error"},
 	} {

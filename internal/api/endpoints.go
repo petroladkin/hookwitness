@@ -17,17 +17,14 @@ type endpointJSON struct {
 	URL      string `json:"url"` // where senders deliver, as reached by this API call
 	Requests int    `json:"requests"`
 	Counter  int64  `json:"counter"` // requests that passed its checks since the last reset
+	Enabled  bool   `json:"enabled"` // off: requests to its path go to Unmatched
 	Created  stamp  `json:"created_at"`
 	Last     *stamp `json:"last_request_at,omitempty"`
 }
 
-func endpointView(r *http.Request, ep store.Endpoint) endpointJSON {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	v := endpointJSON{ID: ep.ID, Path: ep.Path, URL: scheme + "://" + r.Host + ep.Path,
-		Requests: ep.Count, Counter: ep.Counter, Created: stamp(ep.CreatedAt)}
+func (h *Handler) endpointView(r *http.Request, ep store.Endpoint) endpointJSON {
+	v := endpointJSON{ID: ep.ID, Path: ep.Path, URL: h.o.Catch.Base(r) + ep.Path,
+		Requests: ep.Count, Counter: ep.Counter, Enabled: ep.Enabled, Created: stamp(ep.CreatedAt)}
 	if !ep.LastAt.IsZero() {
 		last := stamp(ep.LastAt)
 		v.Last = &last
@@ -36,18 +33,29 @@ func endpointView(r *http.Request, ep store.Endpoint) endpointJSON {
 }
 
 func (h *Handler) listEndpoints(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	var enabled bool
+	if q.Has("enabled") {
+		var err error
+		if enabled, err = strconv.ParseBool(q.Get("enabled")); err != nil {
+			WriteError(w, http.StatusBadRequest, "invalid", "enabled must be true or false", "enabled")
+			return
+		}
+	}
 	eps, err := h.store.Endpoints(r.Context())
 	if err != nil {
 		h.fail(w, "list endpoints", err)
 		return
 	}
-	q := r.URL.Query()
 	out := []endpointJSON{}
 	for _, ep := range eps {
 		if q.Has("path") && ep.Path != q.Get("path") {
 			continue
 		}
-		out = append(out, endpointView(r, ep))
+		if q.Has("enabled") && ep.Enabled != enabled {
+			continue
+		}
+		out = append(out, h.endpointView(r, ep))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"endpoints": out})
 }
@@ -63,7 +71,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	if p == "" {
 		p = catch.RandomPath()
 	}
-	if msg := catch.CheckPath(h.o.Prefix, p); msg != "" {
+	if msg := catch.CheckPath(h.o.Reserved, p); msg != "" {
 		WriteError(w, http.StatusUnprocessableEntity, "invalid", msg, "path")
 		return
 	}
@@ -81,9 +89,9 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "create endpoint", err)
 		return
 	}
-	h.log.Info("endpoint created", "path", p, "via", "api")
+	h.log.Info("endpoint created", logAttrs(r, "path", p, "via", "api")...)
 	w.Header().Set("Location", h.base+"/endpoints/"+strconv.FormatInt(ep.ID, 10))
-	writeJSON(w, http.StatusCreated, endpointView(r, ep))
+	writeJSON(w, http.StatusCreated, h.endpointView(r, ep))
 }
 
 func (h *Handler) getEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -91,5 +99,5 @@ func (h *Handler) getEndpoint(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, endpointView(r, ep))
+	writeJSON(w, http.StatusOK, h.endpointView(r, ep))
 }
