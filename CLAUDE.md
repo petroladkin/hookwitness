@@ -194,8 +194,10 @@ that makes it false.
   404 + Unmatched keeping a body's first 64 KiB; bodies held at once bounded
   by `-max-inflight`, over it 503 "busy" without the body); runs checks, lets the store decide the rule inside the
   counter's transaction (exact under concurrency), then replies (with
-  `Content-Security-Policy: sandbox` and `nosniff` unless the endpoint sets
-  them: catch paths share the UI's origin), delays, holds (timeout) or
+  `Content-Security-Policy: sandbox` always, next to an endpoint's own
+  policy, `nosniff` unless the endpoint sets it, and never a `Set-Cookie` of
+  the login cookie: catch paths share the UI's origin), delays, holds
+  (timeout) or
   resets (drop, SO_LINGER 0); holds end on shutdown.
 - `internal/live` — wake-ups for live feeds; feeds read what they missed from
   the store, so nothing is lost or repeated.

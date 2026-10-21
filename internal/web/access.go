@@ -177,11 +177,27 @@ func (h *Handler) forbidden(w http.ResponseWriter, r *http.Request, msg string) 
 // nextPage is where a login goes on to: a page of the admin, else the
 // endpoints page.
 func (h *Handler) nextPage(next string) string {
-	if strings.HasPrefix(next, h.prefix+"/") && !strings.HasPrefix(next, "//") && !strings.ContainsAny(next, "\\\r\n") &&
-		!strings.HasPrefix(next, h.prefix+"/login") && !strings.HasPrefix(next, h.prefix+"/logout") {
+	if h.ours(next) && !strings.HasPrefix(next, h.prefix+"/login") && !strings.HasPrefix(next, h.prefix+"/logout") {
 		return next
 	}
 	return h.prefix + "/"
+}
+
+// ours reports whether next is a page of this admin, safe to redirect to: a
+// path under the prefix, with no scheme or host, no backslash and no control
+// character (a browser drops tabs and newlines from a URL, so "/\t/evil.com"
+// would leave the site).
+func (h *Handler) ours(next string) bool {
+	if !strings.HasPrefix(next, h.prefix+"/") || strings.HasPrefix(next, "//") || strings.ContainsRune(next, '\\') {
+		return false
+	}
+	for _, c := range next {
+		if c < 0x20 || c == 0x7f {
+			return false
+		}
+	}
+	u, err := url.Parse(next)
+	return err == nil && u.Scheme == "" && u.Host == ""
 }
 
 // gateAPI checks that the API and /mcp get an identity once login is on.

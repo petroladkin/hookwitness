@@ -102,3 +102,45 @@ func TestBridgeHintsOnNotFound(t *testing.T) {
 type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
+
+// The token goes only to the server's own origin: a redirect to another
+// origin (a sign-in gate, a mistyped URL) is followed without it.
+func TestWithTokenStaysOnOrigin(t *testing.T) {
+	var elsewhere []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		elsewhere = append(elsewhere, r.Header.Get("Authorization"))
+	}))
+	defer other.Close()
+	var here []string
+	own := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		here = append(here, r.Header.Get("Authorization"))
+		if r.URL.Path == "/away" {
+			http.Redirect(w, r, other.URL+"/login", http.StatusFound)
+			return
+		}
+		if r.URL.Path == "/stay" {
+			http.Redirect(w, r, "/admin/api/v1/me", http.StatusFound)
+		}
+	}))
+	defer own.Close()
+	c, err := WithToken(http.DefaultClient, own.URL+"/admin/mcp", "hkw_test_secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/stay", "/away"} {
+		resp, err := c.Get(own.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	if strings.Join(here, "|") != "Bearer hkw_test_secret|Bearer hkw_test_secret|Bearer hkw_test_secret" {
+		t.Errorf("own origin got %q", here)
+	}
+	if strings.Join(elsewhere, "|") != "" || len(elsewhere) != 1 {
+		t.Errorf("another origin got %q", elsewhere)
+	}
+	if _, err := WithToken(http.DefaultClient, "127.0.0.1:8080", "t"); err == nil {
+		t.Error("a server URL without a scheme was taken")
+	}
+}
