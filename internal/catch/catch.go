@@ -298,7 +298,7 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 			Headers: []emulate.Header{{Name: "Content-Type", Value: "text/plain; charset=utf-8"}},
 			Body:    []byte("Hookwitness could not render this endpoint's reply: " + err.Error() + "\n")}
 	}
-	rendered = rendered.Protect()
+	rendered = rendered.Protect(access.CookieName)
 	sent, withheld := rendered.AsSent(r.Method) // what net/http will send of it
 	pl.out.SetReply(sent)
 	pl.out.Withheld = withheld

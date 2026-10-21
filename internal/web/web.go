@@ -464,7 +464,7 @@ func (h *Handler) switchEndpoint(w http.ResponseWriter, r *http.Request) {
 // back is the form's "next" page when it is one of ours, else def.
 func (h *Handler) back(r *http.Request, def string) string {
 	next := r.PostFormValue("next")
-	if strings.HasPrefix(next, h.prefix+"/") && !strings.HasPrefix(next, "//") && !strings.ContainsAny(next, "\\\r\n") {
+	if h.ours(next) {
 		return next
 	}
 	return def

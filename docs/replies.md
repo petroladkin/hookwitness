@@ -183,9 +183,11 @@ Every reply also carries `Content-Security-Policy: sandbox` and
 `X-Content-Type-Options: nosniff`. A catch path shares its origin with the
 web UI, so a reply that echoes the request (`{{.Body}}`) could otherwise run
 as a page of the UI when someone opens it in a browser. Webhook senders do not
-render pages, so they see no difference. To send other values, set these
-headers yourself: the reply then carries yours. The request page lists them
-with the headers sent.
+render pages, so they see no difference. A `Content-Security-Policy` of
+your own is sent as well, next to `sandbox` (the browser applies both);
+an `X-Content-Type-Options` of your own replaces `nosniff`. A reply never
+sets the admin's login cookie: a `Set-Cookie` of `hookwitness_session` is
+not sent. The request page lists the headers sent.
 
 ## Required headers
 

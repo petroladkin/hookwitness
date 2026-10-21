@@ -119,7 +119,10 @@ func apply(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "hookwitness apply:", err)
 			return 2
 		}
-		client = mcp.WithToken(client, tok)
+		if client, err = mcp.WithToken(client, *server, tok); err != nil {
+			fmt.Fprintln(stderr, "hookwitness apply:", err)
+			return 2
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", base+"/setup?on_conflict=replace", strings.NewReader(string(data)))
 	if err != nil {

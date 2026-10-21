@@ -475,7 +475,10 @@ func mcpBridge(ctx context.Context, args []string, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "hookwitness:", err)
 			return 2
 		}
-		client = mcp.WithToken(client, tok)
+		if client, err = mcp.WithToken(client, endpoint, tok); err != nil {
+			fmt.Fprintln(stderr, "hookwitness:", err)
+			return 2
+		}
 	}
 	if err := mcp.Bridge(ctx, endpoint, client, bridgeIn, bridgeOut); err != nil {
 		fmt.Fprintln(stderr, "hookwitness mcp:", err)
