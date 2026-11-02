@@ -408,4 +408,12 @@ func TestRetriesByEvent(t *testing.T) {
 	if !strings.Contains(html, "event <code>evt_7</code>") {
 		t.Fatal("HTML: no retry group by event")
 	}
+	// The PDF's text is glyph-encoded: its label comes from the same
+	// summary, through pdfRetryKey.
+	if pdf := render(t, PDF, goldenOptions(), rs); len(pdf) < 1000 {
+		t.Fatalf("PDF of %d bytes", len(pdf))
+	}
+	if got := pdfRetryKey(Retry{Event: "evt_7", SHA256: strings.Repeat("ab", 32)}); got != "event evt_7" {
+		t.Fatalf("PDF retry label %q", got)
+	}
 }
