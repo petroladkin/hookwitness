@@ -21,18 +21,22 @@ import (
 
 // Config is the resolved configuration of the server.
 type Config struct {
-	Addr        string        // listen address, host:port
-	DBPath      string        // sqlite file
-	LogFormat   string        // "text" or "json"
-	MaxBody     int64         // largest request body kept, in bytes
-	MaxInFlight int64         // bytes of request bodies held at once; over it requests get 503
-	Retention   int           // requests kept per endpoint
-	AdminAddr   string        // the admin's own listen address; "" = under the prefix on Addr
-	AdminPrefix string        // path prefix of the web UI, e.g. /admin; "" = the root of AdminAddr
-	PublicURL   string        // base of the catch URLs shown, e.g. https://hooks.example.com; "" = derived
-	AdminHosts  []string      // host names the UI answers to besides IPs and localhost
-	MaxWait     time.Duration // longest reply delay or timeout hold
-	Import      string        // a setup file applied at every start (creates or replaces its endpoints)
+	Addr        string // listen address, host:port
+	DBPath      string // sqlite file
+	LogFormat   string // "text" or "json"
+	MaxBody     int64  // largest request body kept, in bytes
+	MaxInFlight int64  // bytes of request bodies held at once; over it requests get 503
+	Retention   int    // normal requests kept per register by default
+	// RetentionAnomalies is the anomalies kept per endpoint by default (not
+	// answered 2xx, a failed verdict, a redelivery), apart from the normal
+	// ones; 0: no anomaly lane, every request counts against Retention.
+	RetentionAnomalies int
+	AdminAddr          string        // the admin's own listen address; "" = under the prefix on Addr
+	AdminPrefix        string        // path prefix of the web UI, e.g. /admin; "" = the root of AdminAddr
+	PublicURL          string        // base of the catch URLs shown, e.g. https://hooks.example.com; "" = derived
+	AdminHosts         []string      // host names the UI answers to besides IPs and localhost
+	MaxWait            time.Duration // longest reply delay or timeout hold
+	Import             string        // a setup file applied at every start (creates or replaces its endpoints)
 	// TrustedProxies are the reverse proxies whose X-Forwarded-For names the
 	// client (the login limit and the logs); none: the TCP peer.
 	TrustedProxies access.Proxies
@@ -50,6 +54,7 @@ const (
 	DefaultLogFormat   = "text"
 	DefaultMaxBody     = "10MiB"
 	DefaultRetention   = "1000"
+	DefaultAnomalies   = "1000"
 	DefaultAdminPrefix = "/admin"
 	DefaultMaxWait     = "5m"
 	DefaultMCPSessions = "32"
@@ -71,14 +76,15 @@ type setting struct {
 // getenv. Usage and errors from the flag package go to out.
 func Parse(args []string, getenv func(string) string, out io.Writer) (Config, error) {
 	var c Config
-	var maxBody, maxInFlight, retention, adminHosts, maxWait, proxies, replayAllow, mcpSessions string
+	var maxBody, maxInFlight, retention, anomalies, adminHosts, maxWait, proxies, replayAllow, mcpSessions string
 	settings := []setting{
 		{"addr", "HOOKWITNESS_ADDR", DefaultAddr, "listen address (host:port)", &c.Addr},
 		{"db", "HOOKWITNESS_DB", DefaultDBPath, "path to the sqlite database file", &c.DBPath},
 		{"log-format", "HOOKWITNESS_LOG_FORMAT", DefaultLogFormat, "log format: text or json", &c.LogFormat},
 		{"max-body", "HOOKWITNESS_MAX_BODY", DefaultMaxBody, "largest request body to keep, in bytes or with KiB/MiB/GiB; a larger one is answered 413", &maxBody},
 		{"max-inflight", "HOOKWITNESS_MAX_INFLIGHT", "", "bytes of request bodies held at once, with KiB/MiB/GiB; over it a request is answered 503 (default: the larger of 256MiB and twice max-body)", &maxInFlight},
-		{"retention", "HOOKWITNESS_RETENTION", DefaultRetention, "requests kept per endpoint; the oldest are pruned", &retention},
+		{"retention", "HOOKWITNESS_RETENTION", DefaultRetention, "normal requests kept per endpoint (and in Unmatched) by default; the oldest are pruned; each endpoint can set its own", &retention},
+		{"retention-anomalies", "HOOKWITNESS_RETENTION_ANOMALIES", DefaultAnomalies, "anomalies (not answered 2xx, a failed verdict, a redelivery) kept per endpoint by default, apart from the normal requests; 0: no separate lane", &anomalies},
 		{"admin-addr", "HOOKWITNESS_ADMIN_ADDR", "", "listen address (host:port) of the web UI, REST API and MCP; empty: they live under -admin-prefix on -addr", &c.AdminAddr},
 		{"admin-prefix", "HOOKWITNESS_ADMIN_PREFIX", DefaultAdminPrefix, "path prefix of the web UI; requests under it are never caught; / (the root) only with -admin-addr", &c.AdminPrefix},
 		{"public-url", "HOOKWITNESS_PUBLIC_URL", "", "base URL senders reach the catch listener at, shown in the UI and the API (for proxies and tunnels), e.g. https://hooks.example.com", &c.PublicURL},
@@ -133,6 +139,12 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		return Config{}, fmt.Errorf("invalid retention %q: want a whole number of at least 1", retention)
 	}
 	c.Retention = n
+	if c.RetentionAnomalies, err = strconv.Atoi(anomalies); err != nil || c.RetentionAnomalies < 0 || c.RetentionAnomalies > 1_000_000 {
+		return Config{}, fmt.Errorf("invalid retention anomalies %q: want a whole number from 0 to 1000000", anomalies)
+	}
+	if n > 1_000_000 {
+		return Config{}, fmt.Errorf("invalid retention %q: want at most 1000000", retention)
+	}
 	if c.MCPMaxSessions, err = strconv.Atoi(mcpSessions); err != nil || c.MCPMaxSessions < 0 {
 		return Config{}, fmt.Errorf("invalid MCP max sessions %q: want a whole number, 0 for no limit", mcpSessions)
 	}

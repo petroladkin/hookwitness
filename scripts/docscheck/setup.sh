@@ -190,3 +190,10 @@ setup_payments_file() {
 }
 JSON
 }
+
+# --- keeping -----------------------------------------------------------------
+
+setup_capture() {
+  local id; id=$(hw_endpoint /orders/capture)
+  hw_behave "$id" '.rules = [{"when":{"kind":"every","n":4},"do":"reply","reply":{"status":500}}]'
+}

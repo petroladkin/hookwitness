@@ -110,21 +110,6 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	if mode, err := st.AutoVacuum(ctx); err == nil && mode != "incremental" {
 		log.Warn("the database file does not shrink after clearing or pruning (made by an older version): stop the server and run hookwitness db compact", "db", cfg.DBPath)
 	}
-	// Space freed by pruning goes back to the file system once a minute;
-	// stopped before the database closes.
-	hkCtx, hkStop := context.WithCancel(ctx)
-	hkDone := make(chan struct{})
-	go func() {
-		defer close(hkDone)
-		st.Housekeep(hkCtx, time.Minute, func(freed int64, err error) {
-			if err != nil {
-				log.Warn("could not give free space back", "err", err)
-				return
-			}
-			log.Info("free space given back to the file system", "bytes", freed)
-		})
-	}()
-	defer func() { hkStop(); <-hkDone }()
 
 	// Endpoint secrets are sealed or hashed with this key; a database copied
 	// without it reveals none of them.
@@ -147,7 +132,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	if cfg.AdminAddr != "" {
 		reserved = ""
 	}
-	if cfg.Import != "" && !importSetup(ctx, st, cfg.Import, setup.Options{Reserved: reserved, MaxWait: cfg.MaxWait}, log) {
+	if cfg.Import != "" && !importSetup(ctx, st, cfg.Import, setup.Options{Reserved: reserved, MaxWait: cfg.MaxWait, Keep: store.Keep{Normal: cfg.Retention, Anomalies: cfg.RetentionAnomalies}}, log) {
 		return 1
 	}
 
@@ -197,7 +182,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	attrs = append(attrs, "db", cfg.DBPath, "schema", schema,
 		"ui", "http://"+adminLn.Addr().String()+cfg.AdminPrefix+"/",
 		"api", "http://"+adminLn.Addr().String()+api.Base(cfg.AdminPrefix),
-		"max_body", cfg.MaxBody, "max_inflight", cfg.MaxInFlight, "retention", cfg.Retention, "secret_key", keySource,
+		"max_body", cfg.MaxBody, "max_inflight", cfg.MaxInFlight, "retention", cfg.Retention, "retention_anomalies", cfg.RetentionAnomalies, "secret_key", keySource,
 		"replay", cfg.ReplayAllow.String())
 	if len(users) > 0 {
 		attrs = append(attrs, "login", "on", "users", len(users))
@@ -220,12 +205,34 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	}
 
 	broker := live.New()
+	// Once a minute: retention by age (and counts after a limit was
+	// lowered), then the space freed goes back to the file system; stopped
+	// before the database closes.
+	keep := store.Keep{Normal: cfg.Retention, Anomalies: cfg.RetentionAnomalies}
+	hkCtx, hkStop := context.WithCancel(ctx)
+	hkDone := make(chan struct{})
+	go func() {
+		defer close(hkDone)
+		st.Housekeep(hkCtx, store.Housekeeping{Interval: time.Minute, Keep: keep,
+			Pruned: func(reg int64, n int) {
+				broker.Publish(reg)
+				log.Info("requests pruned by retention", "register", reg, "requests", n)
+			},
+			Report: func(freed int64, err error) {
+				if err != nil {
+					log.Warn("housekeeping", "err", err)
+					return
+				}
+				log.Info("free space given back to the file system", "bytes", freed)
+			}})
+	}()
+	defer func() { hkStop(); <-hkDone }()
 	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, MaxInFlight: cfg.MaxInFlight,
-		Retention: cfg.Retention, MaxWait: cfg.MaxWait, Keys: keys}
+		Retention: keep, MaxWait: cfg.MaxWait, Keys: keys}
 	replays := replay.New(st, log, replay.Options{Policy: cfg.ReplayAllow, MaxWait: cfg.MaxWait, Budget: catcher})
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, Separate: separate, PublicURL: cfg.PublicURL, CatchAddr: ln.Addr().String(),
-		MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
+		MaxBody: cfg.MaxBody, Retention: keep, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
 		Access: auth, Proxies: cfg.TrustedProxies, Replay: replays, MCPMaxSessions: cfg.MCPMaxSessions,
 	})
 	o := server.Options{DB: st, Log: log, AdminPrefix: cfg.AdminPrefix, Admin: ui, Catch: catcher}

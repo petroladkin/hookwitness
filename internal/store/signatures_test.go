@@ -28,7 +28,7 @@ func TestSignatureRepeats(t *testing.T) {
 		r := sample(endpoint, "{}")
 		r.Verdicts = "as verified"
 		r.Signatures, r.Repeated = sigs, noted(&got)
-		if err := s.AddRequest(ctx, r, keep, nil); err != nil {
+		if err := s.AddRequest(ctx, r, Keep{Normal: keep}, nil); err != nil {
 			t.Fatal(err)
 		}
 		return r, got
@@ -48,9 +48,12 @@ func TestSignatureRepeats(t *testing.T) {
 	if _, got := add(other.ID, 100, Signature{1, "d-aa"}); got != nil {
 		t.Fatalf("another endpoint's request counted: %v", got)
 	}
-	// Retention 1: the earlier request is pruned when this one is kept.
-	if _, got := add(ep.ID, 1, Signature{1, "d-aa"}); got != nil {
-		t.Fatalf("a pruned request counted: %v", got)
+	// Retention 1: the earlier request is pruned when this one is kept, so
+	// what is stored names none (the note is made again after the prune).
+	if r, _ := add(ep.ID, 1, Signature{1, "d-aa"}); r.Verdicts != "as verified" {
+		t.Fatalf("a pruned request counted: %q", r.Verdicts)
+	} else if stored, _ := s.Request(ctx, r.ID); stored.Verdicts != "as verified" {
+		t.Fatalf("a pruned request counted in the stored verdicts: %q", stored.Verdicts)
 	}
 	s.ClearRequests(ctx, ep.ID)
 	if _, got := add(ep.ID, 100, Signature{1, "d-aa"}); got != nil {
@@ -84,7 +87,7 @@ func TestSetVerdictsRecomputesRepeats(t *testing.T) {
 	var reqs []*Request
 	for range 3 {
 		r := sample(ep.ID, "{}")
-		s.AddRequest(ctx, r, 100, nil)
+		s.AddRequest(ctx, r, Keep{Normal: 100}, nil)
 		reqs = append(reqs, r)
 	}
 	var got map[int]int64

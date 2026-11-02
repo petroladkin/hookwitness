@@ -406,6 +406,10 @@ func (p *pdfWriter) head(h *Head) error {
 			p.place(b)
 		}
 	}
+	if h.PrunedLine != "" {
+		p.place(p.caption("Pruned"))
+		p.place(p.plain(h.PrunedLine))
+	}
 	if h.Setup != nil {
 		p.setup(h)
 	}
@@ -612,6 +616,9 @@ func (p *pdfWriter) item(it Item) error {
 	}})
 	top = append(top, p.row("Received", 70, 7.5, cText, stamp(it.At)+" from "+it.Remote+" · "+it.Proto)...)
 	top = append(top, p.row("Answer", 70, 7.5, cText, answerLine(it.Answer))...)
+	if it.Pinned {
+		top = append(top, p.row("Pinned", 70, 7.5, cText, "never pruned by retention")...)
+	}
 	if it.Delivery > 1 {
 		top = append(top, p.row("Delivery", 70, 7.5, cText, ordinal(it.Delivery)+" of this body (a retry)")...)
 	}

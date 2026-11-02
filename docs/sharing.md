@@ -46,7 +46,11 @@ that the sender's retries show.
 }
 ```
 
-`"hookwitness": 1` marks the file and its format. A file from a newer
+`"hookwitness": 1` marks the file and its format. An endpoint with its own
+retention ([Keeping requests](keeping.md)) carries it as `retention`, and
+then the file is format 2, which older versions refuse; on import a
+`retention` is set, and an endpoint without one takes the defaults of the
+server it lands on. A file from a newer
 Hookwitness, a file with a field this one does not know, or one that is not
 a setup at all is refused with a message naming the problem, and nothing is
 created.

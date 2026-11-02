@@ -12,7 +12,7 @@ func TestVerdictsStored(t *testing.T) {
 	ep, _ := s.CreateEndpoint(ctx, "/v")
 	r := sample(ep.ID, "{}")
 	r.Verdict, r.Verdicts = "fail", `[{"check":1,"result":"fail"}]`
-	if err := s.AddRequest(ctx, r, 10, nil); err != nil {
+	if err := s.AddRequest(ctx, r, Keep{Normal: 10}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Request(ctx, r.ID)
@@ -33,11 +33,11 @@ func TestVerdictCounts(t *testing.T) {
 	for _, v := range []string{"pass", "fail", "pass", "n/v", ""} {
 		r := sample(ep.ID, "{}")
 		r.Verdict = v
-		s.AddRequest(ctx, r, 100, nil)
+		s.AddRequest(ctx, r, Keep{Normal: 100}, nil)
 	}
 	r := sample(other.ID, "{}")
 	r.Verdict = "fail"
-	s.AddRequest(ctx, r, 100, nil)
+	s.AddRequest(ctx, r, Keep{Normal: 100}, nil)
 	got, err := s.VerdictCounts(ctx, ep.ID)
 	if err != nil || len(got) != 3 || got["pass"] != 2 || got["fail"] != 1 || got["n/v"] != 1 {
 		t.Fatalf("%v %v", got, err)
@@ -50,7 +50,7 @@ func TestSetVerdictsLeavesTheAnswer(t *testing.T) {
 	ep, _ := s.CreateEndpoint(ctx, "/s")
 	r := sample(ep.ID, "{}")
 	r.Status, r.Outcome, r.Verdict = 202, `{"action":"reply"}`, "pass"
-	s.AddRequest(ctx, r, 10, nil)
+	s.AddRequest(ctx, r, Keep{Normal: 10}, nil)
 	before, _ := s.ChangeSeq(ctx)
 	if err := s.SetVerdicts(ctx, r.ID, "fail", `[{"result":"fail"}]`, nil, nil); err != nil {
 		t.Fatal(err)
@@ -71,9 +71,9 @@ func TestEachRequest(t *testing.T) {
 	ep, _ := s.CreateEndpoint(ctx, "/e")
 	other, _ := s.CreateEndpoint(ctx, "/x")
 	for i := range 450 {
-		s.AddRequest(ctx, sample(ep.ID, fmt.Sprint(i)), 1000, nil)
+		s.AddRequest(ctx, sample(ep.ID, fmt.Sprint(i)), Keep{Normal: 1000}, nil)
 	}
-	s.AddRequest(ctx, sample(other.ID, "other"), 1000, nil)
+	s.AddRequest(ctx, sample(other.ID, "other"), Keep{Normal: 1000}, nil)
 	var seen []string
 	err := s.EachRequest(ctx, ep.ID, func(r Request) error {
 		seen = append(seen, string(r.Body))

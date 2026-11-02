@@ -136,5 +136,15 @@
     return { top: top(rows), rows, brackets: segs, now: { x: w - 2, align: "right" } };
   }
 
-  root.HookwitnessStrip = { layout, rowsFor, top, rowY, SPANS, ago, full, short };
+  // pruned reports whether a loaded row of a lane ("normal", "anomaly",
+  // "pinned") with this id is gone from the store, given each lane's lowest
+  // kept id (0: the lane holds nothing): retention prunes a lane oldest
+  // first, never a pinned request.
+  function pruned(lane, id, low) {
+    const w = low[lane];
+    if (typeof w !== "number") return false;
+    return w === 0 || id < w;
+  }
+
+  root.HookwitnessStrip = { layout, rowsFor, top, rowY, SPANS, ago, full, short, pruned };
 })(typeof window !== "undefined" ? window : globalThis);

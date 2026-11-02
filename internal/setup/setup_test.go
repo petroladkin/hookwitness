@@ -1,13 +1,17 @@
 package setup
 
 import (
+	"context"
 	"encoding/json"
+	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/emulate"
+	"github.com/petroladkin/hookwitness/internal/store"
 )
 
 var opts = Options{Reserved: "/admin", MaxWait: time.Minute}
@@ -46,7 +50,7 @@ func TestExportCarriesNoSecretValue(t *testing.T) {
 	if err := json.Unmarshal(b, &raw); err != nil {
 		t.Fatal(err)
 	}
-	if raw["hookwitness"] != float64(Format) {
+	if raw["hookwitness"] != float64(1) { // nothing newer used: 0.2 reads it
 		t.Errorf("format marker %v", raw["hookwitness"])
 	}
 	if !strings.Contains(string(b), `"name": "GH"`) || !strings.Contains(string(b), `"kind": "token"`) {
@@ -109,7 +113,9 @@ func TestParseRefuses(t *testing.T) {
 		{"not json", "hello", "not a hookwitness setup file"},
 		{"no marker", `{"endpoints":[]}`, "not a hookwitness setup file"},
 		{"marker of another type", `{"hookwitness":"1","endpoints":[]}`, "not a hookwitness setup file"},
-		{"newer", strings.Replace(good, `"hookwitness": 1`, `"hookwitness": 2`, 1), "newer hookwitness (format 2"},
+		{"newer", strings.Replace(good, `"hookwitness": 1`, `"hookwitness": 3`, 1), "newer hookwitness (format 3"},
+		{"bad retention", `{"hookwitness":2,"endpoints":[{"path":"/a","default":{"status":200},"retention":{"normal":{"count":0}}}]}`, "normal.count"},
+		{"unknown retention field", `{"hookwitness":2,"endpoints":[{"path":"/a","default":{"status":200},"retention":{"normal":{"keep":3}}}]}`, `unknown field "keep"`},
 		{"zero", strings.Replace(good, `"hookwitness": 1`, `"hookwitness": 0`, 1), "format 0"},
 		{"unknown top field", strings.Replace(good, `"hookwitness": 1,`, `"hookwitness": 1, "extra": true,`, 1), `unknown field "extra"`},
 		{"unknown nested field", strings.Replace(good, `"status": 202`, `"status": 202, "color": "red"`, 1), `unknown field "color"`},
@@ -139,5 +145,60 @@ func TestFileName(t *testing.T) {
 		if got := FileName(in); got != want {
 			t.Errorf("FileName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestRetentionInSetup: an endpoint's own retention travels in format 2
+// and is applied at import, pruning at once; a file without it gives the
+// defaults back.
+func TestRetentionInSetup(t *testing.T) {
+	ctx := context.Background()
+	var p store.Retention
+	if err := json.Unmarshal([]byte(`{"normal":{"count":3,"max_age":"36h"},"anomalies":{"count":0}}`), &p); err != nil {
+		t.Fatal(err)
+	}
+	f := Export(Source{Path: "/keep", Config: emulate.Config{Default: emulate.Reply{Status: 200}}, Retention: p})
+	b := f.JSON()
+	if f.Hookwitness != 2 || !strings.Contains(string(b), `"retention": {`) || !strings.Contains(string(b), `"max_age": "36h"`) ||
+		!strings.Contains(string(b), `"anomalies": {`) {
+		t.Fatalf("export with retention (format %d):\n%s", f.Hookwitness, b)
+	}
+	opts := Options{Reserved: "/admin", MaxWait: time.Minute, Keep: store.Keep{Normal: 1000, Anomalies: 1000}}
+	parsed, err := Parse(b, opts)
+	if err == nil && (parsed.Endpoints[0].Retention == nil || *parsed.Endpoints[0].Retention != p) {
+		t.Fatalf("parsed retention %+v", parsed.Endpoints[0].Retention)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "hw.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ep, _ := st.CreateEndpoint(ctx, "/keep")
+	for i := range 10 {
+		r := &store.Request{EndpointID: ep.ID, ReceivedAt: time.Now(), Method: "POST", Path: "/keep", Body: []byte(strconv.Itoa(i)), Size: 1, Status: 200}
+		if err := st.AddRequest(ctx, r, opts.Keep, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := Apply(ctx, st, parsed, Plan{Replace: Always}, opts)
+	if err != nil || res[0].Result != Replaced || res[0].Pruned != 7 {
+		t.Fatalf("import: %+v %v", res, err)
+	}
+	got, _ := st.Endpoint(ctx, ep.ID)
+	if got.Count != 3 || got.Kept.Policy != p {
+		t.Fatalf("after the import: %d kept, policy %+v", got.Count, got.Kept.Policy)
+	}
+	if res, _ := Apply(ctx, st, parsed, Plan{Replace: Always}, opts); res[0].Result != Unchanged || res[0].Pruned != 0 {
+		t.Fatalf("the same file again: %+v", res)
+	}
+	plain, _ := Parse(Export(Source{Path: "/keep", Config: emulate.Config{Default: emulate.Reply{Status: 200}}}).JSON(), opts)
+	if res, _ := Apply(ctx, st, plain, Plan{Replace: Always}, opts); res[0].Result != Replaced {
+		t.Fatalf("a file without retention: %+v", res)
+	}
+	if got, _ := st.Endpoint(ctx, ep.ID); !got.Kept.Policy.IsZero() {
+		t.Fatalf("a file without retention left %+v", got.Kept.Policy)
 	}
 }

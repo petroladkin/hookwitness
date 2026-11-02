@@ -32,7 +32,7 @@ type Handler struct {
 	// whose body does not fit is answered 503 and kept without it. Zero
 	// means no bound.
 	MaxInFlight int64
-	Retention   int // requests kept per register
+	Retention   store.Keep // requests kept per register by default (each endpoint may set its own)
 	// BodyTimeout bounds reading a request's body; a sender that trickles it
 	// slower is cut off and nothing is kept. Zero means DefaultBodyTimeout.
 	BodyTimeout time.Duration

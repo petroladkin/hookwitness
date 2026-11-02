@@ -13,9 +13,11 @@ import (
 )
 
 type marksRead struct {
-	From     int64             `json:"from"`
-	KeptFrom *int64            `json:"kept_from"`
-	Marks    []json.RawMessage `json:"marks"`
+	From         int64             `json:"from"`
+	KeptFrom     *int64            `json:"kept_from"`
+	ThinnedUntil *int64            `json:"thinned_until"`
+	Thinned      string            `json:"thinned"`
+	Marks        []json.RawMessage `json:"marks"`
 }
 
 func (e env) marks(t *testing.T, path string) marksRead {
@@ -55,7 +57,7 @@ func TestMarksCoverTheRange(t *testing.T) {
 	}
 	var first []any
 	json.Unmarshal(a.Marks[0], &first)
-	if len(first) != 6 || first[3] != "bad" || first[4] != "fail" || first[5] == "" {
+	if len(first) != 7 || first[3] != "bad" || first[4] != "fail" || first[5] == "" || first[6] != false {
 		t.Fatalf("a mark: %v", first)
 	}
 	if a.KeptFrom != nil {
@@ -72,21 +74,39 @@ func TestMarksCoverTheRange(t *testing.T) {
 	}
 }
 
-// AC-3: the time before the oldest kept request, when older ones are gone,
-// is told to the strip.
+// AC-3: the time up to the newest request retention removed is told to
+// the strip: before it nothing is kept; with lanes, where only one lane
+// lost requests, only the other is.
 func TestMarksKeptFrom(t *testing.T) {
 	e := newEnv(t)
 	ep, _ := e.st.CreateEndpoint(context.Background(), "/small")
 	now := time.Now()
 	for i := range 4 {
 		r := &store.Request{EndpointID: ep.ID, ReceivedAt: now.Add(-time.Duration(40-i*10) * time.Minute), Method: "POST", Path: "/small", Status: 200}
-		if err := e.st.AddRequest(context.Background(), r, 3, nil); err != nil {
+		if err := e.st.AddRequest(context.Background(), r, store.Keep{Normal: 3}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
 	a := e.marks(t, "/admin/e/"+id(ep.ID)+"/marks?span=1h")
-	if a.KeptFrom == nil || *a.KeptFrom != now.Add(-30*time.Minute).UnixMilli() || len(a.Marks) != 3 {
-		t.Fatalf("kept from %v, %d marks", a.KeptFrom, len(a.Marks))
+	if a.KeptFrom == nil || *a.KeptFrom != now.Add(-40*time.Minute).UnixMilli() || a.ThinnedUntil != nil || len(a.Marks) != 3 {
+		t.Fatalf("kept from %v, thinned until %v, %d marks", a.KeptFrom, a.ThinnedUntil, len(a.Marks))
+	}
+	// Lanes: three normal requests and an anomaly, one normal kept: before
+	// the newest pruned normal one only anomalies are kept.
+	lanes, _ := e.st.CreateEndpoint(context.Background(), "/lanes")
+	for i := range 4 {
+		r := &store.Request{EndpointID: lanes.ID, ReceivedAt: now.Add(-time.Duration(40-i*10) * time.Minute), Method: "POST", Path: "/lanes",
+			Status: 200, Outcome: `{"action":"reply","status":200}`}
+		if i == 0 {
+			r.Status, r.Outcome = 500, `{"action":"reply","status":500}`
+		}
+		if err := e.st.AddRequest(context.Background(), r, store.Keep{Normal: 1, Anomalies: 5}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l := e.marks(t, "/admin/e/"+id(lanes.ID)+"/marks?span=1h")
+	if l.KeptFrom != nil || l.ThinnedUntil == nil || *l.ThinnedUntil != now.Add(-20*time.Minute).UnixMilli() || l.Thinned != "anomalies" || len(l.Marks) != 2 {
+		t.Fatalf("lanes: kept from %v, thinned until %v (%s), %d marks", l.KeptFrom, l.ThinnedUntil, l.Thinned, len(l.Marks))
 	}
 	un := e.marks(t, "/admin/e/unmatched/marks?span=2m")
 	if un.KeptFrom != nil || len(un.Marks) != 0 {

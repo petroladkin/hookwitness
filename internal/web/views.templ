@@ -205,7 +205,7 @@ templ endpointsPage(nav navView, d endpointsDialog) {
 										<div class="row-acts">
 											@switchForm(nav.registerURL(e.ID), e.Path, e.Enabled, nav.Prefix+"/")
 											<a class="btn quiet" href={ templ.SafeURL(nav.registerURL(e.ID) + "/behaviour") }>Behaviour</a>
-											@clearForm(nav, e.ID, nav.Prefix+"/", e.Path)
+											@clearForm(nav, e.ID, nav.Prefix+"/", e.Path, e.Kept.Pinned)
 											<form method="post" action={ templ.SafeURL(nav.registerURL(e.ID) + "/delete") } data-confirm={ "Delete " + e.Path + " and its " + strconv.Itoa(e.Count) + " requests?" }>
 												<button class="btn quiet" type="submit">Delete</button>
 											</form>
@@ -289,6 +289,9 @@ templ importDialog(nav navView, v importView) {
 						<label>Path <input name={ "path_" + strconv.Itoa(it.I) } value={ it.Target } required spellcheck="false" autocomplete="off"/></label>
 						if it.Taken {
 							<label class="check"><input type="checkbox" name={ "replace_" + strconv.Itoa(it.I) } checked?={ it.Replace }/> { it.Target } is already an endpoint: replace its behaviour (its requests, counter and on/off state stay)</label>
+							if it.ToPrune > 0 {
+								<p class="error banner" role="alert">Replacing sets the file's retention, which prunes { thousands(int64(it.ToPrune)) } of its requests at once.</p>
+							}
 						}
 						for _, s := range it.Secrets {
 							<label>
@@ -342,8 +345,8 @@ templ switchForm(base, path string, enabled bool, next string) {
 	</form>
 }
 
-templ clearForm(nav navView, regID int64, next, what string) {
-	<form method="post" action={ templ.SafeURL(nav.registerURL(regID) + "/clear") } data-confirm={ "Clear every request kept for " + what + "?" }>
+templ clearForm(nav navView, regID int64, next, what string, pinned int) {
+	<form method="post" action={ templ.SafeURL(nav.registerURL(regID) + "/clear") } data-confirm={ clearQuestion(what, pinned) }>
 		<input type="hidden" name="next" value={ next }/>
 		<button class="btn quiet" type="submit">Clear</button>
 	</form>
@@ -355,15 +358,17 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 			<div class="reg-id">
 				@registerPicker(nav, reg)
 				<span class="kept"><span id="kept" data-count="kept">{ strconv.Itoa(reg.Count) }</span> kept</span>
+				@keepsLine(reg.Keeps)
 			</div>
 			<div class="reg-tools">
 				if reg.ID == store.Unmatched {
-					@clearForm(nav, reg.ID, reg.Base, "Unmatched")
+					@clearForm(nav, reg.ID, reg.Base, "Unmatched", reg.Keeps.Pinned)
 				} else {
 					@switchForm(reg.Base, reg.Path, reg.Enabled, reg.Base)
-					@clearForm(nav, reg.ID, reg.Base, reg.Path)
+					@clearForm(nav, reg.ID, reg.Base, reg.Path, reg.Keeps.Pinned)
 					<a class="btn" href={ templ.SafeURL(reg.Base + "/behaviour") }>Behaviour</a>
 				}
+				<a class="btn" href={ templ.SafeURL(reg.Base + "?retention") }>Retention</a>
 				<a class="btn" href={ templ.SafeURL(reg.Base + "?report") }>Report</a>
 				if reg.ID != store.Unmatched {
 					<a class="btn" href={ templ.SafeURL(reg.Base + "?draft") }>Draft schema</a>
@@ -380,7 +385,7 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 					<button type="button" data-span="1h" aria-pressed="false">1 h</button>
 					<button type="button" data-span="6h" aria-pressed="false">6 h</button>
 				</span>
-				<span>height = body size · red: not 2xx · dashed: timeout · ×: dropped · red bar under the line: a failed check · same body bracketed · hatched: not kept</span>
+				<span>height = body size · red: not 2xx · dashed: timeout · ×: dropped · red bar under the line: a failed check · same body bracketed · hatched: not kept · lightly hatched: only one lane kept · pin: pinned</span>
 			</div>
 		</section>
 		<main class="desk">
@@ -425,7 +430,6 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 					sse-swap="request,update"
 					hx-swap="afterbegin"
 					data-selected={ id(reg.Selected) }
-					data-keep={ strconv.Itoa(reg.Keep) }
 					data-seq={ id(reg.Seq) }
 				>
 					for _, r := range reg.Rows {
@@ -453,7 +457,89 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 		if reg.Replay != nil {
 			@replayDialog(*reg.Replay)
 		}
+		if reg.Retain != nil {
+			@retentionDialog(*reg.Retain)
+		}
 	}
+}
+
+// keepsLine says what the register keeps by retention and what it lost.
+templ keepsLine(k keepsView) {
+	<span class="keeps" title="Retention: what this register keeps; the oldest beyond it are pruned">
+		keeps { strconv.Itoa(k.Normal) } newest
+		if k.NormalAge != "" {
+			{ "for " + k.NormalAge }
+		}
+		if k.Anomalies > 0 {
+			· { strconv.Itoa(k.Anomalies) } anomalies
+			if k.AnomalyAge != "" {
+				{ "for " + k.AnomalyAge }
+			}
+		}
+		if k.Pinned > 0 {
+			· <span data-count="pinned">{ strconv.Itoa(k.Pinned) }</span> pinned
+		}
+		if k.Pruned > 0 {
+			· <span data-count="pruned">{ thousands(k.Pruned) }</span> pruned
+		}
+	</span>
+}
+
+// retentionDialog sets the register's own retention: two lanes (one for
+// Unmatched), each a count and an age; empty fields take the defaults.
+templ retentionDialog(v retentionDialogView) {
+	<dialog class="modal" data-modal data-close={ v.Close } open aria-labelledby="dialog-title">
+		<form class="card" method="post" action={ templ.SafeURL(v.Action) }>
+			<div class="modal-head">
+				<h2 id="dialog-title">Retention</h2>
+				<a class="close" href={ templ.SafeURL(v.Close) } aria-label="Close">×</a>
+			</div>
+			if v.Error != "" {
+				<p class="error banner" role="alert">Not saved: { v.Error }</p>
+			}
+			if v.Unmatched {
+				<p class="help">The newest requests are kept; older ones are pruned, and with an age, anything older than it. Pinned requests are never pruned. Empty fields take the server's defaults.</p>
+			} else {
+				<p class="help">Normal requests and anomalies are kept apart, so a flood of good requests never pushes out a failure. An anomaly: not answered 2xx (an error, a timeout, a drop, a refusal), a failed verdict, or a redelivery (a repeated signature). Pinned requests are never pruned. Empty fields take the server's defaults.</p>
+			}
+			<div class="grid2 even">
+				<label>
+					Normal requests: keep the newest
+					<input name="normal_count" inputmode="numeric" value={ v.NormalCount } placeholder={ strconv.Itoa(v.DefaultNormal) } aria-invalid?={ v.Field == "normal_count" }/>
+				</label>
+				<label>
+					Keep them for at most
+					<input name="normal_age" value={ v.NormalAge } placeholder="no limit, or 7d, 36h, 90m" spellcheck="false" aria-invalid?={ v.Field == "normal_age" }/>
+				</label>
+			</div>
+			if !v.Unmatched {
+				<div class="grid2 even">
+					<label>
+						Anomalies: keep the newest
+						<input name="anomaly_count" inputmode="numeric" value={ v.AnomalyCount } placeholder={ strconv.Itoa(v.DefaultAnomaly) } aria-invalid?={ v.Field == "anomaly_count" }/>
+					</label>
+					<label>
+						Keep them for at most
+						<input name="anomaly_age" value={ v.AnomalyAge } placeholder="no limit, or 30d" spellcheck="false" aria-invalid?={ v.Field == "anomaly_age" }/>
+					</label>
+				</div>
+				<p class="help">0 anomalies: no separate lane; anomalies count as normal requests.</p>
+			}
+			if v.ToPrune > 0 {
+				<p class="error banner" role="alert">Saving prunes { thousands(int64(v.ToPrune)) } { pick(v.ToPrune == 1, "request", "requests") } now. Pinned ones stay.</p>
+				<input type="hidden" name="confirm" value={ strconv.Itoa(v.ToPrune) }/>
+			}
+			<div class="acts">
+				if v.ToPrune > 0 {
+					<button class="btn solid danger" type="submit">Save and prune { thousands(int64(v.ToPrune)) }</button>
+				} else {
+					<button class="btn solid" type="submit">Save</button>
+				}
+				<button class="btn quiet" type="submit" name="op" value="defaults">Use the server's defaults</button>
+				<a class="btn quiet" href={ templ.SafeURL(v.Close) }>Close</a>
+			</div>
+		</form>
+	</dialog>
 }
 
 // replayDialog sends the request on show again to a URL; the page waits for
@@ -739,6 +825,7 @@ templ row(r rowView) {
 		data-size={ strconv.FormatInt(r.Size, 10) }
 		data-group={ r.Group }
 		data-mark={ r.mark() }
+		data-lane={ r.lane() }
 		if r.Verdict != "" {
 			data-verdict={ r.Verdict }
 		}
@@ -752,6 +839,9 @@ templ row(r rowView) {
 				}
 				if r.Repeat != "" {
 					<span class="repeat" title={ r.Repeat }>{ repeatShort(r.Repeat) }</span>
+				}
+				if r.Pinned {
+					<span class="tag pinned" title="Pinned: never pruned by retention">pinned</span>
 				}
 			</span>
 			<span class="t">{ clock(r.At) }</span>
@@ -817,6 +907,16 @@ templ exhibit(x exhibitView) {
 		if x.CanReplay {
 			<a class="btn" href={ templ.SafeURL(x.Self + "?replay") }>Replay</a>
 		}
+		<form method="post" action={ templ.SafeURL(x.PinURL) }>
+			<input type="hidden" name="next" value={ x.Self }/>
+			if x.Pinned {
+				<input type="hidden" name="pinned" value="false"/>
+				<button class="btn" type="submit" title="Pinned: retention never prunes it. Unpin to return it to its lane.">Unpin</button>
+			} else {
+				<input type="hidden" name="pinned" value="true"/>
+				<button class="btn" type="submit" title="Retention never prunes a pinned request">Pin</button>
+			}
+		</form>
 	</div>
 	if len(x.Images) > 0 {
 		@images(x)

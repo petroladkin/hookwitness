@@ -35,6 +35,7 @@ type Endpoint struct {
 	Config    string    // how it answers (internal/emulate); empty for the default
 	Counter   int64     // requests that passed its checks since the last reset
 	Enabled   bool      // on: it catches; off: requests to its path go to Unmatched
+	Kept      Kept      // its retention policy, lanes and what it lost
 }
 
 // Header is one header line as received: original case, received order,
@@ -66,6 +67,8 @@ type Request struct {
 	Verdict    string // overall authorization verdict: pass, fail, n/v, or "" without checks
 	Verdicts   string // per check, as JSON (internal/auth.Verdict)
 	Replays    int    // replays kept of it
+	Pinned     bool   // never pruned by retention
+	Anomaly    bool   // kept in the anomaly lane (emulate.Anomalous)
 
 	// Written only: the signatures it carried (keyed digests), and with
 	// them Repeated, which gets each check's earliest earlier kept request
@@ -121,17 +124,29 @@ func (s *Store) CreateEndpoint(ctx context.Context, path string) (Endpoint, erro
 }
 
 const endpointSummary = `SELECT e.id, e.path, e.created_at,
-	(SELECT COUNT(*) FROM requests r WHERE r.endpoint_id = e.id),
+	(SELECT ifnull(sum(n), 0) FROM lane_counts c WHERE c.reg = e.id),
 	(SELECT MAX(received_at) FROM requests r WHERE r.endpoint_id = e.id),
-	e.config, e.counter, e.enabled
+	e.config, e.counter, e.enabled, e.retention, e.pruned, e.pruned_normal_at, e.pruned_anomaly_at,
+	(SELECT ifnull(sum(n), 0) FROM lane_counts c WHERE c.reg = e.id AND c.pinned = 1),
+	(SELECT ifnull(sum(n), 0) FROM lane_counts c WHERE c.reg = e.id AND c.pinned = 0 AND c.anomaly = 1)
 	FROM endpoints e`
 
 func scanEndpoint(sc interface{ Scan(...any) error }) (Endpoint, error) {
 	var e Endpoint
-	var created int64
+	var created, normalAt, anomalyAt int64
 	var last sql.NullInt64
-	if err := sc.Scan(&e.ID, &e.Path, &created, &e.Count, &last, &e.Config, &e.Counter, &e.Enabled); err != nil {
+	var pol string
+	if err := sc.Scan(&e.ID, &e.Path, &created, &e.Count, &last, &e.Config, &e.Counter, &e.Enabled,
+		&pol, &e.Kept.Pruned, &normalAt, &anomalyAt, &e.Kept.Pinned, &e.Kept.Anomalies); err != nil {
 		return Endpoint{}, err
+	}
+	e.Kept.Normal = e.Count - e.Kept.Pinned - e.Kept.Anomalies
+	e.Kept.Policy, _ = ParseRetention(pol) // stored only after validation
+	if normalAt > 0 {
+		e.Kept.NormalAt = fromMillis(normalAt)
+	}
+	if anomalyAt > 0 {
+		e.Kept.AnomalyAt = fromMillis(anomalyAt)
 	}
 	e.CreatedAt = fromMillis(created)
 	if last.Valid {
@@ -169,6 +184,10 @@ func (s *Store) Endpoint(ctx context.Context, id int64) (Endpoint, error) {
 		if last.Valid {
 			e.LastAt = fromMillis(last.Int64)
 		}
+		if err != nil {
+			return e, err
+		}
+		e.Kept, err = s.KeptState(ctx, Unmatched)
 		return e, err
 	}
 	e, err := scanEndpoint(s.db.QueryRowContext(ctx, endpointSummary+` WHERE e.id = ?`, id))
@@ -257,17 +276,12 @@ func (s *Store) updateEndpoint(ctx context.Context, query string, args ...any) e
 // UpdateOutcome replaces a stored request's outcome once the action has run
 // (measured delay, how long a sender waited, a render error).
 func (s *Store) UpdateOutcome(ctx context.Context, id int64, status int, outcome string) error {
-	return s.changeRequest(ctx, id, `UPDATE requests SET status = ?, outcome = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
-		status, outcome, millis(time.Now()))
-}
-
-// changeRequest runs the update of request id, whose query ends in
-// "change_seq = ? WHERE id = ?" (args are the ones before), with the next
-// value of the change sequence.
-func (s *Store) changeRequest(ctx context.Context, id int64, query string, args ...any) error {
 	return s.changeRequestTx(ctx, id, func(tx *sql.Tx, seq int64) error {
-		_, err := tx.ExecContext(ctx, query, append(args, seq, id)...)
-		return err
+		if _, err := tx.ExecContext(ctx, `UPDATE requests SET status = ?, outcome = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
+			status, outcome, millis(time.Now()), seq, id); err != nil {
+			return err
+		}
+		return classify(ctx, tx, id) // its lane follows; the limits apply at the next insert or prune
 	})
 }
 
@@ -349,9 +363,11 @@ func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts str
 		} else if v != nil {
 			verdicts = *v
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE requests SET verdict = ?, verdicts = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
-			verdict, verdicts, millis(time.Now()), seq, id)
-		return err
+		if _, err := tx.ExecContext(ctx, `UPDATE requests SET verdict = ?, verdicts = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
+			verdict, verdicts, millis(time.Now()), seq, id); err != nil {
+			return err
+		}
+		return classify(ctx, tx, id)
 	})
 }
 
@@ -551,23 +567,6 @@ func (s *Store) deleteEndpoint(ctx context.Context, id int64) error {
 	return nil
 }
 
-// KeptFrom is when the oldest kept request of a register arrived, when
-// requests older than it are no longer kept (pruned past the retention, or
-// cleared): before it, the register cannot say what arrived. ok is false
-// while the register still holds its first request, or nothing.
-func (s *Store) KeptFrom(ctx context.Context, endpointID int64) (time.Time, bool, error) {
-	var no, at int64
-	err := s.db.QueryRowContext(ctx, `SELECT no, received_at FROM requests WHERE endpoint_id IS ? ORDER BY id LIMIT 1`,
-		register(endpointID)).Scan(&no, &at)
-	if errors.Is(err, sql.ErrNoRows) {
-		return time.Time{}, false, nil
-	}
-	if err != nil {
-		return time.Time{}, false, fmt.Errorf("oldest request: %w", err)
-	}
-	return fromMillis(at), no > 1, nil
-}
-
 // ClearRequests removes every request of a register and gives the space
 // back (Reclaim). Numbering continues.
 func (s *Store) ClearRequests(ctx context.Context, endpointID int64) error {
@@ -591,8 +590,26 @@ func (s *Store) clearRequests(ctx context.Context, endpointID int64) error {
 			return err
 		}
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM requests WHERE endpoint_id IS ?`, register(endpointID))
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM requests WHERE endpoint_id IS ?`, register(endpointID)); err != nil {
+		return err
+	}
+	// Before now nothing is kept: the strip hatches it.
+	now := millis(time.Now())
+	if endpointID == Unmatched {
+		_, err = tx.ExecContext(ctx, `UPDATE settings SET value = ? WHERE key IN ('unmatched.pruned_normal_at', 'unmatched.pruned_anomaly_at')`,
+			strconv.FormatInt(now, 10))
+	} else {
+		_, err = tx.ExecContext(ctx, `UPDATE endpoints SET pruned_normal_at = ?, pruned_anomaly_at = ? WHERE id = ?`, now, now, endpointID)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // AddRequest stores r in its register (r.EndpointID), numbers it, and prunes
@@ -601,9 +618,9 @@ func (s *Store) clearRequests(ctx context.Context, endpointID int64) error {
 // the endpoint's counter advances and decide sets r.Status and r.Outcome in
 // the same transaction. An endpoint deleted meanwhile yields ErrNotFound,
 // one turned off meanwhile ErrOff.
-func (s *Store) AddRequest(ctx context.Context, r *Request, keep int, decide Decide) error {
-	if keep < 1 {
-		return fmt.Errorf("keep must be at least 1, got %d", keep)
+func (s *Store) AddRequest(ctx context.Context, r *Request, keep Keep, decide Decide) error {
+	if err := keep.check(); err != nil {
+		return err
 	}
 	headers, err := json.Marshal(pairs(r.Headers))
 	if err != nil {
@@ -676,19 +693,40 @@ func (s *Store) AddRequest(ctx context.Context, r *Request, keep int, decide Dec
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM requests WHERE endpoint_id IS ? AND id <= (
-		SELECT id FROM requests WHERE endpoint_id IS ? ORDER BY id DESC LIMIT 1 OFFSET ?)`,
-		register(r.EndpointID), register(r.EndpointID), keep); err != nil {
-		return fmt.Errorf("prune requests: %w", err)
+	// Signatures first, then the class, then the prune: a redelivery's
+	// earlier delivery is in the anomaly lane before the lanes are pruned.
+	// A note that names a request the prune then removed is made again.
+	plain := r.Verdicts
+	note := func() error {
+		v, err := noteRepeats(ctx, tx, r.EndpointID, id, r.Signatures, r.Repeated)
+		if err != nil {
+			return err
+		}
+		r.Verdicts = plain
+		if v != nil {
+			r.Verdicts = *v
+		}
+		return nil
 	}
-	// After the prune: a request no longer kept is not named.
-	if v, err := noteRepeats(ctx, tx, r.EndpointID, id, r.Signatures, r.Repeated); err != nil {
+	if err := note(); err != nil {
 		return err
-	} else if v != nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE requests SET verdicts = ? WHERE id = ?`, *v, id); err != nil {
+	}
+	noted := r.Verdicts != plain
+	if err := classify(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := pruneOnInsert(ctx, tx, r.EndpointID, keep); err != nil {
+		return err
+	}
+	if noted {
+		if err := note(); err != nil {
+			return err
+		}
+	}
+	if r.Verdicts != plain {
+		if _, err := tx.ExecContext(ctx, `UPDATE requests SET verdicts = ? WHERE id = ?`, r.Verdicts, id); err != nil {
 			return fmt.Errorf("note repeated signatures: %w", err)
 		}
-		r.Verdicts = *v
 	}
 	if err := tx.Commit(); err != nil {
 		return err
@@ -709,7 +747,7 @@ func pairs(hs []Header) [][2]string {
 
 const requestColumns = `id, endpoint_id, no, received_at, method, path, raw_query, proto, remote_addr,
 	headers, body_sha256, size, too_large, status, outcome, verdict, verdicts, ifnull(length(body), 0),
-	(SELECT COUNT(*) FROM replays WHERE replays.request_id = requests.id)`
+	(SELECT COUNT(*) FROM replays WHERE replays.request_id = requests.id), pinned, anomaly`
 
 func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, error) {
 	var r Request
@@ -717,7 +755,7 @@ func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, er
 	var at int64
 	var headers string
 	dst := []any{&r.ID, &ep, &r.No, &at, &r.Method, &r.Path, &r.RawQuery, &r.Proto, &r.RemoteAddr,
-		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts, &r.Kept, &r.Replays}
+		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts, &r.Kept, &r.Replays, &r.Pinned, &r.Anomaly}
 	if withBody {
 		dst = append(dst, &r.Body)
 	}
@@ -789,6 +827,8 @@ type ListQuery struct {
 	Verdict       string // pass, fail, n/v, n/c; "" for any
 	Status        int    // 0 for any; -1 for "nothing sent" (status 0)
 	Contains      []byte // a byte substring of the kept body; nil for any
+	Pinned        bool   // only pinned requests
+	Anomaly       bool   // only anomalies
 	// Match, when set, is asked about each kept body that passed the other
 	// filters; requests without a kept body never match.
 	Match    func(body []byte) bool
@@ -818,6 +858,12 @@ func (s *Store) List(ctx context.Context, endpointID int64, q ListQuery) ([]Requ
 		args = append(args, q.Status)
 	case q.Status < 0: // nothing was sent
 		where += " AND status = 0"
+	}
+	if q.Pinned {
+		where += " AND pinned"
+	}
+	if q.Anomaly {
+		where += " AND anomaly"
 	}
 	if q.Contains != nil {
 		where += " AND instr(body, ?) > 0" // both blobs: a byte search

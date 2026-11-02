@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"mime"
@@ -24,15 +25,24 @@ func (h *Handler) patchEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Path    *string `json:"path"`
-		Enabled *bool   `json:"enabled"`
+		Path      *string         `json:"path"`
+		Enabled   *bool           `json:"enabled"`
+		Retention json.RawMessage `json:"retention"`
 	}
 	if !decode(w, r, &in, false) {
 		return
 	}
-	if in.Path == nil && in.Enabled == nil {
-		WriteError(w, http.StatusUnprocessableEntity, "invalid", "give the new path, enabled, or both", "path")
+	if in.Path == nil && in.Enabled == nil && in.Retention == nil {
+		WriteError(w, http.StatusUnprocessableEntity, "invalid", "give the new path, enabled, retention, or several", "path")
 		return
+	}
+	var pruned *int
+	if in.Retention != nil {
+		// Checked before anything changes: an invalid policy changes nothing.
+		if _, err := parseRetention(in.Retention); err != nil {
+			WriteError(w, http.StatusUnprocessableEntity, "invalid", err.Error(), "retention")
+			return
+		}
 	}
 	var c store.EndpointChange
 	if in.Path != nil {
@@ -69,7 +79,21 @@ func (h *Handler) patchEndpoint(w http.ResponseWriter, r *http.Request) {
 	if c.Enabled != nil {
 		h.log.Info("endpoint turned "+onOff(*c.Enabled), logAttrs(r, "path", ep.Path, "via", "api")...)
 	}
-	h.writeEndpoint(w, r, ep.ID)
+	if in.Retention != nil {
+		n, ok := h.patchRetention(w, r, ep.ID, in.Retention)
+		if !ok {
+			return
+		}
+		pruned = &n
+	}
+	ep2, err := h.store.Endpoint(r.Context(), ep.ID)
+	if err != nil {
+		h.fail(w, "endpoint", err)
+		return
+	}
+	v := h.endpointView(r, ep2)
+	v.ToPrune = pruned
+	writeJSON(w, http.StatusOK, v)
 }
 
 func (h *Handler) writeEndpoint(w http.ResponseWriter, r *http.Request, id int64) {
@@ -193,6 +217,9 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request, reg int64, path
 	o := report.Options{
 		Endpoint: path, Selection: rq.Words, From: rq.Selection.From, To: rq.Selection.To,
 		Mask: rq.Mask, Version: h.o.Version, Generated: now, NoImages: rq.NoImages, Fonts: h.o.Fonts,
+	}
+	if k, err := h.store.KeptState(r.Context(), reg); err == nil {
+		o.Pruned = &report.Pruned{NormalUntil: k.NormalAt, AnomaliesUntil: k.AnomalyAt, Pinned: k.Pinned}
 	}
 	if rq.Setup {
 		o.Setup = setup

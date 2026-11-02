@@ -73,7 +73,7 @@ func newAccessEnv(t *testing.T, machineToken string) *accessEnv {
 	auth := access.New(st, keys, machineToken)
 	logs := &lockedBuffer{}
 	lv := live.New()
-	h := New(st, lv, slog.New(slog.NewTextHandler(logs, nil)), Options{Prefix: "/admin", MaxBody: 10 << 20, Retention: 1000,
+	h := New(st, lv, slog.New(slog.NewTextHandler(logs, nil)), Options{Prefix: "/admin", MaxBody: 10 << 20, Retention: store.Keep{Normal: 1000},
 		Hosts: []string{"hooks.example.test", "example.com"}, Keys: keys, Access: auth})
 	return &accessEnv{env: env{h, st, lv}, auth: auth, keys: keys, log: logs, seen: &bytes.Buffer{}}
 }

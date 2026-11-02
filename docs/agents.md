@@ -139,8 +139,9 @@ The tools are task-shaped. Each result is a summary line, then compact JSON.
 | `reset_endpoint`, `recheck`, `delete_endpoint` | reset the counter or clear requests, verify again, delete |
 | `export_endpoint`, `import_endpoints` | an endpoint's setup as a file (secret names and kinds, never values); endpoints created, or replaced, from one ([Sharing a setup](sharing.md)) |
 | `replay_request` | sends a caught request byte for byte to a URL (your handler) and returns its answer: status, headers, body, timings or the error ([Replaying a request](replay.md)); `get_request` lists a request's replays |
+| `set_retention`, `pin_request` | what an endpoint keeps: counts and ages of normal requests and anomalies; a pin keeps one request for good ([Keeping requests](keeping.md)); `list_requests` filters `pinned` and `anomaly` |
 
-`delete_endpoint`, `reset_endpoint` and `import_endpoints` (it can replace an endpoint's behaviour) are marked destructive, and the
+`delete_endpoint`, `reset_endpoint`, `set_retention` (a lower limit deletes requests) and `import_endpoints` (it can replace an endpoint's behaviour) are marked destructive, and the
 reading tools read-only, so a client can ask you before the destructive ones.
 `replay_request` is the one tool that reaches outside the server (open world).
 A session looks like this:

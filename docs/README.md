@@ -32,6 +32,8 @@ by task: what to click and what happens. [Українською](uk/README.md).
 13. [Setting up a shared server](server.md): from nothing to a team
     server: HTTPS for senders, the first admin, the admin out of reach,
     teammates and tokens, backups.
+14. [Keeping requests](keeping.md): what a register keeps over days of
+    capture: normal requests and anomalies apart, counts and ages, pins.
 
 Reference: the [REST API](api.md) (English only), and its OpenAPI 3.1
 description served at `/admin/api/v1/openapi.json`.

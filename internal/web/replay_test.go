@@ -109,7 +109,7 @@ func TestReplayAdminsOnly(t *testing.T) {
 	ctx := context.Background()
 	ep, _ := e.st.CreateEndpoint(ctx, "/hooks")
 	r := &store.Request{EndpointID: ep.ID, Method: "POST", Path: "/hooks", Proto: "HTTP/1.1", Body: []byte("{}"), Size: 2}
-	if err := e.st.AddRequest(ctx, r, 100, nil); err != nil {
+	if err := e.st.AddRequest(ctx, r, store.Keep{Normal: 100}, nil); err != nil {
 		t.Fatal(err)
 	}
 	self := fmt.Sprintf("/admin/e/%d/r/%d", ep.ID, r.ID)

@@ -102,13 +102,15 @@ into the Unmatched register with a `404`.
 | `GET /endpoints` | all endpoints, by path; `?path=/x` finds one (an empty list when there is none); `?enabled=true` or `false` only those on or off |
 | `POST /endpoints` | create: `{"path": "/x"}`; no path or an empty one picks a random path. `201`, `Location` |
 | `GET /endpoints/{id}` | one endpoint |
-| `PATCH /endpoints/{id}` | change its path, `{"path": "/y"}` (validated as on create; its requests and behaviour stay), turn it off or on, `{"enabled": false}`, or both at once (both change or, on an error, neither). `200` with the endpoint |
+| `PATCH /endpoints/{id}` | change its path, `{"path": "/y"}` (validated as on create; its requests and behaviour stay), turn it off or on, `{"enabled": false}`, or both at once (both change or, on an error, neither); set its retention, `{"retention": {…}}` or `null` for the server's defaults (below). `200` with the endpoint |
 | `DELETE /endpoints/{id}` | delete it and its requests. `204` |
 
 ```console
 $ curl -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/orders/events"}'
 201
-{"id":1,"path":"/orders/events","url":"http://localhost:8080/orders/events","requests":0,"counter":0,"enabled":true,"created_at":"2026-10-12T17:28:06.808Z"}
+{"id":1,"path":"/orders/events","url":"http://localhost:8080/orders/events","requests":0,"counter":0,"enabled":true,"created_at":"2026-10-12T17:28:06.808Z",
+ "retention":null,"retention_effective":{"normal":{"count":1000,"max_age":null},"anomalies":{"count":1000,"max_age":null}},
+ "kept":{"normal":0,"anomalies":0,"pinned":0},"pruned":{"count":0,"normal_until":null,"anomalies_until":null}}
 ```
 
 - `url` is where senders deliver: the path on the host name you called the
@@ -123,6 +125,18 @@ $ curl -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/
 - Paths are letters, digits and `. _ ~ -` segments; `/healthz` and the admin
   prefix are reserved (`422`, field `path`). A taken path is `409
   duplicate_path`.
+- Retention ([Keeping requests](keeping.md)): a register keeps normal
+  requests and anomalies (not answered 2xx, a failed verdict, a redelivery)
+  in two lanes, each pruned oldest first on its own; pinned requests never.
+  `retention` is the endpoint's own policy, `{"normal": {"count", "max_age"},
+  "anomalies": {"count", "max_age"}}`, each field optional (absent: the
+  server's default; `max_age` such as `90m`, `36h`, `7d`; anomalies `count`
+  0: no separate lane), or `null`. `retention_effective` resolves it
+  (`anomalies` `null` without a lane), `kept` counts each lane and the pinned
+  ones, `pruned` says how many retention removed and up to when each lane
+  lost requests. A PATCH that lowers a limit prunes at once; its answer's
+  `to_prune` says how many went. `422` (field `retention`) for an invalid
+  policy, which changes nothing.
 
 ### Behaviour
 
@@ -229,7 +243,7 @@ never holds a secret's value, hash or fingerprint.
 | Route | Does |
 |---|---|
 | `GET /setup` | the setup file of `?id=<id>` (repeat it for several) or of every endpoint; `Content-Disposition` names it `<path>.hookwitness.json` |
-| `POST /setup` | create the file's endpoints, all or none; `201` when it created one, else `200`, with `{"endpoints": [{"id", "path", "result", "secrets_not_set"}]}`. `?on_conflict=replace` replaces the behaviour of an endpoint already at a path (its requests, counter and on/off state stay; a secret of the same name and kind keeps its value); without it a taken path is `409 duplicate_path` |
+| `POST /setup` | create the file's endpoints, all or none; `201` when it created one, else `200`, with `{"endpoints": [{"id", "path", "result", "secrets_not_set", "pruned"}]}`. `?on_conflict=replace` replaces the behaviour and retention of an endpoint already at a path (its requests, counter and on/off state stay; a secret of the same name and kind keeps its value; `pruned`: requests a lower retention removed at once); without it a taken path is `409 duplicate_path` |
 
 ```console
 $ curl -X POST $API/setup -H 'Content-Type: application/json' --data-binary @payments-webhooks.hookwitness.json
@@ -286,6 +300,9 @@ $ curl -X PUT $API/endpoints/1/secrets/ORDERS_PASSWORD -H 'Content-Type: applica
 | `…/requests?include=body` | each item carries `body_text` or `body_base64`, as one request does; `limit` is then at most 100 |
 | `DELETE /endpoints/{id}/requests` | clear the endpoint's requests (numbering goes on). `204` |
 | `GET /unmatched/requests` | the Unmatched register (requests to paths no endpoint has), with the same parameters; read-only |
+| `GET /unmatched`, `PATCH /unmatched` | the Unmatched register's `requests`, `last_request_at`, `retention`, `retention_effective`, `kept`, `pruned`; PATCH sets its `retention` (normal only: it has one lane) |
+| `…/requests?pinned=true`, `?anomaly=true` | only pinned requests, only anomalies |
+| `PUT /requests/{id}/pin`, `DELETE /requests/{id}/pin` | pin a request (retention never prunes it; clearing the register still does) or unpin it; send `Content-Type: application/json` (no body needed). `204` |
 | `GET /requests/{id}` | one request in full, Unmatched ones too |
 | `GET /requests/{id}/body` | the exact body as received, with the sender's `Content-Type`, always as a download (`attachment`, `nosniff`, a `sandbox` CSP): whatever a sender sent never runs as a page; `404 not_kept` when it was over the limit |
 | `GET /requests/{id}/image?path=<pointer>` | the decoded bytes of an image in the body (`path=` empty for a body that is an image), typed by what they are; `404 not_found` without a value there, `422 not_an_image` when it is no image |
@@ -294,7 +311,7 @@ A list item:
 
 ```json
 {"id":1,"endpoint_id":1,"no":1,"received_at":"2026-10-12T17:28:07.433Z","method":"POST","path":"/orders/events",
- "query":"","status":200,"verdict":"pass","body_size":28,"body_kept":true,"content_type":"application/json","replays":0}
+ "query":"","status":200,"verdict":"pass","body_size":28,"body_kept":true,"content_type":"application/json","replays":0,"pinned":false,"anomaly":false}
 ```
 
 - `status` is what hookwitness answered (`0` while a timeout still holds it).

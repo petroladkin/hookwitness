@@ -20,9 +20,11 @@ import (
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
-// Format is the version of the file this build writes and reads; a file
-// of a newer one is refused.
-const Format = 1
+// Format is the newest version of the file this build reads; a file of a
+// newer one is refused. Export writes the lowest version that holds the
+// file, so a file of endpoints that use nothing newer still reads in older
+// versions: 2 adds an endpoint's retention.
+const Format = 2
 
 // MaxSize bounds a setup file: schemas are up to 1 MiB each.
 const MaxSize = 16 << 20
@@ -43,6 +45,9 @@ type Endpoint struct {
 	Vars    []emulate.Var    `json:"vars"`
 	Schemas []emulate.Schema `json:"schemas"`
 	Secrets []Secret         `json:"secrets"`
+	// Retention is the endpoint's own retention (format 2); absent: the
+	// importing server's defaults.
+	Retention *store.Retention `json:"retention,omitempty"`
 }
 
 // Secret names a secret the endpoint needs, and its kind: "key" (a signing
@@ -54,19 +59,25 @@ type Secret struct {
 
 // Source is an endpoint to export.
 type Source struct {
-	Path   string
-	Config emulate.Config
+	Path      string
+	Config    emulate.Config
+	Retention store.Retention // zero: the server's defaults
 }
 
 // Export makes the setup file of endpoints.
 func Export(eps ...Source) File {
-	f := File{Hookwitness: Format, Endpoints: []Endpoint{}}
+	f := File{Hookwitness: 1, Endpoints: []Endpoint{}}
 	for _, ep := range eps {
 		c := ep.Config
 		e := Endpoint{Path: ep.Path, Default: c.Default,
 			Rules: nonNil(c.Rules), Checks: nonNil(c.Checks), Vars: nonNil(c.Vars), Schemas: nonNil(c.Schemas), Secrets: []Secret{}}
 		for _, s := range c.Secrets {
 			e.Secrets = append(e.Secrets, Secret{Name: s.Name, Kind: s.Kind})
+		}
+		if !ep.Retention.IsZero() {
+			r := ep.Retention
+			e.Retention = &r
+			f.Hookwitness = 2
 		}
 		f.Endpoints = append(f.Endpoints, e)
 	}
@@ -94,6 +105,9 @@ func (f File) JSON() []byte {
 type Options struct {
 	Reserved string        // the path prefix endpoints may not use (catch.CheckPath)
 	MaxWait  time.Duration // the longest delay a reply may ask for
+	// Keep is the server's default retention: an imported endpoint is
+	// pruned to its retention at once. Zero: the housekeeping does it.
+	Keep store.Keep
 }
 
 // Parse reads and checks a setup file: the format marker and version,
@@ -215,6 +229,7 @@ func FileName(path string) string {
 // Importer stores imported endpoints (internal/store.Store).
 type Importer interface {
 	ImportEndpoints(ctx context.Context, items []store.ImportItem) ([]store.ImportResult, error)
+	PruneNow(ctx context.Context, reg int64, now time.Time, d store.Keep) (int, error)
 }
 
 // What an import did to an endpoint.
@@ -230,6 +245,7 @@ type Result struct {
 	Path   string   `json:"path"`
 	Result string   `json:"result"` // Created, Replaced or Unchanged
 	Unset  []string `json:"secrets_not_set"`
+	Pruned int      `json:"pruned,omitempty"` // requests its retention removed at once
 }
 
 // Plan says how to apply a file.
@@ -254,7 +270,11 @@ func Apply(ctx context.Context, st Importer, f File, p Plan, o Options) ([]Resul
 	items := make([]store.ImportItem, 0, len(f.Endpoints))
 	stored := make([]emulate.Config, len(f.Endpoints))
 	for i, e := range f.Endpoints {
-		items = append(items, store.ImportItem{Path: e.Path, Replace: p.Replace(e.Path), Config: func(old string, exists bool) (string, error) {
+		var ret string // a file's endpoint without retention takes the defaults
+		if e.Retention != nil {
+			ret = e.Retention.String()
+		}
+		items = append(items, store.ImportItem{Path: e.Path, Replace: p.Replace(e.Path), Retention: ret, Config: func(old string, exists bool) (string, error) {
 			var have *emulate.Config
 			if exists {
 				c, err := emulate.Parse(old)
@@ -290,6 +310,11 @@ func Apply(ctx context.Context, st Importer, f File, p Plan, o Options) ([]Resul
 			res.Result = Created
 		case !r.Changed:
 			res.Result = Unchanged
+		}
+		if r.Changed && o.Keep.Normal > 0 {
+			// A lowered limit applies at once (the import is committed: a
+			// failure here leaves it to the housekeeping).
+			res.Pruned, _ = st.PruneNow(context.WithoutCancel(ctx), r.ID, time.Now(), o.Keep)
 		}
 		out = append(out, res)
 	}

@@ -302,6 +302,31 @@ if (!only.length || only.includes("report-html")) {
 }
 await shot("report-html", `file://${join(work, "report.html")}`, { maxHeight: 1000 });
 
+// docs/keeping.md: a minute of capture on /orders/capture, whose Rules tab
+// answers every 4th request 500, keeping the newest 5 normal requests and 4
+// anomalies, with #2 pinned: the strip hatches what both lanes lost (not
+// kept) and, lighter, where only anomalies are kept. Real time, about 60 s.
+const keepShots = ["keeping-register", "keeping-dialog", "keeping-pinned"];
+if (!only.length || only.some((n) => keepShots.includes(n))) {
+  const cap = (await api("POST", "/endpoints", { path: "/orders/capture" })).json.id;
+  await behave(cap, { rules: [{ when: { kind: "every", n: 4 }, do: "reply", reply: { status: 500 } }] });
+  await api("PATCH", `/endpoints/${cap}`, { retention: { normal: { count: 5 }, anomalies: { count: 4 } } });
+  let pinned = 0;
+  for (let i = 1; i <= 24; i++) {
+    await send("/orders/capture", JSON.stringify({ order: 1000 + i, status: "captured" }), { "Content-Type": "application/json" });
+    if (i === 2) {
+      pinned = await byNo(cap, 2);
+      await api("PUT", `/requests/${pinned}/pin`, {});
+    }
+    await sleep(2500);
+  }
+  await shot("keeping-register", `${UI}/e/${cap}`, { maxHeight: 640 });
+  await shot("keeping-dialog", `${UI}/e/${cap}?retention`, { selector: dialog, maxHeight: 1000,
+    step: `(() => { const f = document.querySelector('dialog[open] form'); f.elements.normal_count.value = "3"; f.submit(); })()` });
+  await shot("keeping-pinned", `${UI}/e/${cap}/r/${pinned}`, { maxHeight: 700 });
+  await api("DELETE", `/endpoints/${cap}`);
+}
+
 // docs/endpoints.md, "The strip": a sender's real minute on its own
 // endpoint, so every mark the text names is on the paper: a body retried
 // with backoff (4 s, then 8 s) after two 503s, a burst, a failed check, a timeout, a drop,

@@ -68,8 +68,9 @@ func newEnv(t *testing.T) env {
 	stop := make(chan struct{})
 	stopOnce := sync.OnceFunc(func() { close(stop) })
 	t.Cleanup(stopOnce)
-	a := api.New(st, lv, log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: stop, Version: "v0.0.0-test"})
-	catcher := &catch.Handler{Store: st, Live: lv, Log: log, MaxBody: 1 << 20, Retention: 1000, Keys: keys}
+	a := api.New(st, lv, log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: stop, Version: "v0.0.0-test",
+		Keep: store.Keep{Normal: 1000, Anomalies: 1000}})
+	catcher := &catch.Handler{Store: st, Live: lv, Log: log, MaxBody: 1 << 20, Retention: store.Keep{Normal: 1000, Anomalies: 1000}, Keys: keys}
 
 	polls, inPoll := &atomic.Int64{}, &atomic.Int64{}
 	counted := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -158,7 +159,7 @@ func TestToolList(t *testing.T) {
 	}
 	want := []string{"create_endpoint", "list_endpoints", "get_endpoint", "configure_endpoint", "set_secret", "wait_for_request",
 		"list_requests", "get_request", "expect", "reset_endpoint", "recheck", "delete_endpoint", "switch_endpoint",
-		"export_endpoint", "import_endpoints", "replay_request"}
+		"export_endpoint", "import_endpoints", "replay_request", "pin_request", "set_retention"}
 	if len(got) != len(want) {
 		t.Fatalf("%d tools, want %d", len(got), len(want))
 	}
@@ -173,7 +174,7 @@ func TestToolList(t *testing.T) {
 			t.Errorf("%s is not marked read-only", name)
 		}
 	}
-	for _, name := range []string{"delete_endpoint", "reset_endpoint", "import_endpoints"} {
+	for _, name := range []string{"delete_endpoint", "reset_endpoint", "import_endpoints", "set_retention"} {
 		if a := got[name].Annotations; a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint {
 			t.Errorf("%s is not marked destructive", name)
 		}
@@ -181,7 +182,7 @@ func TestToolList(t *testing.T) {
 	if a := got["replay_request"].Annotations; a.ReadOnlyHint || a.OpenWorldHint == nil || !*a.OpenWorldHint || a.DestructiveHint == nil || *a.DestructiveHint {
 		t.Errorf("replay_request is not marked open-world and not destructive: %+v", a)
 	}
-	for _, name := range []string{"create_endpoint", "configure_endpoint", "set_secret", "recheck", "switch_endpoint"} {
+	for _, name := range []string{"create_endpoint", "configure_endpoint", "set_secret", "recheck", "switch_endpoint", "pin_request"} {
 		if a := got[name].Annotations; a.DestructiveHint == nil || *a.DestructiveHint {
 			t.Errorf("%s is marked destructive", name)
 		}

@@ -156,6 +156,16 @@ func (o Outcome) Good() bool {
 	return (o.Action == ActReply) && o.Status >= 200 && o.Status < 300
 }
 
+// Anomalous reports a request retention keeps in the anomaly lane, apart
+// from the normal ones: not answered 2xx (no reply, a refusal, a render
+// error, too large or busy), a failed verdict, or a redelivery (a signature
+// another kept request of the endpoint carried). The store classifies with
+// the same rule in SQL (internal/store anomalyExpr; a test holds them
+// together). Every request the strip marks other than "ok" is one.
+func Anomalous(o Outcome, tooLarge bool, verdict string, redelivered bool) bool {
+	return tooLarge || !o.Good() || verdict == "fail" || redelivered
+}
+
 // AsSent is the reply as HTTP sends it for a request of method, as Go's
 // server does: a 204 (or 1xx) reply has no body, Content-Length or
 // Transfer-Encoding; a 304 neither those nor Content-Type; a reply to HEAD

@@ -69,16 +69,9 @@
     if (e.detail && e.detail.type === "update") return;
     const empty = document.getElementById("register-empty");
     if (empty) empty.remove();
-    // The server prunes past the retention limit; so does the page.
-    const reg = document.getElementById("register");
-    const keep = Number(reg && reg.dataset.keep) || 0;
-    const rows = reg ? reg.querySelectorAll(":scope > li.row") : [];
-    if (keep > 0) for (let i = rows.length - 1; i >= keep; i--) rows[i].remove();
+    // The exact count follows with the pass's "counts" event.
     const kept = document.getElementById("kept");
-    if (kept) {
-      const n = (Number(kept.textContent) || 0) + 1;
-      kept.textContent = String(keep > 0 ? Math.min(n, keep) : n);
-    }
+    if (kept) kept.textContent = String((Number(kept.textContent) || 0) + 1);
     markSelected();
     draw();
   });
@@ -104,6 +97,15 @@
         el.textContent = String(n);
         if (el.dataset.count === "nc") el.parentElement.hidden = n === 0;
       });
+      // Retention pruned in lanes: a loaded row below its lane's lowest kept
+      // id is gone from the store, so from the page; pinned rows stay.
+      if (reg && typeof c.wm_normal === "number") {
+        const low = { normal: c.wm_normal, anomaly: c.wm_anomaly };
+        reg.querySelectorAll(":scope > li.row").forEach((li) => {
+          if (window.HookwitnessStrip.pruned(li.dataset.lane, Number(li.dataset.id), low)) li.remove();
+        });
+        draw();
+      }
       const form = document.querySelector(".verdict-counts form[data-confirm]");
       if (form && typeof c.kept === "number") {
         form.dataset.confirm = form.dataset.confirm.replace(/^Re-check the \d+ /, "Re-check the " + c.kept + " ");
@@ -201,6 +203,7 @@
   let spanKey = "2m";
   let fetched = new Map(); // id → mark, from the server
   let keptFrom = 0; // unix ms; 0: nothing before is lost
+  let thinnedUntil = 0, thinned = ""; // before it only one lane is kept
   let loading = null;
 
   function css(v) {
@@ -233,6 +236,7 @@
     }
     fetched = new Map();
     keptFrom = 0;
+    thinnedUntil = 0;
     load();
   }
   function load() {
@@ -243,9 +247,12 @@
       .then((a) => {
         if (req !== loading || key !== spanKey) return; // a newer choice won
         const m = new Map();
-        a.marks.forEach(([id, at, size, mark, verdict, group]) => m.set(String(id), { id: String(id), at, size, mark, verdict, group }));
+        a.marks.forEach(([id, at, size, mark, verdict, group, pinned]) =>
+          m.set(String(id), { id: String(id), at, size, mark, verdict, group, pinned: !!pinned }));
         fetched = m;
         keptFrom = a.kept_from || 0;
+        thinnedUntil = a.thinned_until || 0;
+        thinned = a.thinned || "";
         draw();
       })
       .catch(() => {})); // the rows still draw; the next load tries again
@@ -264,6 +271,7 @@
         mark: li.dataset.mark || "ok",
         verdict: li.dataset.verdict || "",
         group: li.dataset.group || "",
+        pinned: li.dataset.lane === "pinned",
       });
     });
     const out = [...all.values()];
@@ -298,19 +306,21 @@
 
     ctx.fillStyle = c.paper;
     ctx.fillRect(0, 0, w, h);
-    // Before the oldest kept request the register cannot say what arrived:
-    // shaded, never an empty paper.
-    if (keptFrom && keptFrom > now - WINDOW) {
-      const xk = Math.min(pen, x(keptFrom));
+    // Where retention or a clear left the register without requests it
+    // cannot say what arrived: hatched, never an empty paper. Densely
+    // before keptFrom (nothing kept but pins), lightly where only one lane
+    // is kept.
+    const hatch = (x0, x1, step, label) => {
+      if (x1 <= x0) return;
       ctx.fillStyle = c.paper2;
-      ctx.fillRect(0, top - 10, xk, base - top + 10);
+      ctx.fillRect(x0, top - 10, x1 - x0, base - top + 10);
       ctx.save();
       ctx.beginPath();
-      ctx.rect(0, top - 10, xk, base - top + 10);
+      ctx.rect(x0, top - 10, x1 - x0, base - top + 10);
       ctx.clip();
       ctx.strokeStyle = c.grid;
       ctx.lineWidth = 1;
-      for (let d = -h; d < xk + h; d += 8) {
+      for (let d = x0 - h; d < x1 + h; d += step) {
         ctx.beginPath();
         ctx.moveTo(d, base);
         ctx.lineTo(d + (base - top + 10), top - 10);
@@ -318,15 +328,20 @@
       }
       ctx.restore();
       ctx.font = "600 10px " + mono;
-      if (xk > ctx.measureText("not kept").width + 12) {
+      if (x1 - x0 > ctx.measureText(label).width + 12) {
         ctx.fillStyle = c.muted;
         ctx.strokeStyle = c.paper2;
         ctx.lineWidth = 3;
         ctx.textAlign = "center";
-        ctx.strokeText("not kept", xk / 2, (top + base) / 2);
-        ctx.fillText("not kept", xk / 2, (top + base) / 2);
+        ctx.strokeText(label, (x0 + x1) / 2, (top + base) / 2);
+        ctx.fillText(label, (x0 + x1) / 2, (top + base) / 2);
       }
+    };
+    const xk = keptFrom && keptFrom > now - WINDOW ? Math.min(pen, x(keptFrom)) : 0;
+    if (thinnedUntil && thinnedUntil > now - WINDOW) {
+      hatch(Math.max(0, xk), Math.min(pen, x(thinnedUntil)), 16, thinned === "normal" ? "only normal kept" : "only anomalies kept");
     }
+    if (xk) hatch(0, xk, 8, "not kept");
     // Grid: a line every sp.line, a major one every sp.major, moving with
     // the paper.
     ctx.lineWidth = 1;
@@ -433,6 +448,18 @@
       ctx.beginPath();
       ctx.arc(mx, tip, m.selected ? 4 : 3, 0, Math.PI * 2);
       ctx.fill();
+      if (m.pinned) {
+        // Pinned: a small pin over the head, never pruned by retention.
+        ctx.strokeStyle = c.ink;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(mx, tip - 6);
+        ctx.lineTo(mx, tip - 12);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(mx, tip - 14, 2.5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     });
     // The pen.
     ctx.strokeStyle = c.alarm;

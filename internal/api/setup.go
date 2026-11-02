@@ -14,7 +14,7 @@ import (
 )
 
 func (h *Handler) setupOptions() setup.Options {
-	return setup.Options{Reserved: h.o.Reserved, MaxWait: h.o.MaxWait}
+	return setup.Options{Reserved: h.o.Reserved, MaxWait: h.o.MaxWait, Keep: h.o.Keep}
 }
 
 // exportSetup answers the setup file of the endpoints named by id (all
@@ -65,7 +65,7 @@ func ExportSetup(eps []store.Endpoint) (setup.File, string, error) {
 		if err != nil {
 			return setup.File{}, "", err
 		}
-		src = append(src, setup.Source{Path: ep.Path, Config: cfg})
+		src = append(src, setup.Source{Path: ep.Path, Config: cfg, Retention: ep.Kept.Policy})
 	}
 	name := "endpoints.hookwitness.json"
 	if len(eps) == 1 {
