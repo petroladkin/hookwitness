@@ -126,6 +126,12 @@ reverse proxy that buffers responses holds it back; turn buffering off for
 the admin prefix (nginx: `proxy_buffering off;`; Hookwitness also sends
 `X-Accel-Buffering: no`). A reload always shows the current state.
 
+**FEED LOST — RETRYING** in the header means the stream's address answered
+an error while the page itself loads: a proxy's timeout or `502` on
+`/events`, or a server restarting. The page keeps trying with growing pauses
+(up to about a minute) and is live again by itself once the stream answers.
+Raise the proxy's read timeout for the admin prefix, or let `/events` through.
+
 ## The API answers 401 since a user was added
 
 The first user turns login on for the REST API and MCP too: scripts and
