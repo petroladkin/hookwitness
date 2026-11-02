@@ -14,12 +14,15 @@ import (
 // its name, its kind and whether it is set: never its value, seal, hash or
 // fingerprint.
 type Setup struct {
-	Checks  []SetupCheck
-	Schemas []SetupSchema
-	Rules   []SetupRule
-	Default SetupReply
-	Vars    []emulate.Var
-	Secrets []SetupSecret
+	// Receiver is where requests no rule takes are forwarded, in words;
+	// "" when the endpoint answers them itself.
+	Receiver string
+	Checks   []SetupCheck
+	Schemas  []SetupSchema
+	Rules    []SetupRule
+	Default  SetupReply
+	Vars     []emulate.Var
+	Secrets  []SetupSecret
 }
 
 // SetupCheck is one check: its number, label and what it does.
@@ -80,8 +83,17 @@ func describeSetup(c emulate.Config, mask map[string]bool) *Setup {
 	for _, sc := range c.Schemas {
 		s.Schemas = append(s.Schemas, SetupSchema{Name: sc.Name, Use: use(c.SchemaUsers(sc.Name))})
 	}
+	if c.Forward != nil {
+		s.Receiver = "requests no rule takes are forwarded to " + c.Forward.Where() + " · " + c.Forward.Summary(maxWaitShown)
+	}
 	for i, r := range c.Rules {
 		sr := SetupRule{No: i + 1, When: r.When.Label(), Then: r.Action()}
+		switch {
+		case c.Forward != nil && r.Forward:
+			sr.Then += " · the receiver gets it too"
+		case c.Forward != nil:
+			sr.Then += " · not forwarded"
+		}
 		if r.Do == emulate.ActReply {
 			rep := reply(r.Reply)
 			sr.Reply = &rep
@@ -97,6 +109,10 @@ func describeSetup(c emulate.Config, mask map[string]bool) *Setup {
 	}
 	return s
 }
+
+// maxWaitShown is no cap: a receiver's timeout was checked against
+// -max-wait when it was saved, so the report shows it as configured.
+const maxWaitShown = 1 << 62
 
 func setupReply(r emulate.Reply) SetupReply {
 	out := SetupReply{Status: r.Status, Delay: r.DelayLabel(), Headers: r.Headers, Body: r.Body}

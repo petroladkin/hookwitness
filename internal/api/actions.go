@@ -218,6 +218,7 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request, reg int64, path
 	o := report.Options{
 		Endpoint: path, Selection: rq.Words, From: rq.Selection.From, To: rq.Selection.To,
 		Mask: rq.Mask, Version: h.o.Version, Generated: now, NoImages: rq.NoImages, Fonts: h.o.Fonts,
+		Exchange: h.store.ForwardOf,
 	}
 	if k, err := h.store.KeptState(r.Context(), reg); err == nil {
 		o.Pruned = &report.Pruned{NormalUntil: k.NormalAt, AnomaliesUntil: k.AnomalyAt, Pinned: k.Pinned}

@@ -83,6 +83,9 @@ func (m *mdWriter) head(h *Head) error {
 	if h.PrunedLine != "" {
 		m.p("**Pruned** ", mdText(h.PrunedLine), "\n\n")
 	}
+	if h.ReceiverLine != "" {
+		m.p("**Receiver** ", mdText(h.ReceiverLine), "\n\n")
+	}
 	if h.Setup != nil {
 		m.setup(h)
 	}
@@ -113,6 +116,9 @@ func (m *mdWriter) setup(h *Head) {
 			m.p("| ", mdCell(sc.Name), " | ", mdCell(sc.Use), " |\n")
 		}
 		m.p("\n")
+	}
+	if s.Receiver != "" {
+		m.p("**Receiver** ", mdText(s.Receiver), "\n\n")
 	}
 	m.p("**Rules** (in order; the first that holds answers)\n\n")
 	if len(s.Rules) == 0 {
@@ -173,6 +179,9 @@ func (m *mdWriter) item(it Item) error {
 	m.p("| | |\n|---|---|\n")
 	m.p("| Received | ", stamp(it.At), " from ", mdCode(it.Remote), " · ", mdCell(it.Proto), " |\n")
 	m.p("| Answer | ", mdCell(answerLine(it.Answer)), " |\n")
+	if it.Receiver != "" {
+		m.p("| Receiver | ", mdCell(it.Receiver), " |\n")
+	}
 	if it.Pinned {
 		m.p("| Pinned | never pruned by retention |\n")
 	}
@@ -247,6 +256,27 @@ func (m *mdWriter) item(it Item) error {
 		m.p("\n", fence, lang, "\n", text, "\n", fence, "\n")
 		if it.Body.Cut {
 			m.p("\n*Cut at ", size(int64(it.Body.Shown)), ".*\n")
+		}
+	}
+	if it.ReceiverBody != nil {
+		m.p("\n**The receiver's answer** · ", strconv.Itoa(len(it.ReceiverHeaders)), " header lines · ", mdText(receiverBodyNote(it)), "\n\n")
+		if len(it.ReceiverHeaders) > 0 {
+			m.p("| Name | Value |\n|---|---|\n")
+			for _, hd := range it.ReceiverHeaders {
+				v := mdCode(hd.Value)
+				if hd.Masked {
+					v = mdCell(hd.Value)
+				}
+				m.p("| ", mdCode(hd.Name), " | ", v, " |\n")
+			}
+		}
+		if b := it.ReceiverBody; b.Kind == BodyJSON || b.Kind == BodyText {
+			lang := ""
+			if b.Kind == BodyJSON {
+				lang = "json"
+			}
+			fence := strings.Repeat("`", max(3, longestRun(b.Text, '`')+1))
+			m.p("\n", fence, lang, "\n", strings.TrimRight(b.Text, "\n"), "\n", fence, "\n")
 		}
 	}
 	return nil

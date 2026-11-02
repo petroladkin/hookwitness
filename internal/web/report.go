@@ -125,6 +125,7 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
 	format, sel := rq.Format, rq.Selection
 	now := time.Now().UTC()
 	o := report.Options{
+		Exchange:  h.store.ForwardOf,
 		Endpoint:  ep.Path,
 		Selection: rq.Words,
 		From:      sel.From,

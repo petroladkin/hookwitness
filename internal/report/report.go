@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -92,6 +93,9 @@ type Options struct {
 	Fonts fs.FS
 	// Pruned is what the register's retention removed; nil: nothing.
 	Pruned *Pruned
+	// Exchange loads a forwarded request's exchange with the receiver, to
+	// show the receiver's answer; nil shows only its summary.
+	Exchange func(ctx context.Context, requestID int64) (store.Forward, error)
 }
 
 // Pruned is what a register lost to retention: up to when each lane lost
@@ -202,7 +206,15 @@ func Write(ctx context.Context, w io.Writer, f Format, o Options, src Source) er
 	}
 	if h.Count > 0 { // through 0 would mean no bound
 		err = src(ctx, true, h.lastID, func(r store.Request) error {
-			return wr.item(h.item(r))
+			it := h.item(r)
+			if it.Receiver != "" && o.Exchange != nil {
+				if fw, err := o.Exchange(ctx, r.ID); err == nil {
+					h.receiverAnswer(&it, fw)
+				} else if !errors.Is(err, store.ErrNotFound) {
+					return err
+				}
+			}
+			return wr.item(it)
 		})
 		if err != nil {
 			return err
@@ -230,6 +242,9 @@ type Head struct {
 	// PrunedLine says what retention removed from the reported range; ""
 	// when the range lost nothing.
 	PrunedLine string
+	// ReceiverLine sums up the receiver's side of the requests on an
+	// endpoint that forwards; "" when none was forwarded or kept from it.
+	ReceiverLine string
 
 	Count    int
 	Outcomes []Count // answers by class, in a fixed order
@@ -339,6 +354,7 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 
 	classes := map[string]int{}
 	checks := map[int]*CheckCount{}
+	var rcv receiverCounts
 	type delivery struct {
 		no int64
 		at time.Time
@@ -357,6 +373,7 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 		last = r.ReceivedAt
 		out := emulate.ParseOutcome(r.Outcome, r.Status)
 		classes[classify(r, out)]++
+		rcv.count(out)
 		m := Mark{At: r.ReceivedAt.UTC(), Size: r.Size, Kind: markKind(r, out)}
 		for _, v := range parseVerdicts(r.Verdicts) {
 			c := checks[v.Check]
@@ -435,6 +452,7 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 	for i, k := range markSHA {
 		h.Marks[i].Group = group[k]
 	}
+	h.ReceiverLine = rcv.line()
 	return h, nil
 }
 
@@ -447,6 +465,8 @@ func markKind(r store.Request, o emulate.Outcome) string {
 		return "drop"
 	case r.TooLarge || !o.Good():
 		return "bad"
+	case o.Forward != nil && o.Forward.Fallback:
+		return "bad" // the receiver failed; the sender got the default reply
 	}
 	return "ok"
 }
@@ -477,6 +497,13 @@ type Item struct {
 	Delivery int  // 2 for the first retry of a body, 3 for the next…; 0 otherwise
 	Pinned   bool // never pruned by retention
 	Images   []ItemImage
+	// Receiver is the receiver's side in one line ("" when the endpoint
+	// does not forward); with the exchange loaded, the receiver's answer
+	// lines (masked like the request's) and body.
+	Receiver        string
+	ReceiverHeaders []Header
+	ReceiverBody    *Body
+	ReceiverCut     bool // only the first 64 KiB of the receiver's body were kept
 }
 
 // ItemImage is an image the request carries; Data holds its decoded bytes
@@ -557,6 +584,7 @@ func (h *Head) item(r store.Request) Item {
 	if o.Action == emulate.ActReply && r.Status == 0 && !r.TooLarge {
 		it.Answer.Stamp = "nothing sent"
 	}
+	it.Receiver = receiverLine(o)
 	it.Verdicts = parseVerdicts(r.Verdicts)
 	bad := map[string]bool{}
 	for _, v := range it.Verdicts {
