@@ -3548,7 +3548,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Where the request sent differs from the one caught (HTTP/1.0 sent as 1.1, a chunked body as one chunk, a Host added)."
+            "description": "Where the request sent differs from the one caught (HTTP/1.0 sent as 1.1, a chunked body as one chunk and without Content-Length, a Host added)."
           },
           "proto": {
             "type": "string",
