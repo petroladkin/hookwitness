@@ -1270,6 +1270,44 @@
         }
       }
     },
+    "/login/providers": {
+      "get": {
+        "operationId": "listLoginProviders",
+        "summary": "The providers people may sign in with",
+        "description": "Open: names and labels of the configured OpenID Connect providers, nothing secret.",
+        "security": [
+          {}
+        ],
+        "responses": {
+          "200": {
+            "description": "The providers, in the login page's order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/me": {
       "get": {
         "operationId": "me",
@@ -1307,7 +1345,8 @@
                 "type": "object",
                 "properties": {
                   "current": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "The current password; leave it out to set a first password (a user without one), which needs a sign-in from the last 10 minutes."
                   },
                   "new": {
                     "type": "string",
@@ -1315,7 +1354,6 @@
                   }
                 },
                 "required": [
-                  "current",
                   "new"
                 ],
                 "additionalProperties": false
@@ -1344,7 +1382,7 @@
             }
           },
           "422": {
-            "description": "The current password is wrong, or the new one is too short (`invalid`); `field` names it.",
+            "description": "The current password is wrong, or the new one is too short (`invalid`); `field` names it; or `reauth`: a first password needs a sign-in from the last 10 minutes (sign in again).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1553,6 +1591,66 @@
         }
       }
     },
+    "/me/identities/{provider}": {
+      "parameters": [
+        {
+          "name": "provider",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The configured provider's name; for an identity whose provider is no longer configured, any name with ?issuer=."
+        }
+      ],
+      "delete": {
+        "operationId": "unlinkOwnIdentity",
+        "summary": "Unlink one of your identities",
+        "description": "Needs a login (not a token). Refused when it is your only way to log in. Your logins end, this one too.",
+        "parameters": [
+          {
+            "name": "issuer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The identity's issuer (instead of a configured provider's)."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unlinked; the user's logins have ended."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such provider, or no such identity (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "You would have no way to log in (`last_way_in`): set a password first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/users": {
       "get": {
         "operationId": "listUsers",
@@ -1613,12 +1711,16 @@
                   },
                   "password": {
                     "type": "string",
-                    "minLength": 12
+                    "minLength": 12,
+                    "description": "Optional when email is set (a user who signs in through a provider only), except for the first user."
+                  },
+                  "email": {
+                    "type": "string",
+                    "description": "Optional: lets the user sign in through a provider by this address."
                   }
                 },
                 "required": [
-                  "name",
-                  "password"
+                  "name"
                 ],
                 "additionalProperties": false
               }
@@ -1643,7 +1745,7 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "409": {
-            "description": "A user with this name exists (`exists`).",
+            "description": "A user with this name exists (`exists`), or another user has this email (`email_taken`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1712,6 +1814,13 @@
                   "password": {
                     "type": "string",
                     "minLength": 12
+                  },
+                  "email": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The user's email; null clears it."
                   }
                 },
                 "required": [],
@@ -1748,7 +1857,7 @@
             }
           },
           "409": {
-            "description": "That would leave no admin (`last_admin`), or you would make yourself a user (`self_demotion`): another admin can.",
+            "description": "That would leave no admin (`last_admin`), or you would make yourself a user (`self_demotion`): another admin can; or another user has this email (`email_taken`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1815,6 +1924,69 @@
           },
           "409": {
             "description": "The last admin cannot be removed (`last_admin`), and nobody removes themselves (`self_removal`): another admin can.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{name}/identities/{provider}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/user"
+        },
+        {
+          "name": "provider",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The configured provider's name; for an identity whose provider is no longer configured, any name with ?issuer=."
+        }
+      ],
+      "delete": {
+        "operationId": "unlinkIdentity",
+        "summary": "Unlink a user's identity",
+        "description": "An admin's login. Ends that user's logins; your own last way in is refused.",
+        "parameters": [
+          {
+            "name": "issuer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The identity's issuer (instead of a configured provider's)."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unlinked; the user's logins have ended."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such provider, or no such identity (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "You would have no way to log in (`last_way_in`): set a password first.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3382,6 +3554,43 @@
           "size"
         ]
       },
+      "Identity": {
+        "type": "object",
+        "description": "An identity at an OpenID Connect provider linked to a user: signing in there signs in as this user.",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "description": "The configured provider's name (or the name it had at the last sign-in when no longer configured)."
+          },
+          "label": {
+            "type": "string",
+            "description": "The provider's label, as the login page shows it."
+          },
+          "issuer": {
+            "type": "string",
+            "description": "The provider's issuer; with ?issuer= it addresses an identity whose provider is no longer configured."
+          },
+          "email": {
+            "type": "string",
+            "description": "The email the provider sent at the last sign-in."
+          },
+          "linked_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "last_login_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "provider",
+          "label",
+          "issuer",
+          "email",
+          "linked_at",
+          "last_login_at"
+        ],
+        "additionalProperties": false
+      },
       "Verdict": {
         "type": "object",
         "properties": {
@@ -3767,6 +3976,23 @@
               "admin"
             ]
           },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lower-case; a provider sign-in with this verified address links to the user once. null when not set."
+          },
+          "password": {
+            "type": "boolean",
+            "description": "Whether a password is set (never the password); a user without one signs in through a provider."
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Identity"
+            }
+          },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
           },
@@ -3778,6 +4004,9 @@
         "required": [
           "name",
           "role",
+          "email",
+          "password",
+          "identities",
           "created_at",
           "tokens"
         ],
@@ -3848,6 +4077,23 @@
               "user",
               "admin"
             ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lower-case; a provider sign-in with this verified address links to the user once. null when not set."
+          },
+          "password": {
+            "type": "boolean",
+            "description": "Whether a password is set (never the password); a user without one signs in through a provider."
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Identity"
+            }
           },
           "via": {
             "type": "string",

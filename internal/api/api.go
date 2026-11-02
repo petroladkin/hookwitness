@@ -49,6 +49,9 @@ type Options struct {
 	Replay *replay.Service
 	// MaxDBSize is the database size limit, in the storage answer; 0: none.
 	MaxDBSize int64
+	// Providers are the OpenID Connect providers configured: names, labels
+	// and issuers, nothing secret (GET /login/providers, identities).
+	Providers []Provider
 }
 
 // Handler serves the API. Create it with New.
@@ -130,6 +133,9 @@ func (h *Handler) routes() []route {
 		{"GET", "/unmatched/requests", h.listUnmatched, needAny},
 		{"GET", "/unmatched/report", h.unmatchedReport, needAny},
 		{"GET", "/me", h.me, needAny},
+		{"GET", "/login/providers", h.loginProviders, needNobody},
+		{"DELETE", "/me/identities/{provider}", h.unlinkOwn, needSession},
+		{"DELETE", "/users/{name}/identities/{provider}", h.unlinkUser, needAdmin},
 		{"PUT", "/me/password", h.changeOwnPassword, needSession},
 		{"GET", "/me/tokens", h.listTokens(ownID), needSession},
 		{"POST", "/me/tokens", h.createToken, needSession},

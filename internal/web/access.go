@@ -232,6 +232,9 @@ func (h *Handler) ours(next string) bool {
 
 // gateAPI checks that the API and /mcp get an identity once login is on.
 func (h *Handler) gateAPI(w http.ResponseWriter, r *http.Request, id *access.Identity, isMCP bool) bool {
+	if r.Method == http.MethodGet && r.URL.Path == api.Base(h.prefix)+"/login/providers" {
+		return true // the login page's providers: open
+	}
 	on, err := h.apiLoginOn(r.Context())
 	if err != nil {
 		h.failGate(w, true, err)

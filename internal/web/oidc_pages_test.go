@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/oidc/oidctest"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
@@ -57,8 +58,8 @@ func TestAccountOfAProviderUser(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 	// That sign-in is past the window from now on.
-	window := firstPasswordWindow
-	firstPasswordWindow = time.Nanosecond
+	window := access.FirstPasswordWindow
+	access.FirstPasswordWindow = time.Nanosecond
 	time.Sleep(time.Millisecond)
 	_, page := e.page(t, old, "/admin/account")
 	for _, want := range []string{"pat@example.test", "<b>not set</b>: you sign in through a provider", "TestIdP", "your only way to log in", "Set a password"} {
@@ -76,7 +77,7 @@ func TestAccountOfAProviderUser(t *testing.T) {
 	if code, _, body := e.post(t, old, "/admin/account/password", pw); code != http.StatusUnprocessableEntity || !strings.Contains(body, "sign in again to set a password") {
 		t.Fatalf("a first password from an old session: %d", code)
 	}
-	firstPasswordWindow = window
+	access.FirstPasswordWindow = window
 	fresh := browser()
 	e.idp.Next(oidctest.Claims{Subject: "s-pat"})
 	e.signIn(t, fresh, "/admin/")

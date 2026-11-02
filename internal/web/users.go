@@ -76,11 +76,6 @@ type identityRow struct {
 	Why                  string // why not
 }
 
-// firstPasswordWindow is how young a session must be to set a first
-// password without a current one: a stolen session cookie must not become
-// a lasting password (a seam for tests).
-var firstPasswordWindow = 10 * time.Minute
-
 // label names an identity's provider: the configured label of its issuer,
 // else the name it was signed in with, else the issuer.
 func (h *Handler) label(id store.Identity) string {
@@ -116,7 +111,7 @@ func (h *Handler) freshSession(ctx context.Context, id *access.Identity) bool {
 		return false
 	}
 	at, err := h.store.SessionCreatedAt(ctx, id.SessionID)
-	return err == nil && time.Since(at) < firstPasswordWindow
+	return err == nil && time.Since(at) < access.FirstPasswordWindow
 }
 
 // usersView is the users page.
