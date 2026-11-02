@@ -137,7 +137,7 @@ The tools are task-shaped. Each result is a summary line, then compact JSON.
 | `expect` | asserts that N matching requests arrive within a time: pass, or fail with what arrived and the reasons |
 | `switch_endpoint` | turns an endpoint off (its path goes to Unmatched, everything else kept) or on again |
 | `reset_endpoint`, `recheck`, `delete_endpoint` | reset the counter or clear requests, verify again, delete |
-| `export_endpoint`, `import_endpoints` | an endpoint's setup as a file (secret names and kinds, never values); endpoints created, or replaced, from one ([Sharing a setup](sharing.md)) |
+| `export_endpoint`, `import_endpoints` | an endpoint's setup as a file (secret names and kinds, never values); endpoints created, or replaced, from one ([Sharing a setup](sharing.md)). An import takes a setup up to 16 MiB, as the API does (an MCP request over 17 MiB is refused with `413`); an export gives up to 4 MiB, and above that says to download the file with `GET <prefix>/api/v1/setup` |
 | `replay_request` | sends a caught request byte for byte to a URL (your handler) and returns its answer: status, headers, body, timings or the error ([Replaying a request](replay.md)); `get_request` lists a request's replays |
 | `set_retention`, `pin_request` | what an endpoint keeps: counts and ages of normal requests and anomalies; a pin keeps one request for good ([Keeping requests](keeping.md)); `list_requests` filters `pinned` and `anomaly` |
 | delivery checks | `configure_endpoint` takes `event` (where the sender puts an event's id) and the `duplicates`, `order` and `backoff` checks; the request tools filter by `event`, so `expect` with `event` and `count` asserts a number of attempts ([Testing a sender's retries](delivery.md)) |

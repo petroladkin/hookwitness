@@ -166,3 +166,8 @@ hookwitness apply -url http://127.0.0.1:8080 payments-webhooks.hookwitness.json
 
 AI-агент має те саме через MCP: `export_endpoint` і `import_endpoints`
 ([Тестування відправника з AI-агентом](agents.md)).
+
+Файл налаштування — щонайбільше 16 MiB, однаково в UI, API,
+`hookwitness apply` і MCP. Через MCP експорт видає щонайбільше 4 MiB: більше
+агент не втримає в пам'яті; більший файл завантажують через
+`GET <prefix>/api/v1/setup`.
