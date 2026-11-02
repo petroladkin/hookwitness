@@ -27,22 +27,24 @@ const (
 
 // summaryJSON is a caught request in a list.
 type summaryJSON struct {
-	ID          int64  `json:"id"`
-	EndpointID  *int64 `json:"endpoint_id"` // null for the Unmatched register
-	No          int64  `json:"no"`          // number within its register
-	ReceivedAt  stamp  `json:"received_at"`
-	Method      string `json:"method"`
-	Path        string `json:"path"`
-	Query       string `json:"query"`
-	Status      int    `json:"status"`  // what hookwitness answered; 0 while nothing was sent
-	Verdict     string `json:"verdict"` // pass, fail, n/v; "" without authorization checks
-	BodySize    int64  `json:"body_size"`
-	BodyKept    bool   `json:"body_kept"`          // false when the body was over the limit (413) or the server was busy (503)
-	BodyCut     bool   `json:"body_cut,omitempty"` // only the head was kept (Unmatched): body_size is the whole
-	ContentType string `json:"content_type"`
-	Replays     int    `json:"replays"` // replays kept of it (GET /requests/{id}/replays)
-	Pinned      bool   `json:"pinned"`  // never pruned by retention
-	Anomaly     bool   `json:"anomaly"` // kept in the anomaly lane: not answered 2xx, a failed verdict, a redelivery
+	ID          int64   `json:"id"`
+	EndpointID  *int64  `json:"endpoint_id"` // null for the Unmatched register
+	No          int64   `json:"no"`          // number within its register
+	ReceivedAt  stamp   `json:"received_at"`
+	Method      string  `json:"method"`
+	Path        string  `json:"path"`
+	Query       string  `json:"query"`
+	Status      int     `json:"status"`  // what hookwitness answered; 0 while nothing was sent
+	Verdict     string  `json:"verdict"` // pass, fail, n/v; "" without authorization checks
+	BodySize    int64   `json:"body_size"`
+	BodyKept    bool    `json:"body_kept"`          // false when the body was over the limit (413) or the server was busy (503)
+	BodyCut     bool    `json:"body_cut,omitempty"` // only the head was kept (Unmatched): body_size is the whole
+	ContentType string  `json:"content_type"`
+	Replays     int     `json:"replays"` // replays kept of it (GET /requests/{id}/replays)
+	Pinned      bool    `json:"pinned"`  // never pruned by retention
+	Anomaly     bool    `json:"anomaly"` // kept in the anomaly lane: not answered 2xx, a failed verdict, a redelivery
+	Event       *string `json:"event"`   // its event id (the endpoint's event source); null: none
+	Attempt     *int    `json:"attempt"` // its attempt among the kept requests of its event (or body); null: not counted
 }
 
 // requestJSON is one caught request in full.
@@ -103,6 +105,13 @@ func summaryView(req store.Request) summaryJSON {
 	v := summaryJSON{ID: req.ID, No: req.No, ReceivedAt: stamp(req.ReceivedAt), Method: req.Method, Path: req.Path,
 		Query: req.RawQuery, Status: req.Status, Verdict: req.Verdict, BodySize: req.Size, BodyKept: !req.TooLarge,
 		BodyCut: !req.TooLarge && req.Kept < req.Size, Replays: req.Replays, Pinned: req.Pinned, Anomaly: req.Anomaly}
+	if req.Event != nil && *req.Event != "" {
+		v.Event = req.Event
+	}
+	if req.Attempt > 0 {
+		n := req.Attempt
+		v.Attempt = &n
+	}
 	if req.EndpointID != store.Unmatched {
 		id := req.EndpointID
 		v.EndpointID = &id
@@ -209,13 +218,14 @@ type listQuery struct {
 	contains      []byte      // q
 	match         []jsonMatch // json, all of them
 	bodies        bool        // include=body
+	event         *string     // event=<id>
 	pinned        bool        // pinned=true
 	anomaly       bool        // anomaly=true
 }
 
 func (l listQuery) store() store.ListQuery {
 	q := store.ListQuery{Before: l.before, After: l.after, HasAfter: l.hasAfter, Limit: l.limit,
-		Verdict: l.verdict, Status: l.status, Contains: l.contains, WithBody: l.bodies, Pinned: l.pinned, Anomaly: l.anomaly}
+		Verdict: l.verdict, Status: l.status, Contains: l.contains, WithBody: l.bodies, Pinned: l.pinned, Anomaly: l.anomaly, Event: l.event}
 	if len(l.match) > 0 {
 		q.Match = matchAll(l.match)
 	}
@@ -271,6 +281,13 @@ func parseList(w http.ResponseWriter, r *http.Request) (listQuery, bool) {
 		if n == 0 {
 			l.status = -1 // filter on "nothing sent"
 		}
+	}
+	if q.Has("event") {
+		if q.Get("event") == "" {
+			return bad("event", "event is an event id")
+		}
+		ev := q.Get("event")
+		l.event = &ev
 	}
 	for name, dst := range map[string]*bool{"pinned": &l.pinned, "anomaly": &l.anomaly} {
 		if q.Has(name) {

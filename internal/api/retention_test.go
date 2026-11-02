@@ -2,8 +2,10 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -150,4 +152,40 @@ func TestUnmatchedSettings(t *testing.T) {
 			t.Errorf("PATCH %s answer does not match Endpoint: %v\n%s", body, err, rec.Body)
 		}
 	}
+}
+
+// TestDeliveryAPI: the behaviour takes an event source and the delivery
+// checks; requests carry event and attempt; event= lists an event's attempts.
+func TestDeliveryAPI(t *testing.T) {
+	e := newEnv(t)
+	ep := e.endpoint(t, "/gh")
+	path := fmt.Sprintf("/endpoints/%d/behaviour", ep.ID)
+	tag := e.do("GET", path, "").Header().Get("ETag")
+	body := `{"default":{"status":200},"event":{"from":"header","key":"X-GitHub-Delivery"},
+		"checks":[{"kind":"duplicates"},{"kind":"backoff","first_s":5,"max_s":3600,"max_attempts":8},
+		{"kind":"order","order":{"from":"body","key":"/seq","as":"number"},"group":{"from":"body","key":"/obj"}}]}`
+	if rec := e.do("PUT", path, body, "If-Match", tag); rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body)
+	}
+	var compact bytes.Buffer
+	json.Compact(&compact, e.do("GET", path, "").Body.Bytes())
+	got := compact.String()
+	for _, want := range []string{`"event":{"from":"header","key":"X-GitHub-Delivery"}`, `"kind":"backoff"`, `"first_s":5`, `"as":"number"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("behaviour lacks %s: %s", want, got)
+		}
+	}
+	tag = e.do("GET", path, "").Header().Get("ETag")
+	wantError(t, e.do("PUT", path, `{"default":{"status":200},"checks":[{"kind":"duplicates","enforce":true}]}`, "If-Match", tag),
+		http.StatusUnprocessableEntity, "invalid", "")
+	ev := "d-1"
+	for i := range 3 {
+		e.add(t, ep.ID, fmt.Sprint(i), func(r *store.Request) { r.Delivery = &store.Delivery{Event: ev} })
+	}
+	e.add(t, ep.ID, "other", func(r *store.Request) { r.Delivery = &store.Delivery{Event: "d-2"} })
+	list := decodeAs[struct{ Requests []summaryJSON }](t, e.do("GET", fmt.Sprintf("/endpoints/%d/requests?event=d-1", ep.ID), "")).Requests
+	if len(list) != 3 || list[0].Event == nil || *list[0].Event != "d-1" || list[0].Attempt == nil || *list[0].Attempt != 3 {
+		t.Fatalf("event=d-1: %+v", list)
+	}
+	wantError(t, e.do("GET", fmt.Sprintf("/endpoints/%d/requests?event=", ep.ID), ""), http.StatusUnprocessableEntity, "invalid", "event")
 }

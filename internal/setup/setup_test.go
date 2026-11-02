@@ -202,3 +202,26 @@ func TestRetentionInSetup(t *testing.T) {
 		t.Fatalf("a file without retention left %+v", got.Kept.Policy)
 	}
 }
+
+// TestDeliveryInSetup: the event source and the delivery checks travel in
+// format 2; nothing new used stays format 1.
+func TestDeliveryInSetup(t *testing.T) {
+	cfg := emulate.Config{Default: emulate.Reply{Status: 200}, Event: &emulate.Source{From: emulate.FromHeader, Key: "X-GitHub-Delivery"},
+		Checks: []emulate.Check{{Kind: emulate.KindBackoff, FirstS: 5}}}
+	f := Export(Source{Path: "/gh", Config: cfg})
+	b := f.JSON()
+	if f.Hookwitness != 2 || !strings.Contains(string(b), `"event": {`) || !strings.Contains(string(b), `"kind": "backoff"`) {
+		t.Fatalf("format %d:\n%s", f.Hookwitness, b)
+	}
+	parsed, err := Parse(b, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parsed.Endpoints[0].Config(nil)
+	if got.Event == nil || *got.Event != *cfg.Event || len(got.Checks) != 1 || got.Checks[0].FirstS != 5 {
+		t.Fatalf("round trip: %+v", got)
+	}
+	if f := Export(Source{Path: "/x", Config: emulate.Config{Default: emulate.Reply{Status: 200}, Checks: []emulate.Check{{Kind: emulate.KindDuplicates}}}}); f.Hookwitness != 2 {
+		t.Fatalf("a delivery check alone: format %d", f.Hookwitness)
+	}
+}

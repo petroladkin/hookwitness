@@ -23,6 +23,7 @@ type behaviourJSON struct {
 	Vars    []emulate.Var    `json:"vars"`
 	Schemas []emulate.Schema `json:"schemas"`
 	Secrets []secretJSON     `json:"secrets"`
+	Event   *emulate.Source  `json:"event,omitempty"`
 }
 
 // behaviourIn is what a PUT replaces. Secrets are managed on their own
@@ -34,6 +35,7 @@ type behaviourIn struct {
 	Vars    []emulate.Var    `json:"vars"`
 	Schemas []emulate.Schema `json:"schemas"`
 	Secrets json.RawMessage  `json:"secrets"`
+	Event   *emulate.Source  `json:"event"`
 }
 
 // secretJSON describes a secret.
@@ -55,7 +57,7 @@ func secretView(c emulate.Config, s emulate.Secret) secretJSON {
 }
 
 func behaviourView(c emulate.Config) behaviourJSON {
-	v := behaviourJSON{Default: c.Default, Rules: c.Rules, Checks: c.Checks, Vars: c.Vars, Schemas: c.Schemas, Secrets: []secretJSON{}}
+	v := behaviourJSON{Default: c.Default, Rules: c.Rules, Checks: c.Checks, Vars: c.Vars, Schemas: c.Schemas, Secrets: []secretJSON{}, Event: c.Event}
 	if v.Rules == nil {
 		v.Rules = []emulate.Rule{}
 	}
@@ -114,7 +116,7 @@ func (h *Handler) putBehaviour(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "behaviour", err)
 		return
 	}
-	cfg := emulate.Config{Default: in.Default, Rules: in.Rules, Checks: in.Checks, Vars: in.Vars, Schemas: in.Schemas, Secrets: stored.Secrets}
+	cfg := emulate.Config{Default: in.Default, Rules: in.Rules, Checks: in.Checks, Vars: in.Vars, Schemas: in.Schemas, Secrets: stored.Secrets, Event: in.Event}
 	if cfg.Default.Status == 0 {
 		cfg.Default.Status = 200 // as stored configurations read
 	}

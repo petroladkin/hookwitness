@@ -897,6 +897,9 @@
           },
           {
             "$ref": "#/components/parameters/anomaly"
+          },
+          {
+            "$ref": "#/components/parameters/event"
           }
         ],
         "responses": {
@@ -1120,6 +1123,9 @@
           },
           {
             "$ref": "#/components/parameters/anomaly"
+          },
+          {
+            "$ref": "#/components/parameters/event"
           }
         ],
         "responses": {
@@ -2697,7 +2703,7 @@
         "properties": {
           "kind": {
             "type": "string",
-            "description": "Absent or header: a required header.",
+            "description": "Absent or header: a required header. duplicates, order and backoff judge how a sender delivers (never enforced).",
             "enum": [
               "header",
               "github",
@@ -2706,7 +2712,10 @@
               "hmac",
               "bearer",
               "basic",
-              "schema"
+              "schema",
+              "duplicates",
+              "order",
+              "backoff"
             ]
           },
           "header": {
@@ -2781,6 +2790,69 @@
           },
           "select": {
             "$ref": "#/components/schemas/Select"
+          },
+          "order": {
+            "type": "object",
+            "description": "order: the value to order by: a sequence number or a time (RFC 3339, or unix seconds).",
+            "properties": {
+              "from": {
+                "type": "string",
+                "enum": [
+                  "header",
+                  "body"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "as": {
+                "type": "string",
+                "enum": [
+                  "number",
+                  "time"
+                ]
+              }
+            },
+            "required": [
+              "from",
+              "key",
+              "as"
+            ],
+            "additionalProperties": false
+          },
+          "group": {
+            "$ref": "#/components/schemas/ValueSource",
+            "description": "order: judge the order within each value of this (e.g. /data/object/id)."
+          },
+          "first_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "backoff: the expected gap before attempt 2, in seconds; 0: judge only Retry-After."
+          },
+          "factor": {
+            "type": "number",
+            "minimum": 1,
+            "description": "backoff: each gap is this times the last (default 2)."
+          },
+          "max_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "backoff: the longest expected gap, in seconds."
+          },
+          "max_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "backoff: more attempts fail."
+          },
+          "tolerance_pct": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "backoff: how far a gap may be from the expected one (default 25 %)."
+          },
+          "retry_after": {
+            "type": "boolean",
+            "description": "backoff: a retry before the previous answer's Retry-After fails (default true)."
           }
         },
         "additionalProperties": false
@@ -2896,6 +2968,10 @@
               "$ref": "#/components/schemas/Secret"
             },
             "description": "Read-only here; set them on the secrets route. Sent back as read, it is ignored."
+          },
+          "event": {
+            "$ref": "#/components/schemas/ValueSource",
+            "description": "Where the sender puts an event's id, the same on every retry (e.g. header X-GitHub-Delivery, body /id): attempts and retry groups follow it. Absent: per body."
           }
         },
         "additionalProperties": false
@@ -2997,6 +3073,20 @@
           "anomaly": {
             "type": "boolean",
             "description": "In the anomaly lane: not answered 2xx, a failed verdict, or a redelivery."
+          },
+          "event": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its event id, read from the endpoint's event source; null: none."
+          },
+          "attempt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Its attempt among the kept requests of its event (or of its body when the endpoint names no event source); null: not counted."
           }
         },
         "required": [
@@ -3013,7 +3103,9 @@
           "content_type",
           "replays",
           "pinned",
-          "anomaly"
+          "anomaly",
+          "event",
+          "attempt"
         ],
         "additionalProperties": false
       },
@@ -3290,6 +3382,20 @@
           "anomaly": {
             "type": "boolean",
             "description": "In the anomaly lane: not answered 2xx, a failed verdict, or a redelivery."
+          },
+          "event": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its event id, read from the endpoint's event source; null: none."
+          },
+          "attempt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Its attempt among the kept requests of its event (or of its body when the endpoint names no event source); null: not counted."
           }
         },
         "required": [
@@ -3312,7 +3418,9 @@
           "images",
           "replays",
           "pinned",
-          "anomaly"
+          "anomaly",
+          "event",
+          "attempt"
         ],
         "additionalProperties": false
       },
@@ -3607,6 +3715,10 @@
           "retention": {
             "$ref": "#/components/schemas/Retention",
             "description": "The endpoint's own retention (format 2); absent: the importing server's defaults."
+          },
+          "event": {
+            "$ref": "#/components/schemas/ValueSource",
+            "description": "Where the sender puts an event's id (format 2)."
           }
         },
         "required": [
@@ -3625,7 +3737,7 @@
               1,
               2
             ],
-            "description": "The format marker and version: 1, or 2 when an endpoint carries its own retention. A file of a newer format is refused; an export writes the lowest version that holds it."
+            "description": "The format marker and version: 1, or 2 when an endpoint carries its own retention, an event source or a delivery check. A file of a newer format is refused; an export writes the lowest version that holds it."
           },
           "endpoints": {
             "type": "array",
@@ -4087,6 +4199,28 @@
           "pruned"
         ],
         "additionalProperties": false
+      },
+      "ValueSource": {
+        "type": "object",
+        "description": "Where a request carries a value: a header, or a JSON pointer into its body.",
+        "properties": {
+          "from": {
+            "type": "string",
+            "enum": [
+              "header",
+              "body"
+            ]
+          },
+          "key": {
+            "type": "string",
+            "description": "The header name, or the JSON pointer such as /id."
+          }
+        },
+        "required": [
+          "from",
+          "key"
+        ],
+        "additionalProperties": false
       }
     },
     "parameters": {
@@ -4346,6 +4480,14 @@
           "enum": [
             "true"
           ]
+        }
+      },
+      "event": {
+        "name": "event",
+        "in": "query",
+        "description": "Only the requests of this event id (every attempt).",
+        "schema": {
+          "type": "string"
         }
       }
     },
