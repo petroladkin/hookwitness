@@ -787,6 +787,9 @@ func (s *tools) waitMatching(ctx context.Context, p string, f Filters, after int
 		}
 		// Each round is a fresh check of the caller's token: one revoked,
 		// or its user removed or given another role, ends the wait.
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("cancelled: %w", ctx.Err())
+		}
 		if !s.auth.StillValid(ctx, access.From(ctx)) {
 			return nil, errors.New("the credential was revoked (or its user removed or given another role): this wait ends; call again with a valid token")
 		}

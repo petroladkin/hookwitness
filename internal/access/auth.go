@@ -200,17 +200,15 @@ func (a *Authenticator) Token(ctx context.Context, tok string) (*Identity, error
 // owner keeps the role it had (a revoked token, a removed user, another role
 // end it); the machine token, while the server runs. A session is checked by
 // its cookie (Session), as on every request and in the live feed: here it
-// stands. A store error is not a revocation: the next check asks again.
+// stands. A token the store cannot confirm (an error) does not stand: its
+// stream or wait ends, and its client, reconnecting, is checked anew.
 func (a *Authenticator) StillValid(ctx context.Context, id *Identity) bool {
 	if a == nil || id == nil || id.Via != ViaToken {
 		return true
 	}
 	t, err := a.store.TokenByPublicID(ctx, id.TokenID)
-	if errors.Is(err, store.ErrNotFound) {
-		return false
-	}
 	if err != nil {
-		return true
+		return false
 	}
 	return t.UserID == id.UserID && t.Role == id.Role
 }

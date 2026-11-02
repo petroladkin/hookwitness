@@ -484,8 +484,14 @@ func TestStillValid(t *testing.T) {
 		t.Error("a token presented before its user was demoted still stands")
 	}
 	v, _, _ := a.MintFor(ctx, ann.ID, "after")
-	if id, _ := a.Token(ctx, v); !a.StillValid(ctx, id) {
+	after, _ := a.Token(ctx, v)
+	if !a.StillValid(ctx, after) {
 		t.Error("a token presented after the change does not stand")
+	}
+	ctxDone, cancel := context.WithCancel(ctx)
+	cancel()
+	if a.StillValid(ctxDone, after) {
+		t.Error("a token the store could not confirm stands")
 	}
 	var changed int
 	a.OnChange(func() { changed++ })
