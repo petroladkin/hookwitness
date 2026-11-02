@@ -96,6 +96,15 @@ type Check struct {
 	Schema  string   `json:"schema,omitempty"`  // KindSchema: the schema's name, when there is no Select
 	Schemas []string `json:"schemas,omitempty"` // KindSchema: instead of Schema, several: the body must match one of them
 	Select  *Select  `json:"select,omitempty"`  // KindSchema: pick the schema by a value of the request
+
+	Order        *OrderSpec `json:"order,omitempty"`         // KindOrder: the value to order by
+	Group        *Source    `json:"group,omitempty"`         // KindOrder: order within each value of this
+	FirstS       float64    `json:"first_s,omitempty"`       // KindBackoff: the gap before attempt 2, s
+	Factor       float64    `json:"factor,omitempty"`        // KindBackoff: each gap is this times the last; 0 = 2
+	MaxS         float64    `json:"max_s,omitempty"`         // KindBackoff: the longest gap, s; 0 = none
+	MaxAttempts  int        `json:"max_attempts,omitempty"`  // KindBackoff: 0 = no limit
+	TolerancePct int        `json:"tolerance_pct,omitempty"` // KindBackoff: 0 = 25
+	RetryAfter   *bool      `json:"retry_after,omitempty"`   // KindBackoff: judge Retry-After; nil = true
 }
 
 // Var is an endpoint variable: a test value in plain text, never a secret.
@@ -112,6 +121,9 @@ type Config struct {
 	Vars    []Var    `json:"vars,omitempty"`
 	Secrets []Secret `json:"secrets,omitempty"` // sealed or hashed; never template data
 	Schemas []Schema `json:"schemas,omitempty"` // JSON Schemas for schema checks
+	// Event is where the sender puts an event's id, the same on every
+	// retry; nil: attempts are counted per body (delivery.go).
+	Event *Source `json:"event,omitempty"`
 }
 
 // DefaultConfig is what a new endpoint does: 200 with an empty body.
@@ -162,6 +174,11 @@ func (c Config) Validate(maxWait time.Duration) error {
 	}
 	if err := c.validateSecrets(); err != nil {
 		return err
+	}
+	if c.Event != nil {
+		if err := c.Event.validate("event id"); err != nil {
+			return err
+		}
 	}
 	if len(c.Schemas) > 0 {
 		if _, err := c.compiled(); err != nil {
