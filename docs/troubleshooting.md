@@ -139,5 +139,5 @@ was removed.
 On the server, `hookwitness user passwd <name>` sets a new password and
 `hookwitness user add <name> --admin` adds another admin; see [Lost the admin
 password](access.md#lost-the-admin-password). Ten failed logins from one
-address pause its logins for 15 minutes; behind a reverse proxy, set
+address (an IPv6 address with its /64) pause its logins for 15 minutes; behind a reverse proxy, set
 `-trusted-proxies` so that the pause hits the client, not the proxy.
