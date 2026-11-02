@@ -130,7 +130,7 @@ TOKEN=$(curl -s -b hw.cookies -X POST http://127.0.0.1:8080/admin/api/v1/me/toke
   -H 'Content-Type: application/json' -d '{"name":"ci"}' | jq -r .token)
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/admin/api/v1/endpoints
 # 401
-curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/admin/api/v1/me | jq -c .
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/admin/api/v1/me | jq -c '{login, name, role, via}'
 # {"login":true,"name":"ann","role":"admin","via":"token"}
 ```
 
