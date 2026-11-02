@@ -81,7 +81,7 @@ func newEnv(t *testing.T) env {
 		}
 		a.ServeHTTP(w, r)
 	})
-	srv := NewServer(counted, api.Base("/admin"), "127.0.0.1:8080", "v0.0.0-test", stop)
+	srv := NewServer(counted, api.Base("/admin"), "127.0.0.1:8080", "v0.0.0-test", stop, nil)
 	ct, stt := sdk.NewInMemoryTransports()
 	ss, err := srv.Connect(context.Background(), stt, nil)
 	if err != nil {

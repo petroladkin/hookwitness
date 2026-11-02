@@ -224,6 +224,7 @@ func (h *Handler) revokeToken(owner func(*http.Request) int64) http.HandlerFunc 
 			return
 		}
 		h.log.Info("token revoked", logAttrs(r, "owner", t.Owner, "token", t.Name, "token_id", t.PublicID)...)
+		h.o.Access.Changed()
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -352,6 +353,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.log.Info("user role changed", logAttrs(r, "name", u.Name, "role", u.Role)...)
+		h.o.Access.Changed()
 	}
 	if in.Password != nil {
 		// A reset by an admin ends every session of that user.
@@ -385,6 +387,7 @@ func (h *Handler) removeUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("user removed", logAttrs(r, "name", u.Name)...)
+	h.o.Access.Changed()
 	w.WriteHeader(http.StatusNoContent)
 }
 

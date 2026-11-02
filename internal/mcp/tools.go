@@ -13,6 +13,8 @@ import (
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/petroladkin/hookwitness/internal/access"
 )
 
 // MaxBody is how much of a request body a tool result carries; the result
@@ -25,9 +27,10 @@ const (
 	MaxWait     = 300 * time.Second
 )
 
-// apiWait is one long-poll of a chain: the API's longest. Tests shorten it
-// to see the chain.
-var apiWait = 60 * time.Second
+// apiWait is one long-poll of a chain: half the API's longest, so that a
+// revoked token ends a wait within 30 s (each round checks it). Tests
+// shorten it to see the chain.
+var apiWait = 30 * time.Second
 
 // result is what every tool answers: a summary line, then compact JSON.
 // The structured content (which some clients show instead of the text)
@@ -199,7 +202,8 @@ func (s *tools) register(srv *sdk.Server) {
 
 type tools struct {
 	c    *client
-	stop <-chan struct{} // closed when the server shuts down: waits end
+	stop <-chan struct{}       // closed when the server shuts down: waits end
+	auth *access.Authenticator // login on: a wait ends when its caller's token no longer stands
 }
 
 // ---- endpoints ---------------------------------------------------------------
@@ -780,6 +784,11 @@ func (s *tools) waitMatching(ctx context.Context, p string, f Filters, after int
 		case <-s.stop:
 			return found, &stoppingError{matched: len(found), want: n}
 		default:
+		}
+		// Each round is a fresh check of the caller's token: one revoked,
+		// or its user removed or given another role, ends the wait.
+		if !s.auth.StillValid(ctx, access.From(ctx)) {
+			return nil, errors.New("the credential was revoked (or its user removed or given another role): this wait ends; call again with a valid token")
 		}
 		left := time.Until(deadline).Round(time.Millisecond)
 		q := f.query(url.Values{"after": {strconv.FormatInt(cursor, 10)}, "limit": {strconv.Itoa(n - len(found))}})

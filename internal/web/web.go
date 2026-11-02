@@ -179,7 +179,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	}
 	ao.Fonts, _ = fs.Sub(staticFS, "static")
 	h.api = api.New(st, broker, log, ao)
-	h.mcp = mcp.Handler(h.api, api.Base(prefix), version.String(), log, h.stop, o.MCPMaxSessions)
+	h.mcp = mcp.Handler(h.api, api.Base(prefix), version.String(), log, h.stop, o.MCPMaxSessions, o.Access)
 	h.mcpAuthed = withMCPIdentity(h.mcp)
 	return h
 }
@@ -956,9 +956,10 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-check.C:
 			// The login of this page ended (logout, expiry, a password or role
-			// change): the page reloads onto the login page. An open feed
-			// otherwise counts as activity, which the check records.
-			if h.sessionEnded(r) {
+			// change; a token revoked): the page reloads onto the login page.
+			// An open feed otherwise counts as activity, which the check
+			// records.
+			if h.loginEnded(r) {
 				fmt.Fprint(w, "event: login\ndata: ended\n\n")
 				rc.Flush()
 				return

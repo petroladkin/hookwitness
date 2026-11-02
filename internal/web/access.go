@@ -270,12 +270,17 @@ func withMCPIdentity(next http.Handler) http.Handler {
 	return mcpauth.RequireBearerToken(verify, &mcpauth.RequireBearerTokenOptions{AllowMissingExpiration: true})(next)
 }
 
-// sessionEnded reports whether the session of a live feed has ended since
-// it connected (logout, expiry, a password or role change, removal).
-func (h *Handler) sessionEnded(r *http.Request) bool {
+// loginEnded reports whether the login of a live feed has ended since it
+// connected: a session by its cookie (logout, expiry, a password or role
+// change, removal), a personal token by its row (revoked, its user removed
+// or given another role).
+func (h *Handler) loginEnded(r *http.Request) bool {
 	id := access.From(r.Context())
-	if h.auth == nil || id == nil || id.Via != access.ViaSession {
+	if h.auth == nil || id == nil {
 		return false
+	}
+	if id.Via != access.ViaSession {
+		return !h.auth.StillValid(r.Context(), id)
 	}
 	c, err := r.Cookie(access.CookieName)
 	if err != nil {
@@ -285,7 +290,7 @@ func (h *Handler) sessionEnded(r *http.Request) bool {
 	return errors.Is(err, access.ErrNoSession)
 }
 
-// sessionCheck is how often an open live feed checks its session.
+// sessionCheck is how often an open live feed checks its login.
 var sessionCheck = heartbeat
 
 // loginAttempt waits this long after a failed login (tests set 0): it slows
