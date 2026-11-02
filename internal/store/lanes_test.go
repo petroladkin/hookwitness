@@ -736,6 +736,7 @@ func TestDeliveryLookupsUseIndexes(t *testing.T) {
 			plan = append(plan, detail)
 		}
 		rows.Close()
+		t.Logf("%s\n  %v", strings.Join(strings.Fields(q), " "), plan)
 		for _, d := range plan {
 			if strings.HasPrefix(d, "SCAN ") && !strings.Contains(d, "INDEX") || strings.Contains(d, "TEMP B-TREE") {
 				t.Errorf("%s\n  %v", q, plan)
