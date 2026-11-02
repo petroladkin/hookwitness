@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/petroladkin/hookwitness/internal/emulate"
 	"io"
 	"log/slog"
 	"net"
@@ -22,10 +21,13 @@ import (
 	"github.com/petroladkin/hookwitness/internal/api"
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/config"
+	"github.com/petroladkin/hookwitness/internal/emulate"
+	"github.com/petroladkin/hookwitness/internal/forward"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/mcp"
 	"github.com/petroladkin/hookwitness/internal/replay"
 	"github.com/petroladkin/hookwitness/internal/secret"
+	"github.com/petroladkin/hookwitness/internal/send"
 	"github.com/petroladkin/hookwitness/internal/server"
 	"github.com/petroladkin/hookwitness/internal/setup"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -230,6 +232,20 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, MaxInFlight: cfg.MaxInFlight,
 		Retention: keep, MaxWait: cfg.MaxWait, Keys: keys}
 	replays := replay.New(st, log, replay.Options{Policy: cfg.ReplayAllow, MaxWait: cfg.MaxWait, Budget: catcher, Live: broker})
+	// Forwards share replay's target policy (-replay-allow) and the bytes
+	// budget; the catcher stops them with its own holds.
+	forwards := forward.New(log, forward.Options{Policy: cfg.ReplayAllow, MaxWait: cfg.MaxWait, Budget: catcher})
+	catcher.Forward = forwards
+	if line, err := forwardNotice(ctx, st, cfg.ReplayAllow); err != nil {
+		log.Error("endpoints not read", "err", err)
+		return 1
+	} else if line != nil {
+		if cfg.ReplayAllow.Off() {
+			log.Warn(line[0].(string), line[1:]...)
+		} else {
+			log.Info(line[0].(string), line[1:]...)
+		}
+	}
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, Separate: separate, PublicURL: cfg.PublicURL, CatchAddr: ln.Addr().String(),
 		MaxBody: cfg.MaxBody, Retention: keep, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
@@ -245,14 +261,40 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 				return server.Serve(ctx, adminLn, server.AdminRoot(o), log, ui.StopStreams)
 			})
 	}
-	catcher.Wait() // timeouts and drops record their outcome before the store closes
-	replays.Wait() // so do replays
+	catcher.Wait()  // timeouts and drops record their outcome before the store closes
+	forwards.Wait() // so do forwards
+	replays.Wait()  // and replays
 	if err != nil {
 		log.Error("server stopped with an error", "err", err)
 		return 1
 	}
 	log.Info("stopped")
 	return 0
+}
+
+// forwardNotice is the start-up line about endpoints that forward live
+// traffic to a receiver (message, then attributes), or nil when none does:
+// with sending off (-replay-allow none) their requests get the failure
+// answer, which is a warning.
+func forwardNotice(ctx context.Context, st *store.Store, p send.Policy) ([]any, error) {
+	eps, err := st.Endpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, ep := range eps {
+		if c, err := emulate.Parse(ep.Config); err == nil && c.Forward != nil {
+			paths = append(paths, ep.Path+" -> "+c.Forward.Origin())
+		}
+	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	if p.Off() {
+		return []any{"forwarding is off on this server (-replay-allow none): requests to these endpoints get the failure answer, not the receiver's",
+			"endpoints", strings.Join(paths, ", ")}, nil
+	}
+	return []any{"endpoints forward live traffic to receivers", "endpoints", strings.Join(paths, ", "), "policy", p.String()}, nil
 }
 
 // loopback reports whether a listener only takes connections from this

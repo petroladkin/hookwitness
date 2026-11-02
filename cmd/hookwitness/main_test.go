@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/secret"
+	"github.com/petroladkin/hookwitness/internal/send"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -405,5 +407,30 @@ func TestServeWarnsAboutShadowedEndpoints(t *testing.T) {
 	s := log.String()
 	if !strings.Contains(s, "shadowed") || !strings.Contains(s, "/admin/stripe") || strings.Contains(s, `"/github"`) {
 		t.Fatalf("log: %s", s)
+	}
+}
+
+// The start-up line names the endpoints that forward live traffic, as a
+// warning when sending is off and their requests get the failure answer.
+func TestForwardNotice(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "hw.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if line, err := forwardNotice(ctx, st, send.Policy{}); err != nil || line != nil {
+		t.Fatalf("no forwarding endpoint: %v %v", line, err)
+	}
+	ep, _ := st.CreateEndpoint(ctx, "/github")
+	st.SetConfig(ctx, ep.ID, emulate.Config{Default: emulate.Reply{Status: 200}, Forward: &emulate.Forward{URL: "https://receiver.test/in"}}.String())
+	st.CreateEndpoint(ctx, "/mock")
+	line, err := forwardNotice(ctx, st, send.Policy{})
+	if err != nil || fmt.Sprint(line) != "[endpoints forward live traffic to receivers endpoints /github -> https://receiver.test:443 policy any target except link-local and cloud-metadata addresses]" {
+		t.Fatalf("on: %v %v", line, err)
+	}
+	off, _ := send.ParsePolicy("none")
+	if line, _ := forwardNotice(ctx, st, off); len(line) != 3 || !strings.HasPrefix(line[0].(string), "forwarding is off on this server") || line[2] != "/github -> https://receiver.test:443" {
+		t.Fatalf("off: %v", line)
 	}
 }
