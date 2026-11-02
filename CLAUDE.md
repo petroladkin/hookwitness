@@ -69,8 +69,10 @@ API) turns login on for the UI, the API and MCP: browser sessions (cookie,
 SameSite=Lax, idle 24 h, absolute 7 days), personal tokens
 (`hkw_<id>_<secret>`, Bearer, shown once; skip the host check), a machine
 token (`HOOKWITNESS_API_TOKEN_FILE`, closes the API and MCP even without
-users), two roles (user, admin), a login limit per client address
-(`-trusted-proxies`); token and user management needs a session; the
+users), two roles (user, admin), a login limit per client address (IPv6
+per /64; `-trusted-proxies`); a revoked token (or its user removed or
+given another role) ends the live feeds, MCP waits and MCP sessions it
+opened; token and user management needs a session; the
 catcher replaces the session cookie's value in recorded `Cookie` headers.
 Replay: a caught request whose body was kept whole is sent again, byte for
 byte (Host replaced in place unless kept), to a URL from the UI, the API
@@ -106,9 +108,12 @@ that makes it false.
   environment; signal handling; logger setup; wiring of the parts below.
 - `internal/access` — who may use the admin: names, passwords, tokens
   (format, minting), sessions (ids hashed with SHA-256, lifetimes, the
-  cookie), the login limiter and trusted proxies, the identity a request
-  carries in its context (`With`, `From`, `Who` for logs), the
-  `Authenticator` over the store and `internal/secret`.
+  cookie), the login limiter (IPv6 keyed by its /64) and trusted proxies,
+  the identity a request carries in its context (`With`, `From`, `Who` for
+  logs), the `Authenticator` over the store and `internal/secret`
+  (`StillValid`: a token's row and its owner's role, for streams and waits
+  opened earlier; `OnChange`/`Changed`: told when this process revokes a
+  token, removes a user or changes a role).
 - `internal/config` — `serve` settings from flags and `HOOKWITNESS_*` env
   (the admin's own address and the public URL validated with the rest).
 - `internal/store` — sqlite (modernc.org/sqlite, no cgo): pragmas, embedded
@@ -213,9 +218,12 @@ that makes it false.
   task-shaped tools that call the REST API's handler in-process (same
   validation, errors and access), mounted by `internal/web` at
   `<prefix>/mcp`; `wait_for_request` and `expect` chain the API's long-polls
-  and end on cancellation and at shutdown (a tool error); open sessions are
-  tracked from `initialize` (with their slot, one owner: `hold`) and closed
-  on shutdown (`Streamable.CloseSessions`, called by `StopStreams`), and
+  (rounds of 30 s) and end on cancellation, at shutdown and when the
+  caller's token no longer stands, checked each round (a tool error); open
+  sessions are tracked from `initialize` with their identity (and their
+  slot, one owner: `hold`), closed when their token no longer stands (at
+  once on `Changed`, else within 25 s: `Recheck`) and on shutdown
+  (`Streamable.CloseSessions`, called by `StopStreams`), and
   capped (`-mcp-max-sessions`, default 32: a slot taken at `initialize`, 503
   over it); a request is at most `MaxRequest` (a 16 MiB setup file and its
   message; over it 413 from the SDK); results are a summary line and compact
@@ -241,7 +249,8 @@ that makes it false.
   the `hw_theme` cookie written into `<html data-theme>` by the server. The admin's gate
   (`access.go`: credentials, then the host check, then the rules per route)
   and the login, account and users pages (`users.go`, `access.templ`); the
-  live feed checks its session at each heartbeat (`event: login`).
+  live feed checks its login at each heartbeat (`event: login`): a session
+  by its cookie, a token by `StillValid`.
 - `internal/version` — version and commit, set via `-ldflags` by `make build`;
   without them (`go install`) taken from the build info Go records.
 - `internal/repoguard` — tests over the repository itself: no private network

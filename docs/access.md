@@ -80,7 +80,9 @@ before logging in comes back after it.
 - A login lasts until you log out (*Log out* in the menu under your name), or a day
   without activity, or a week at most. An open register counts as activity.
 - Ten failed logins from one address in 15 minutes pause logins from that
-  address for the rest of the 15 minutes.
+  address for the rest of the 15 minutes. An IPv6 address counts with its
+  whole /64, the block one host is given, so a client cannot spread its
+  guesses over its own addresses.
 - Changing your password ends your other logins; an admin's reset of
   someone's password, a change of their role, and removing them end all of
   theirs at once.
@@ -112,7 +114,9 @@ in the header, *Account and tokens*, then *New token*). It is shown once: copy i
 
 A token acts as you, with your role as it is now: demote or remove a user and
 their tokens follow at once. Revoke one on the account page (admins also on
-the Users page); whatever uses it is refused from its next request. Tokens do
+the Users page); whatever uses it is refused from its next request, a register
+open with it reloads onto the login page within 25 seconds, an MCP wait ends
+within 30 seconds, and its MCP sessions are closed. Tokens do
 not expire; each shows when it was last used. A token cannot make tokens or
 manage users: that needs a login.
 
@@ -172,7 +176,8 @@ with the "no login" line, until the first user exists.
   counts only when the admin is opened by a name of `-admin-hosts`: opened
   by an address over plain HTTP (an SSH tunnel, the LAN), the cookie is not
   *Secure*, since a browser would drop it there.
-- The login limit counts failures per client address. Behind a proxy every
+- The login limit counts failures per client address (for IPv6, per /64).
+  Behind a proxy every
   login comes from the proxy's address, so they would share one limit.
   `-trusted-proxies` / `HOOKWITNESS_TRUSTED_PROXIES` (addresses or CIDRs,
   comma-separated) names your proxies; from them, the client is the

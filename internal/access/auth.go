@@ -35,6 +35,9 @@ type Authenticator struct {
 	// nothing; made on first use (a hash costs a few milliseconds).
 	dummy     string
 	dummyOnce sync.Once
+	// changed are told when a credential is revoked or changes here.
+	changedMu sync.Mutex
+	changed   []func()
 }
 
 // New returns an authenticator; machineToken is the machine token's value
@@ -190,6 +193,47 @@ func (a *Authenticator) Token(ctx context.Context, tok string) (*Identity, error
 		}
 	}
 	return &Identity{UserID: t.UserID, Name: t.Owner, Role: t.Role, Via: ViaToken, TokenID: t.PublicID}, nil
+}
+
+// StillValid reports whether the login behind a stream or a wait opened
+// earlier still stands. A personal token stands while its row exists and its
+// owner keeps the role it had (a revoked token, a removed user, another role
+// end it); the machine token, while the server runs. A session is checked by
+// its cookie (Session), as on every request and in the live feed: here it
+// stands. A token the store cannot confirm (an error) does not stand: its
+// stream or wait ends, and its client, reconnecting, is checked anew.
+func (a *Authenticator) StillValid(ctx context.Context, id *Identity) bool {
+	if a == nil || id == nil || id.Via != ViaToken {
+		return true
+	}
+	t, err := a.store.TokenByPublicID(ctx, id.TokenID)
+	if err != nil {
+		return false
+	}
+	return t.UserID == id.UserID && t.Role == id.Role
+}
+
+// OnChange registers f, called after this process revokes a token, removes
+// a user or gives one another role: whoever holds streams opened with a
+// token checks them again (StillValid).
+func (a *Authenticator) OnChange(f func()) {
+	a.changedMu.Lock()
+	defer a.changedMu.Unlock()
+	a.changed = append(a.changed, f)
+}
+
+// Changed tells the OnChange listeners that credentials changed. Safe on a
+// nil Authenticator (no login).
+func (a *Authenticator) Changed() {
+	if a == nil {
+		return
+	}
+	a.changedMu.Lock()
+	fs := append([]func(){}, a.changed...)
+	a.changedMu.Unlock()
+	for _, f := range fs {
+		f()
+	}
 }
 
 // MintFor makes a personal token for a user and stores its hash: the value

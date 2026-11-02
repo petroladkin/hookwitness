@@ -32,7 +32,7 @@ func limitServer(t *testing.T, limit int, logs io.Writer) (*httptest.Server, *St
 	keys, _ := secret.Load("", filepath.Join(t.TempDir(), "hw.db.key"))
 	log := slog.New(slog.NewTextHandler(logs, nil))
 	a := api.New(st, live.New(), log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: make(chan struct{}), Version: "test"})
-	h := Handler(a, api.Base("/admin"), "test", log, nil, limit)
+	h := Handler(a, api.Base("/admin"), "test", log, nil, limit, nil)
 	mux := http.NewServeMux()
 	mux.Handle("/admin/mcp", h)
 	srv := httptest.NewServer(mux)

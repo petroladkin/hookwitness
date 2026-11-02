@@ -246,6 +246,7 @@ func (h *Handler) revokeOwnToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("token revoked", "user", id.Name, "owner", t.Owner, "token", t.Name, "token_id", t.PublicID)
+	h.auth.Changed()
 	http.Redirect(w, r, h.prefix+"/account?saved=revoked", http.StatusSeeOther)
 }
 
@@ -381,6 +382,7 @@ func (h *Handler) setRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("user role changed", append([]any{"name", u.Name, "role", u.Role}, who(r)...)...)
+	h.auth.Changed()
 	h.afterOwnChange(w, r, u.Name, "role")
 }
 
@@ -429,6 +431,7 @@ func (h *Handler) removeUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("user removed", append([]any{"name", u.Name}, who(r)...)...)
+	h.auth.Changed()
 	h.afterOwnChange(w, r, u.Name, "removed")
 }
 
@@ -447,5 +450,6 @@ func (h *Handler) revokeAnyToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("token revoked", append([]any{"owner", t.Owner, "token", t.Name, "token_id", t.PublicID}, who(r)...)...)
+	h.auth.Changed()
 	http.Redirect(w, r, h.prefix+"/users?saved=revoked", http.StatusSeeOther)
 }
