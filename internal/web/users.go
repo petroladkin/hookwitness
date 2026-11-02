@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -18,6 +19,33 @@ type loginView struct {
 	Next string
 	Name string
 	Err  string
+	// Providers to sign in with (login on); Elsewhere, when the page was
+	// opened on another host than the admin's origin, is that origin's login
+	// page, which the buttons link to; Moved says a sign-in was sent here.
+	Providers []providerButton
+	Elsewhere string
+	Moved     string
+}
+
+type providerButton struct{ Name, Label string }
+
+// loginView is the login page's view with the providers' buttons.
+func (h *Handler) loginView(r *http.Request, next, name, msg string) loginView {
+	on, _ := h.uiLoginOn(r.Context())
+	v := loginView{On: on, Next: next, Name: name, Err: msg}
+	if !on {
+		return v
+	}
+	for _, p := range h.oidc {
+		v.Providers = append(v.Providers, providerButton{Name: p.Name, Label: p.Label})
+	}
+	if h.adminHost != "" && hostName(r.Host) != h.adminHost {
+		v.Elsewhere = h.adminOrigin + h.prefix + "/login?next=" + url.QueryEscape(next)
+	}
+	if r.URL.Query().Get("moved") != "" && len(v.Providers) > 0 {
+		v.Moved = "Sign in here, at " + h.adminOrigin + ": a sign-in through a provider starts on the admin's own address."
+	}
+	return v
 }
 
 // accountView is the account page: one's tokens and password.
@@ -62,7 +90,7 @@ func (h *Handler) loginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, h.nextPage(r.URL.Query().Get("next")), http.StatusSeeOther)
 		return
 	}
-	h.render(w, r, http.StatusOK, loginPage(h.bareNav(r), loginView{On: on, Next: r.URL.Query().Get("next")}))
+	h.render(w, r, http.StatusOK, loginPage(h.bareNav(r), h.loginView(r, r.URL.Query().Get("next"), "", "")))
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +107,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	addr := access.ClientAddr(r, h.proxies)
 	name, next := r.PostFormValue("name"), r.PostFormValue("next")
 	again := func(status int, msg string) {
-		h.render(w, r, status, loginPage(h.bareNav(r), loginView{On: true, Next: next, Name: name, Err: msg}))
+		h.render(w, r, status, loginPage(h.bareNav(r), h.loginView(r, next, name, msg)))
 	}
 	if ok, wait := h.limiter.Allow(addr); !ok {
 		mins := int((wait + time.Minute - 1) / time.Minute)
@@ -112,12 +140,10 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.limiter.Success(addr)
-	id, _, err := h.auth.StartSession(ctx, u)
-	if err != nil {
+	if err := h.startSession(w, r, u); err != nil {
 		h.fail(w, "login", err)
 		return
 	}
-	http.SetCookie(w, access.Cookie(id, h.prefix, h.secure(r)))
 	h.log.Info("user logged in", "user", u.Name, "addr", addr)
 	http.Redirect(w, r, h.nextPage(next), http.StatusSeeOther)
 }

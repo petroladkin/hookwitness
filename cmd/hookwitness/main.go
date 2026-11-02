@@ -25,6 +25,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/forward"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/mcp"
+	"github.com/petroladkin/hookwitness/internal/oidc"
 	"github.com/petroladkin/hookwitness/internal/replay"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/send"
@@ -295,11 +296,18 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 			log.Info(line[0].(string), line[1:]...)
 		}
 	}
+	var providers []*oidc.Provider
+	for _, p := range cfg.OIDC {
+		providers = append(providers, oidc.NewProvider(oidc.Config{Name: p.Name, Label: p.Label, Issuer: p.Issuer, ClientID: p.ClientID,
+			ClientSecret: secrets[p.Name], RedirectURI: cfg.RedirectURI(p), AllowedDomains: p.AllowedDomains}))
+	}
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, Separate: separate, PublicURL: cfg.PublicURL, CatchAddr: ln.Addr().String(),
 		MaxBody: cfg.MaxBody, Retention: keep, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
 		Access: auth, Proxies: cfg.TrustedProxies, Replay: replays, MCPMaxSessions: cfg.MCPMaxSessions, MaxDBSize: cfg.MaxDBSize,
+		OIDC: providers, AdminURL: cfg.AdminOrigin(),
 	})
+	ui.DiscoverProviders(ctx)
 	o := server.Options{DB: st, Log: log, AdminPrefix: cfg.AdminPrefix, Admin: ui, Catch: catcher}
 	if !separate {
 		err = server.Serve(ctx, ln, server.New(o), log, ui.StopStreams, catcher.Stop)

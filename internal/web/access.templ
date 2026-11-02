@@ -22,14 +22,38 @@ templ loginPage(nav navView, v loginView) {
 		<main class="sheet login">
 			<h1 class="title">Log in</h1>
 			if !v.On {
+				if v.Err != "" {
+					<p class="error banner" role="alert">{ v.Err }</p>
+				}
 				<p class="lede">
 					Login is off: there are no users yet, so anyone who can open the admin can use it.
 					<a href={ templ.SafeURL(nav.Prefix + "/") }>Go to the endpoints</a>, or
 					<a href={ templ.SafeURL(nav.Prefix + "/users") }>add the first user</a> to turn login on.
 				</p>
 			} else {
+				if v.Moved != "" {
+					<p class="note banner" role="status">{ v.Moved }</p>
+				}
+				if len(v.Providers) > 0 {
+					<div class="card providers">
+						if v.Err != "" {
+							<p class="error banner" role="alert">{ v.Err }</p>
+						}
+						for _, p := range v.Providers {
+							if v.Elsewhere != "" {
+								<a class="btn solid provider" href={ templ.SafeURL(v.Elsewhere) }>Sign in with { p.Label }</a>
+							} else {
+								<form method="post" action={ templ.SafeURL(nav.Prefix + "/oidc/" + p.Name + "/start") }>
+									<input type="hidden" name="next" value={ v.Next }/>
+									<button class="btn solid provider" type="submit">Sign in with { p.Label }</button>
+								</form>
+							}
+						}
+						<p class="divider"><span>or with a password</span></p>
+					</div>
+				}
 				<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/login") }>
-					if v.Err != "" {
+					if v.Err != "" && len(v.Providers) == 0 {
 						<p class="error banner" role="alert">{ v.Err }</p>
 					}
 					<input type="hidden" name="next" value={ v.Next }/>

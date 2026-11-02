@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/mcp"
+	"github.com/petroladkin/hookwitness/internal/oidc"
 	"github.com/petroladkin/hookwitness/internal/replay"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -73,8 +75,14 @@ type Handler struct {
 	auth      *access.Authenticator // nil: login is off for good (tests)
 	limiter   *access.Limiter       // failed logins per client address
 	proxies   access.Proxies        // reverse proxies whose X-Forwarded-For names the client
-	assets    map[string]string     // asset path -> content hash for cache busting
-	replay    *replay.Service       // sends caught requests to targets
+	// Provider sign-in: the providers, the flows in progress, and the
+	// admin's external origin (its host passes the host check).
+	oidc        []*oidc.Provider
+	flows       *oidc.Flows
+	adminOrigin string
+	adminHost   string
+	assets      map[string]string // asset path -> content hash for cache busting
+	replay      *replay.Service   // sends caught requests to targets
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -102,6 +110,10 @@ type Options struct {
 	// MaxDBSize is the database size limit, shown with the database's
 	// size; 0: none.
 	MaxDBSize int64
+	// OIDC are the providers people may sign in with; AdminURL the admin's
+	// external origin, which their redirect URIs use (config.AdminOrigin).
+	OIDC     []*oidc.Provider
+	AdminURL string
 }
 
 // New returns the UI.
@@ -113,6 +125,10 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	}
 	for _, name := range o.Hosts {
 		h.hosts[strings.ToLower(name)] = true
+	}
+	h.oidc, h.flows, h.adminOrigin = o.OIDC, oidc.NewFlows(nil), o.AdminURL
+	if u, err := url.Parse(o.AdminURL); o.AdminURL != "" && err == nil {
+		h.adminHost = hostName(u.Host)
 	}
 	prefix := o.Prefix
 	if !o.Separate {
@@ -156,6 +172,8 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("GET "+p+"/login", h.loginPage)
 	mux.HandleFunc("POST "+p+"/login", h.login)
 	mux.HandleFunc("POST "+p+"/logout", h.logout)
+	mux.HandleFunc("POST "+p+"/oidc/{name}/start", h.oidcStart)
+	mux.HandleFunc("GET "+p+"/oidc/{name}/callback", h.oidcCallback)
 	mux.HandleFunc("POST "+p+"/theme", h.setTheme)
 	mux.HandleFunc("GET "+p+"/account", h.accountPage)
 	mux.HandleFunc("POST "+p+"/account/password", h.changePassword)
@@ -271,7 +289,7 @@ func (h *Handler) allowedHost(host string) bool {
 	if _, err := netip.ParseAddr(name); err == nil {
 		return true
 	}
-	return name == "localhost" || strings.HasSuffix(name, ".localhost") || h.hosts[name]
+	return name == "localhost" || strings.HasSuffix(name, ".localhost") || h.hosts[name] || name != "" && name == h.adminHost
 }
 
 // regID reads the {reg} path value: an endpoint id, or "unmatched".
