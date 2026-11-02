@@ -183,12 +183,14 @@ func (s *tools) register(srv *sdk.Server) {
 		s.setRetention)
 	sdk.AddTool(srv, &sdk.Tool{Name: "export_endpoint", Annotations: readOnly,
 		Description: "Export endpoints' setup as a hookwitness setup file: path, default reply, rules, checks, variables, schemas and the names and kinds of secrets (never their values). " +
-			"Save the setup object as the named .hookwitness.json file; import_endpoints, the UI, the API or hookwitness apply recreate the endpoints from it on any instance."},
+			"Save the setup object as the named .hookwitness.json file; import_endpoints, the UI, the API or hookwitness apply recreate the endpoints from it on any instance. " +
+			"A setup over 4 MiB is an error naming the API's address to download it from instead."},
 		s.exportEndpoint)
 	sdk.AddTool(srv, &sdk.Tool{Name: "import_endpoints", Annotations: replacing,
 		Description: "Create endpoints from a hookwitness setup file (the object export_endpoint gives, or a .hookwitness.json file's content), all or none. " +
 			"Their secrets are created without values: checks that use them give n/v until set_secret gives each value. " +
-			"A path that is already an endpoint is refused unless on_conflict is replace, which replaces its behaviour (its requests, counter and on/off state stay; secrets of the same name and kind keep their values). Importing the same file again changes nothing."},
+			"A path that is already an endpoint is refused unless on_conflict is replace, which replaces its behaviour (its requests, counter and on/off state stay; secrets of the same name and kind keep their values). Importing the same file again changes nothing. " +
+			"A setup file is at most 16 MiB."},
 		s.importEndpoints)
 	sdk.AddTool(srv, &sdk.Tool{Name: "delete_endpoint", Annotations: destructive,
 		Description: "Delete an endpoint with its behaviour, secrets and requests."},
@@ -957,9 +959,22 @@ func (s *tools) exportEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in E
 		name = params["filename"]
 	}
 	eps, _ := file["endpoints"].([]any)
-	return result(fmt.Sprintf("Setup of %d endpoint(s): save the setup object as %s; secret names and kinds are in it, their values are not in it", len(eps), name),
+	res, structured, err := result(fmt.Sprintf("Setup of %d endpoint(s): save the setup object as %s; secret names and kinds are in it, their values are not in it", len(eps), name),
 		map[string]any{"file_name": name, "setup": file})
+	if n := len(res.Content[0].(*sdk.TextContent).Text); n > MaxExport {
+		get := s.c.base + "/setup"
+		if len(q) > 0 {
+			get += "?" + q.Encode()
+		}
+		return nil, nil, fmt.Errorf("the setup is %.1f MiB, over the %d MiB a result carries: export fewer endpoints, or download it with GET %s (the API's token works there too)",
+			float64(n)/(1<<20), MaxExport>>20, get)
+	}
+	return res, structured, err
 }
+
+// MaxExport bounds export_endpoint's result: an agent cannot hold more in
+// its context, and the API gives the whole file.
+const MaxExport = 4 << 20
 
 type ImportIn struct {
 	Setup      map[string]any `json:"setup" jsonschema:"the setup file: {hookwitness: 1, endpoints: [...]}, as export_endpoint gives it"`

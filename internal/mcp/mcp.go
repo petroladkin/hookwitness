@@ -21,23 +21,17 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/petroladkin/hookwitness/internal/access"
+	"github.com/petroladkin/hookwitness/internal/setup"
 )
 
 // NewServer is an MCP server whose tools call api (the REST API's handler,
 // served at base) as if addressed to host. Waits end when stop is closed
 // (the server is shutting down); nil never closes.
 func NewServer(api http.Handler, base, host, version string, stop <-chan struct{}) *sdk.Server {
-	return newServer(api, base, host, version, stop, nil)
-}
-
-func newServer(api http.Handler, base, host, version string, stop <-chan struct{}, onSession func(*sdk.ServerSession)) *sdk.Server {
 	opts := &sdk.ServerOptions{
 		Instructions: "Hookwitness catches webhooks for testing a sender. Create an endpoint, give its catch URL to the sender, " +
 			"configure checks (signatures, tokens, JSON Schema) and fault rules, then wait_for_request or expect verdicts. " +
 			"Secrets are write-only; use test values.",
-	}
-	if onSession != nil {
-		opts.InitializedHandler = func(_ context.Context, r *sdk.InitializedRequest) { onSession(r.Session) }
 	}
 	srv := sdk.NewServer(&sdk.Implementation{Name: "hookwitness", Title: "Hookwitness", Version: version}, opts)
 	srv.AddReceivingMiddleware(carryIdentity)
@@ -82,6 +76,11 @@ var sessionTimeout = 30 * time.Minute
 // RetryAfter is what a client refused for the session limit is told to wait.
 const RetryAfter = 30 * time.Second
 
+// MaxRequest bounds an MCP request's body: a setup file as large as the API
+// takes (import_endpoints) with the JSON-RPC message around it. A larger
+// one is refused by the transport (413), before any tool sees it.
+const MaxRequest = setup.MaxSize + 1<<20
+
 // Handler serves MCP over Streamable HTTP. Each session gets a server bound
 // to the host the client addressed, so catch URLs read as the client sees
 // the server. At most maxSessions sessions exist at once (0: no limit).
@@ -89,14 +88,15 @@ const RetryAfter = 30 * time.Second
 func Handler(api http.Handler, base, version string, log *slog.Logger, stop <-chan struct{}, maxSessions int) *Streamable {
 	s := &Streamable{sessions: map[*sdk.ServerSession]struct{}{}, log: log, limit: maxSessions}
 	s.sdk = sdk.NewStreamableHTTPHandler(func(r *http.Request) *sdk.Server {
-		srv := newServer(api, base, r.Host, version, stop, s.track)
+		srv := NewServer(api, base, r.Host, version, stop)
 		if c, ok := r.Context().Value(creatingKey{}).(*creating); ok {
 			c.srv = srv // the last one built for the request is the session's
 		}
 		return srv
 	}, &sdk.StreamableHTTPOptions{
-		Logger:         log,
-		SessionTimeout: sessionTimeout,
+		Logger:              log,
+		SessionTimeout:      sessionTimeout,
+		MaxRequestBodyBytes: MaxRequest,
 		// internal/web's host check guards against DNS rebinding, -admin-hosts
 		// included; the SDK's own check would refuse those names behind a
 		// local proxy.
@@ -135,23 +135,21 @@ func (s *Streamable) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	c := &creating{}
 	s.sdk.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), creatingKey{}, c)))
-	// The slot goes with the session made; none made, or one that never
-	// initialized (a failed initialize; a client probing a newer protocol
-	// first), gives it back now, before the client's next request.
-	held := false
+	// The slot goes with the session made, which from now on a shutdown
+	// closes, whether or not its client ever says initialized; none made,
+	// or one that never initialized (a failed initialize; a client probing
+	// a newer protocol first), gives it back now, before the client's next
+	// request.
 	if c.srv != nil {
 		for ss := range c.srv.Sessions() {
-			if ss.InitializeParams() == nil {
-				break
+			if ss.InitializeParams() != nil {
+				s.hold(ss)
+				return
 			}
-			held = true
-			go func() { ss.Wait(); s.give() }()
 			break
 		}
 	}
-	if !held {
-		s.give()
-	}
+	s.give()
 }
 
 // peekSize is how much of a body opens reads; an initialize is far smaller.
@@ -220,21 +218,26 @@ func (s *Streamable) refuse(w http.ResponseWriter, r *http.Request) {
 	w.Write(out.Bytes())
 }
 
-func (s *Streamable) track(ss *sdk.ServerSession) {
+// hold keeps ss, a session just created with a slot, among the sessions
+// CloseSessions closes; when it ends, it leaves them and its slot is given
+// back. Tracking and the slot have this one owner.
+func (s *Streamable) hold(ss *sdk.ServerSession) {
 	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		go ss.Close() // began as the server stops
-		return
+	closed := s.closed
+	if !closed {
+		s.sessions[ss] = struct{}{}
 	}
-	s.sessions[ss] = struct{}{}
 	s.mu.Unlock()
 	go func() {
 		ss.Wait()
 		s.mu.Lock()
 		delete(s.sessions, ss)
+		s.slots--
 		s.mu.Unlock()
 	}()
+	if closed {
+		ss.Close() // began as the server stops
+	}
 }
 
 // Sessions is the number of open sessions.
