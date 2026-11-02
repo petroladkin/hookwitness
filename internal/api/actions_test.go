@@ -40,7 +40,7 @@ func TestClearResetRecheck(t *testing.T) {
 	ep := e.endpoint(t, "/hooks")
 	e.add(t, ep.ID, `{"a":1}`, func(r *store.Request) { r.Headers = append(r.Headers, store.Header{Name: "X-Token", Value: "t"}) })
 	e.st.AddRequest(t.Context(), &store.Request{EndpointID: ep.ID, Method: "POST", Path: "/hooks", Body: []byte("{}"), Status: 200}, store.Keep{Normal: 1000},
-		func(n int64) (int, string) { return 200, `{"action":"reply","status":200}` })
+		func(store.DecideIn) (int, string, string) { return 200, `{"action":"reply","status":200}`, "" })
 
 	// A required-header check would not give verdicts; a basic check does.
 	e.do("PUT", fmt.Sprintf("/endpoints/%d/secrets/PW", ep.ID), `{"kind":"token","value":"test-pw"}`)

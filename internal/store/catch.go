@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ type Endpoint struct {
 	LastAt    time.Time // newest kept request; zero when there is none
 	Config    string    // how it answers (internal/emulate); empty for the default
 	Counter   int64     // requests that passed its checks since the last reset
+	StartedAt time.Time // its clock's start: the first such request; zero before it
 	Enabled   bool      // on: it catches; off: requests to its path go to Unmatched
 	Kept      Kept      // its retention policy, lanes and what it lost
 }
@@ -92,10 +94,19 @@ type Signature struct {
 }
 
 // Decide is called by AddRequest inside its transaction with the request's
-// number since the counter was reset; it returns the status and outcome to
-// store. Deciding under the same lock as counting keeps "every Nth" exact
-// when requests arrive together.
-type Decide func(counter int64) (status int, outcome string)
+// number since the counter was reset, the endpoint's rule state and the
+// request's attempt of its event; it returns the status and outcome to
+// store and the state to keep. Deciding under the same lock as counting
+// keeps "every Nth" and rate limits exact when requests arrive together.
+type Decide func(DecideIn) (status int, outcome, state string)
+
+// DecideIn is what a decision reads.
+type DecideIn struct {
+	Counter int64     // the request's number since the reset
+	At      time.Time // its arrival
+	State   string    // the endpoint's rule state ('' after a reset)
+	Attempt int       // its attempt of its event or body; 1 when not counted
+}
 
 // register turns a register id into the value compared with endpoint_id;
 // queries use "endpoint_id IS ?" so that NULL matches the Unmatched register.
@@ -132,17 +143,18 @@ func (s *Store) CreateEndpoint(ctx context.Context, path string) (Endpoint, erro
 const endpointSummary = `SELECT e.id, e.path, e.created_at,
 	(SELECT ifnull(sum(n), 0) FROM lane_counts c WHERE c.reg = e.id),
 	(SELECT MAX(received_at) FROM requests r WHERE r.endpoint_id = e.id),
-	e.config, e.counter, e.enabled, e.retention, e.pruned, e.pruned_normal_at, e.pruned_anomaly_at,
+	e.config, e.counter, CASE WHEN json_valid(e.state) THEN ifnull(json_extract(e.state, '$.start'), 0) ELSE 0 END,
+	e.enabled, e.retention, e.pruned, e.pruned_normal_at, e.pruned_anomaly_at,
 	(SELECT ifnull(sum(n), 0) FROM lane_counts c WHERE c.reg = e.id AND c.pinned = 1),
 	(SELECT ifnull(sum(n), 0) FROM lane_counts c WHERE c.reg = e.id AND c.pinned = 0 AND c.anomaly = 1)
 	FROM endpoints e`
 
 func scanEndpoint(sc interface{ Scan(...any) error }) (Endpoint, error) {
 	var e Endpoint
-	var created, normalAt, anomalyAt int64
+	var created, started, normalAt, anomalyAt int64
 	var last sql.NullInt64
 	var pol string
-	if err := sc.Scan(&e.ID, &e.Path, &created, &e.Count, &last, &e.Config, &e.Counter, &e.Enabled,
+	if err := sc.Scan(&e.ID, &e.Path, &created, &e.Count, &last, &e.Config, &e.Counter, &started, &e.Enabled,
 		&pol, &e.Kept.Pruned, &normalAt, &anomalyAt, &e.Kept.Pinned, &e.Kept.Anomalies); err != nil {
 		return Endpoint{}, err
 	}
@@ -155,6 +167,9 @@ func scanEndpoint(sc interface{ Scan(...any) error }) (Endpoint, error) {
 		e.Kept.AnomalyAt = fromMillis(anomalyAt)
 	}
 	e.CreatedAt = fromMillis(created)
+	if started > 0 {
+		e.StartedAt = fromMillis(started)
+	}
 	if last.Valid {
 		e.LastAt = fromMillis(last.Int64)
 	}
@@ -261,9 +276,10 @@ func (s *Store) UpdateEndpoint(ctx context.Context, id int64, c EndpointChange) 
 	return err
 }
 
-// ResetCounter starts an endpoint's request count again from zero.
+// ResetCounter starts an endpoint's request count again from zero and
+// clears its rule state: the clock starts again at the next request.
 func (s *Store) ResetCounter(ctx context.Context, id int64) error {
-	return s.updateEndpoint(ctx, `UPDATE endpoints SET counter = 0 WHERE id = ?`, id)
+	return s.updateEndpoint(ctx, `UPDATE endpoints SET counter = 0, state = '' WHERE id = ?`, id)
 }
 
 func (s *Store) updateEndpoint(ctx context.Context, query string, args ...any) error {
@@ -384,7 +400,7 @@ func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts str
 		if err := recordSignatures(ctx, tx, endpoint, id, sigs); err != nil {
 			return err
 		}
-		if err := relate(ctx, tx, endpoint, id, sha, d); err != nil {
+		if err := relate(ctx, tx, endpoint, id, sha, d, -1); err != nil {
 			return err
 		}
 		if v, err := lookupRepeats(ctx, tx, endpoint, id, sigs, repeated); err != nil {
@@ -752,6 +768,7 @@ func (s *Store) AddRequest(ctx context.Context, r *Request, keep Keep, decide De
 	defer tx.Rollback()
 
 	var no int64
+	attempt := -1 // not counted yet
 	if r.EndpointID == Unmatched {
 		var v string
 		if err := tx.QueryRowContext(ctx,
@@ -775,12 +792,24 @@ func (s *Store) AddRequest(ctx context.Context, r *Request, keep Keep, decide De
 			return fmt.Errorf("number request: %w", err)
 		}
 		if decide != nil {
-			var n int64
+			in := DecideIn{At: r.ReceivedAt, Attempt: 1}
 			if err := tx.QueryRowContext(ctx,
-				`UPDATE endpoints SET counter = counter + 1 WHERE id = ? RETURNING counter`, r.EndpointID).Scan(&n); err != nil {
+				`UPDATE endpoints SET counter = counter + 1 WHERE id = ? RETURNING counter, state`, r.EndpointID).Scan(&in.Counter, &in.State); err != nil {
 				return fmt.Errorf("count request: %w", err)
 			}
-			r.Status, r.Outcome = decide(n)
+			if r.Delivery != nil {
+				if attempt, err = countAttempt(ctx, tx, r.EndpointID, math.MaxInt64, r.BodySHA256, r.Delivery); err != nil {
+					return err
+				}
+				in.Attempt = max(attempt, 1)
+			}
+			var state string
+			r.Status, r.Outcome, state = decide(in)
+			if state != in.State {
+				if _, err := tx.ExecContext(ctx, `UPDATE endpoints SET state = ? WHERE id = ?`, state, r.EndpointID); err != nil {
+					return fmt.Errorf("rule state: %w", err)
+				}
+			}
 		}
 	}
 
@@ -803,7 +832,7 @@ func (s *Store) AddRequest(ctx context.Context, r *Request, keep Keep, decide De
 	if err := recordSignatures(ctx, tx, r.EndpointID, id, r.Signatures); err != nil {
 		return err
 	}
-	if err := relate(ctx, tx, r.EndpointID, id, r.BodySHA256, r.Delivery); err != nil {
+	if err := relate(ctx, tx, r.EndpointID, id, r.BodySHA256, r.Delivery, attempt); err != nil {
 		return err
 	}
 	if err := classify(ctx, tx, id); err != nil {

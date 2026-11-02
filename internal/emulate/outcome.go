@@ -54,6 +54,10 @@ type Outcome struct {
 	Error    string `json:"error,omitempty"`
 	Would    int    `json:"would_status,omitempty"` // abandoned: the status the reply would have had
 	Counter  int64  `json:"counter,omitempty"`      // the request's number since the reset
+	// A rule by time or state: the time since the endpoint's clock started,
+	// and a rate rule's block end (UTC, three fraction digits).
+	ElapsedMs  *int64 `json:"elapsed_ms,omitempty"`
+	BlockUntil string `json:"block_until,omitempty"`
 }
 
 // SetReply records the reply actually sent.
@@ -112,6 +116,9 @@ func (o Outcome) Stamp() string {
 func (o Outcome) Why() string {
 	switch o.Source {
 	case FromRule:
+		if o.ElapsedMs != nil {
+			return fmt.Sprintf("rule %d · %s · at %s", o.Rule, o.Label, Duration(*o.ElapsedMs))
+		}
 		return fmt.Sprintf("rule %d · %s", o.Rule, o.Label)
 	case FromCheck:
 		return o.Check

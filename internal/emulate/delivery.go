@@ -201,6 +201,9 @@ type Facts struct {
 func (c Config) DeliveryFacts(r Request) *Facts {
 	var order *Check
 	any := c.Event != nil
+	for _, r := range c.Rules {
+		any = any || r.When.Kind == WhenAttempts // counts attempts of each event
+	}
 	for i, ch := range c.Checks {
 		if ch.IsDelivery() {
 			any = true

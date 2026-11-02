@@ -159,7 +159,7 @@ func TestCounterReset(t *testing.T) {
 	ep, _ := e.st.CreateEndpoint(context.Background(), "/c")
 	for range 3 {
 		e.st.AddRequest(context.Background(), &store.Request{EndpointID: ep.ID, Method: "POST", Path: "/c", Status: 200}, store.Keep{Normal: 1000},
-			func(int64) (int, string) { return 200, "" })
+			func(store.DecideIn) (int, string, string) { return 200, "", "" })
 
 	}
 	if !strings.Contains(e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour", nil).Body.String(), `<b class="big">3</b>`) {
