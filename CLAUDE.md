@@ -123,7 +123,9 @@ that makes it false.
   back at once, pruning by a housekeeping tick (`vacuum.go`, steps of 1024
   pages); `Compact` (`hookwitness db compact`, server stopped: a shared
   lock on `<db>.lock` while open, exclusive while compacting) converts an
-  older database through a checked copy renamed into place.
+  older database through a checked copy renamed into place (the copy made
+  empty with mode 0600, the database's mode given when complete); a new
+  database file is created 0600, an existing one keeps its mode.
   Users, sessions and tokens (`access.go`; the last admin guarded inside the
   write transaction).
   Endpoints and requests (`catch.go`); imports (`import.go`: all or none); `endpoint_id` NULL is the Unmatched
@@ -263,6 +265,10 @@ that makes it false.
 - `scripts/dist` — `make dist`: cross-builds and packs the release archives
   reproducibly (fixed entry time from the commit, owner 0, sorted entries,
   no gzip name or time) and writes `SHA256SUMS`.
+- `scripts/release` — `draft.sh`, the binaries job's step: the archives on
+  the tag's draft Release (made when there is none, uploaded again to one
+  draft), a published Release never changed, several Releases with the tag
+  refused; tested against a fake `gh`.
 - `scripts/hooks` — git hooks; `scripts/notices.sh` — notices generator;
   `scripts/dco.sh` — every commit of a range signed off by its author;
   `scripts/docker-smoke.sh` — the container scenario (README's `docker run`,
@@ -299,7 +305,8 @@ that makes it false.
   archives; on a release tag only, the job `binaries` (the only one with
   `contents: write`) attests the archives and puts them with `SHA256SUMS`
   on a draft Release of the tag (a prerelease for an rc), never changing a
-  published one. Actions are
+  published one and refusing when several Releases carry the tag
+  (`scripts/release/draft.sh`). Actions are
   pinned to commit SHAs; `.github/dependabot.yml` updates them, the Go modules
   and the base images weekly. `.github/ISSUE_TEMPLATE/` (bug, feature, no
   blank issues, security reported privately) and the PR template carry the

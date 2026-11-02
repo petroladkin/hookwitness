@@ -115,6 +115,10 @@ is:
 - or, when it is not set, a key file next to the database (`<db>.key`,
   created with mode 0600 on the first run).
 
+A new database file (and its `-wal` and `-shm`) is created with mode 0600
+too: it holds every request's body. An existing database keeps the mode it
+has; `chmod 600` it if others on the machine should not read it.
+
 Keep the key with the database when you move it. A database opened with
 another key keeps everything except the secrets: signing keys cannot be
 decrypted (their checks give **n/v**) and stored tokens never match. The

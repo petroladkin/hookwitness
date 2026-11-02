@@ -90,11 +90,20 @@ func Compact(ctx context.Context, dbPath string, keepOld bool) (CompactResult, e
 	if _, err := db.ExecContext(ctx, `PRAGMA auto_vacuum = INCREMENTAL`); err != nil {
 		return unchanged(err)
 	}
+	// The copy holds every body and sealed secret: it starts empty and
+	// private (SQLite writes into an empty file, and gives its journal the
+	// file's mode), and gets the database's mode only when complete.
+	if err := createPrivate(tmp); err != nil {
+		return unchanged(fmt.Errorf("create %s: %w", tmp, err))
+	}
 	if _, err := db.ExecContext(ctx, `VACUUM INTO ?`, tmp); err != nil {
 		return unchanged(fmt.Errorf("write %s: %w", tmp, err))
 	}
 	if err := checkCopy(ctx, tmp, counts); err != nil {
 		return unchanged(fmt.Errorf("check %s: %w", tmp, err))
+	}
+	if afterCopy != nil {
+		afterCopy(tmp)
 	}
 	if err := sameOwner(dbPath, tmp); err != nil {
 		return unchanged(err)
@@ -174,6 +183,20 @@ func syncDir(dir string) error {
 		return err
 	}
 	return nil
+}
+
+// afterCopy, when set (tests), sees the copy between its check and the
+// database's mode given to it.
+var afterCopy func(tmp string)
+
+// createPrivate creates path empty, readable by its owner only; an existing
+// file is an error.
+func createPrivate(path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 func sizeWithWAL(path string) int64 {

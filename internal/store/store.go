@@ -70,6 +70,13 @@ func open(ctx context.Context, dbPath string, migrations fs.FS) (*Store, error) 
 	if err != nil {
 		return nil, fmt.Errorf("open %s: lock: %w", dbPath, err)
 	}
+	// A new database is private, like the key file: it holds every body,
+	// hashed token and sealed secret (SQLite gives its -wal and -shm the
+	// file's mode). An existing file keeps the mode it has.
+	if err := createPrivate(dbPath); err != nil && !errors.Is(err, fs.ErrExist) {
+		lock.Close()
+		return nil, fmt.Errorf("open %s: %w", dbPath, err)
+	}
 	db, err := sql.Open("sqlite", dsn(dbPath))
 	if err != nil {
 		lock.Close()
