@@ -20,11 +20,14 @@ type endpointJSON struct {
 	Enabled  bool   `json:"enabled"` // off: requests to its path go to Unmatched
 	Created  stamp  `json:"created_at"`
 	Last     *stamp `json:"last_request_at,omitempty"`
+	retentionView
+	ToPrune *int `json:"to_prune,omitempty"` // in a PATCH answer: requests the change removed
 }
 
 func (h *Handler) endpointView(r *http.Request, ep store.Endpoint) endpointJSON {
 	v := endpointJSON{ID: ep.ID, Path: ep.Path, URL: h.o.Catch.Base(r) + ep.Path,
-		Requests: ep.Count, Counter: ep.Counter, Enabled: ep.Enabled, Created: stamp(ep.CreatedAt)}
+		Requests: ep.Count, Counter: ep.Counter, Enabled: ep.Enabled, Created: stamp(ep.CreatedAt),
+		retentionView: h.retentionOf(ep.ID, ep.Kept)}
 	if !ep.LastAt.IsZero() {
 		last := stamp(ep.LastAt)
 		v.Last = &last

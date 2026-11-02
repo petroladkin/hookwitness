@@ -38,6 +38,7 @@ type Options struct {
 	Keyring  emulate.Keyring // opens secrets for re-checks; nil: checks needing one are n/v
 	Stop     <-chan struct{} // closed on shutdown: waiting calls answer at once
 	Version  string          // the build, named in reports
+	Keep     store.Keep      // the server's default retention per register
 	Fonts    fs.FS           // the UI's fonts, embedded in HTML reports
 	// Access checks passwords and makes tokens; nil: login is off for good
 	// (tests). The caller's identity comes in the request's context
@@ -109,6 +110,8 @@ func (h *Handler) routes() []route {
 		{"GET", "/endpoints/{id}/requests", h.listRequests, needAny},
 		{"DELETE", "/endpoints/{id}/requests", h.clearRequests, needAny},
 		{"GET", "/requests/{id}", h.getRequest, needAny},
+		{"PUT", "/requests/{id}/pin", h.pin(true), needAny},
+		{"DELETE", "/requests/{id}/pin", h.pin(false), needAny},
 		{"GET", "/requests/{id}/body", h.rawBody, needAny},
 		{"GET", "/requests/{id}/image", h.getImage, needAny},
 		{"POST", "/requests/{id}/replays", h.replayRequest, needAdminRole},
@@ -117,6 +120,8 @@ func (h *Handler) routes() []route {
 		{"GET", "/replays/{id}/body", h.replayBody, needAny},
 		{"GET", "/setup", h.exportSetup, needAny},
 		{"POST", "/setup", h.importSetup, needAny},
+		{"GET", "/unmatched", h.getUnmatched, needAny},
+		{"PATCH", "/unmatched", h.patchUnmatched, needAny},
 		{"GET", "/unmatched/requests", h.listUnmatched, needAny},
 		{"GET", "/unmatched/report", h.unmatchedReport, needAny},
 		{"GET", "/me", h.me, needAny},

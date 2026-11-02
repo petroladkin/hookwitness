@@ -224,6 +224,14 @@ func recordPruned(ctx context.Context, tx *sql.Tx, endpoint int64, l lane, n int
 	return err
 }
 
+// check refuses defaults that would prune every request.
+func (d Keep) check() error {
+	if d.Normal < 1 || d.Anomalies < 0 {
+		return fmt.Errorf("keep must be at least 1 normal and 0 anomalies, got %+v", d)
+	}
+	return nil
+}
+
 // pruneOnInsert keeps a register's lanes within their counts after an
 // insert: at most insertPrune rows per lane.
 func pruneOnInsert(ctx context.Context, tx *sql.Tx, endpoint int64, d Keep) error {
@@ -244,6 +252,9 @@ func pruneOnInsert(ctx context.Context, tx *sql.Tx, endpoint int64, d Keep) erro
 // the writer's lock. It reports the registers that lost requests, with how
 // many.
 func (s *Store) Prune(ctx context.Context, now time.Time, d Keep) (map[int64]int, error) {
+	if err := d.check(); err != nil {
+		return nil, err
+	}
 	regs := []int64{Unmatched}
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM endpoints ORDER BY id`)
 	if err != nil {
@@ -373,6 +384,9 @@ func (s *Store) SetRetention(ctx context.Context, reg int64, p Retention) error 
 
 // PruneNow applies one register's policy at once (after it was lowered).
 func (s *Store) PruneNow(ctx context.Context, reg int64, now time.Time, d Keep) (int, error) {
+	if err := d.check(); err != nil {
+		return 0, err
+	}
 	return s.pruneRegister(ctx, reg, now, d)
 }
 

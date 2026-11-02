@@ -191,8 +191,8 @@
       },
       "patch": {
         "operationId": "changeEndpoint",
-        "summary": "Change an endpoint's path or turn it on or off",
-        "description": "Give `path`, `enabled` or both; both change together or, on an error, neither. A new path is validated as the UI validates one; its requests and behaviour stay. Turning an endpoint off keeps everything it has; requests to its path are then answered 404 and kept in the Unmatched register.",
+        "summary": "Change an endpoint's path, turn it on or off, or set its retention",
+        "description": "Give `path`, `enabled` or both; both change together or, on an error, neither. A new path is validated as the UI validates one; its requests and behaviour stay. Turning an endpoint off keeps everything it has; requests to its path are then answered 404 and kept in the Unmatched register. `retention` (an object, or null for the server's defaults) is applied at once: requests over a lowered limit or past an age are removed, and the answer's `to_prune` says how many.",
         "requestBody": {
           "required": true,
           "content": {
@@ -206,6 +206,16 @@
                   "enabled": {
                     "type": "boolean",
                     "description": "`false` turns the endpoint off, `true` on."
+                  },
+                  "retention": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/Retention"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "additionalProperties": false,
@@ -881,6 +891,12 @@
           },
           {
             "$ref": "#/components/parameters/include"
+          },
+          {
+            "$ref": "#/components/parameters/pinned"
+          },
+          {
+            "$ref": "#/components/parameters/anomaly"
           }
         ],
         "responses": {
@@ -1098,6 +1114,12 @@
           },
           {
             "$ref": "#/components/parameters/include"
+          },
+          {
+            "$ref": "#/components/parameters/pinned"
+          },
+          {
+            "$ref": "#/components/parameters/anomaly"
           }
         ],
         "responses": {
@@ -2249,6 +2271,155 @@
           }
         }
       }
+    },
+    "/requests/{id}/pin": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "put": {
+        "operationId": "pinRequest",
+        "summary": "Pin a request: retention never prunes it",
+        "description": "Clearing the register or deleting its endpoint still removes it.",
+        "responses": {
+          "204": {
+            "description": "Pinned."
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "unpinRequest",
+        "summary": "Unpin a request: it returns to its lane",
+        "responses": {
+          "204": {
+            "description": "Unpinned."
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/unmatched": {
+      "get": {
+        "operationId": "getUnmatched",
+        "summary": "The Unmatched register's summary and retention",
+        "responses": {
+          "200": {
+            "description": "The Unmatched register.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Unmatched"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "changeUnmatched",
+        "summary": "Set the Unmatched register's retention",
+        "description": "`retention` (normal only: Unmatched has no anomaly lane), or null for the server's defaults; applied at once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "retention": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/Retention"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "retention"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Unmatched register; `to_prune` says how many requests the change removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Unmatched"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not the JSON expected (`bad_json`, `unknown_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "A write was not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A parameter or field is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2317,6 +2488,30 @@
           "last_request_at": {
             "$ref": "#/components/schemas/Timestamp",
             "description": "The newest kept request; absent when none."
+          },
+          "retention": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Retention"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its own policy; null: the server's defaults."
+          },
+          "retention_effective": {
+            "$ref": "#/components/schemas/RetentionEffective"
+          },
+          "kept": {
+            "$ref": "#/components/schemas/Kept"
+          },
+          "pruned": {
+            "$ref": "#/components/schemas/Pruned"
+          },
+          "to_prune": {
+            "type": "integer",
+            "description": "In the answer to a change of `retention`: the requests the change removed."
           }
         },
         "required": [
@@ -2326,7 +2521,11 @@
           "requests",
           "counter",
           "enabled",
-          "created_at"
+          "created_at",
+          "retention",
+          "retention_effective",
+          "kept",
+          "pruned"
         ],
         "additionalProperties": false
       },
@@ -2790,6 +2989,14 @@
           "replays": {
             "type": "integer",
             "description": "How many replays of it are kept (GET /requests/{id}/replays); the newest 50."
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Never pruned by retention (PUT or DELETE /requests/{id}/pin)."
+          },
+          "anomaly": {
+            "type": "boolean",
+            "description": "In the anomaly lane: not answered 2xx, a failed verdict, or a redelivery."
           }
         },
         "required": [
@@ -2804,7 +3011,9 @@
           "body_size",
           "body_kept",
           "content_type",
-          "replays"
+          "replays",
+          "pinned",
+          "anomaly"
         ],
         "additionalProperties": false
       },
@@ -3073,6 +3282,14 @@
           "replays": {
             "type": "integer",
             "description": "How many replays of it are kept (GET /requests/{id}/replays); the newest 50."
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Never pruned by retention (PUT or DELETE /requests/{id}/pin)."
+          },
+          "anomaly": {
+            "type": "boolean",
+            "description": "In the anomaly lane: not answered 2xx, a failed verdict, or a redelivery."
           }
         },
         "required": [
@@ -3093,7 +3310,9 @@
           "outcome",
           "verdicts",
           "images",
-          "replays"
+          "replays",
+          "pinned",
+          "anomaly"
         ],
         "additionalProperties": false
       },
@@ -3663,6 +3882,200 @@
           "replays"
         ],
         "additionalProperties": false
+      },
+      "RetentionLane": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000,
+            "description": "Keep the newest this many (normal: at least 1; anomalies: 0 means no anomaly lane)."
+          },
+          "max_age": {
+            "type": "string",
+            "pattern": "^[0-9]+[mhd]$",
+            "description": "An age such as `90m`, `36h` or `7d`, from 1 h to 3650 d."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Retention": {
+        "type": "object",
+        "description": "A register's own retention; each field left out takes the server's default (`-retention`, `-retention-anomalies`; no age limit).",
+        "properties": {
+          "normal": {
+            "$ref": "#/components/schemas/RetentionLane"
+          },
+          "anomalies": {
+            "$ref": "#/components/schemas/RetentionLane",
+            "description": "Requests not answered 2xx, with a failed verdict, or redelivered (a repeated signature). Not for the Unmatched register."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RetentionEffective": {
+        "type": "object",
+        "description": "The register's retention resolved against the server's defaults.",
+        "properties": {
+          "normal": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "max_age": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "null: no age limit."
+              }
+            },
+            "required": [
+              "count",
+              "max_age"
+            ],
+            "additionalProperties": false
+          },
+          "anomalies": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "type": "integer"
+                  },
+                  "max_age": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "null: no age limit."
+                  }
+                },
+                "required": [
+                  "count",
+                  "max_age"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null: no anomaly lane (anomalies count as normal requests)."
+          }
+        },
+        "required": [
+          "normal",
+          "anomalies"
+        ],
+        "additionalProperties": false
+      },
+      "Kept": {
+        "type": "object",
+        "description": "Requests kept, per lane; pinned ones are never pruned by retention.",
+        "properties": {
+          "normal": {
+            "type": "integer"
+          },
+          "anomalies": {
+            "type": "integer"
+          },
+          "pinned": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "normal",
+          "anomalies",
+          "pinned"
+        ],
+        "additionalProperties": false
+      },
+      "Pruned": {
+        "type": "object",
+        "description": "What retention removed: how many, and up to when each lane lost requests (before it the register holds only what the other lane or a pin kept).",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "normal_until": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The newest normal request pruned (or the last clear); null: none."
+          },
+          "anomalies_until": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The newest anomaly pruned (or the last clear); null: none."
+          }
+        },
+        "required": [
+          "count",
+          "normal_until",
+          "anomalies_until"
+        ],
+        "additionalProperties": false
+      },
+      "Unmatched": {
+        "type": "object",
+        "description": "The Unmatched register: requests to paths with no endpoint (or an endpoint that is off). It has one lane.",
+        "properties": {
+          "requests": {
+            "type": "integer",
+            "description": "Requests kept."
+          },
+          "last_request_at": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "The newest kept request; absent when none."
+          },
+          "retention": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Retention"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its own policy; null: the server's defaults."
+          },
+          "retention_effective": {
+            "$ref": "#/components/schemas/RetentionEffective"
+          },
+          "kept": {
+            "$ref": "#/components/schemas/Kept"
+          },
+          "pruned": {
+            "$ref": "#/components/schemas/Pruned"
+          },
+          "to_prune": {
+            "type": "integer",
+            "description": "In the answer to a change of `retention`: the requests the change removed."
+          }
+        },
+        "required": [
+          "requests",
+          "retention",
+          "retention_effective",
+          "kept",
+          "pruned"
+        ],
+        "additionalProperties": false
       }
     },
     "parameters": {
@@ -3901,6 +4314,28 @@
           "type": "string"
         },
         "description": "The user's name (case does not matter)."
+      },
+      "pinned": {
+        "name": "pinned",
+        "in": "query",
+        "description": "Only pinned requests.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "true"
+          ]
+        }
+      },
+      "anomaly": {
+        "name": "anomaly",
+        "in": "query",
+        "description": "Only anomalies.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "true"
+          ]
+        }
       }
     },
     "securitySchemes": {

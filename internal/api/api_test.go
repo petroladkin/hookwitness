@@ -60,7 +60,8 @@ func newEnv(t *testing.T) env {
 	logs := &syncBuffer{}
 	stop := make(chan struct{})
 	h := New(st, lv, slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: stop, Version: "v0.0.0-test"})
+		Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: stop, Version: "v0.0.0-test",
+			Keep: store.Keep{Normal: 1000, Anomalies: 1000}})
 	return env{h, st, lv, logs, stop}
 }
 

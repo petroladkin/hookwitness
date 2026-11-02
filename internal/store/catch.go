@@ -35,6 +35,7 @@ type Endpoint struct {
 	Config    string    // how it answers (internal/emulate); empty for the default
 	Counter   int64     // requests that passed its checks since the last reset
 	Enabled   bool      // on: it catches; off: requests to its path go to Unmatched
+	Kept      Kept      // its retention policy, lanes and what it lost
 }
 
 // Header is one header line as received: original case, received order,
@@ -66,6 +67,8 @@ type Request struct {
 	Verdict    string // overall authorization verdict: pass, fail, n/v, or "" without checks
 	Verdicts   string // per check, as JSON (internal/auth.Verdict)
 	Replays    int    // replays kept of it
+	Pinned     bool   // never pruned by retention
+	Anomaly    bool   // kept in the anomaly lane (emulate.Anomalous)
 
 	// Written only: the signatures it carried (keyed digests), and with
 	// them Repeated, which gets each check's earliest earlier kept request
@@ -123,15 +126,27 @@ func (s *Store) CreateEndpoint(ctx context.Context, path string) (Endpoint, erro
 const endpointSummary = `SELECT e.id, e.path, e.created_at,
 	(SELECT COUNT(*) FROM requests r WHERE r.endpoint_id = e.id),
 	(SELECT MAX(received_at) FROM requests r WHERE r.endpoint_id = e.id),
-	e.config, e.counter, e.enabled
+	e.config, e.counter, e.enabled, e.retention, e.pruned, e.pruned_normal_at, e.pruned_anomaly_at,
+	(SELECT COUNT(*) FROM requests r INDEXED BY requests_by_lane WHERE r.endpoint_id = e.id AND r.pinned = 1),
+	(SELECT COUNT(*) FROM requests r INDEXED BY requests_by_lane WHERE r.endpoint_id = e.id AND r.pinned = 0 AND r.anomaly = 1)
 	FROM endpoints e`
 
 func scanEndpoint(sc interface{ Scan(...any) error }) (Endpoint, error) {
 	var e Endpoint
-	var created int64
+	var created, normalAt, anomalyAt int64
 	var last sql.NullInt64
-	if err := sc.Scan(&e.ID, &e.Path, &created, &e.Count, &last, &e.Config, &e.Counter, &e.Enabled); err != nil {
+	var pol string
+	if err := sc.Scan(&e.ID, &e.Path, &created, &e.Count, &last, &e.Config, &e.Counter, &e.Enabled,
+		&pol, &e.Kept.Pruned, &normalAt, &anomalyAt, &e.Kept.Pinned, &e.Kept.Anomalies); err != nil {
 		return Endpoint{}, err
+	}
+	e.Kept.Normal = e.Count - e.Kept.Pinned - e.Kept.Anomalies
+	e.Kept.Policy, _ = ParseRetention(pol) // stored only after validation
+	if normalAt > 0 {
+		e.Kept.NormalAt = fromMillis(normalAt)
+	}
+	if anomalyAt > 0 {
+		e.Kept.AnomalyAt = fromMillis(anomalyAt)
 	}
 	e.CreatedAt = fromMillis(created)
 	if last.Valid {
@@ -169,6 +184,10 @@ func (s *Store) Endpoint(ctx context.Context, id int64) (Endpoint, error) {
 		if last.Valid {
 			e.LastAt = fromMillis(last.Int64)
 		}
+		if err != nil {
+			return e, err
+		}
+		e.Kept, err = s.KeptState(ctx, Unmatched)
 		return e, err
 	}
 	e, err := scanEndpoint(s.db.QueryRowContext(ctx, endpointSummary+` WHERE e.id = ?`, id))
@@ -627,8 +646,8 @@ func (s *Store) clearRequests(ctx context.Context, endpointID int64) error {
 // the same transaction. An endpoint deleted meanwhile yields ErrNotFound,
 // one turned off meanwhile ErrOff.
 func (s *Store) AddRequest(ctx context.Context, r *Request, keep Keep, decide Decide) error {
-	if keep.Normal < 1 || keep.Anomalies < 0 {
-		return fmt.Errorf("keep must be at least 1 normal and 0 anomalies, got %+v", keep)
+	if err := keep.check(); err != nil {
+		return err
 	}
 	headers, err := json.Marshal(pairs(r.Headers))
 	if err != nil {
@@ -755,7 +774,7 @@ func pairs(hs []Header) [][2]string {
 
 const requestColumns = `id, endpoint_id, no, received_at, method, path, raw_query, proto, remote_addr,
 	headers, body_sha256, size, too_large, status, outcome, verdict, verdicts, ifnull(length(body), 0),
-	(SELECT COUNT(*) FROM replays WHERE replays.request_id = requests.id)`
+	(SELECT COUNT(*) FROM replays WHERE replays.request_id = requests.id), pinned, anomaly`
 
 func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, error) {
 	var r Request
@@ -763,7 +782,7 @@ func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, er
 	var at int64
 	var headers string
 	dst := []any{&r.ID, &ep, &r.No, &at, &r.Method, &r.Path, &r.RawQuery, &r.Proto, &r.RemoteAddr,
-		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts, &r.Kept, &r.Replays}
+		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts, &r.Kept, &r.Replays, &r.Pinned, &r.Anomaly}
 	if withBody {
 		dst = append(dst, &r.Body)
 	}
@@ -835,6 +854,8 @@ type ListQuery struct {
 	Verdict       string // pass, fail, n/v, n/c; "" for any
 	Status        int    // 0 for any; -1 for "nothing sent" (status 0)
 	Contains      []byte // a byte substring of the kept body; nil for any
+	Pinned        bool   // only pinned requests
+	Anomaly       bool   // only anomalies
 	// Match, when set, is asked about each kept body that passed the other
 	// filters; requests without a kept body never match.
 	Match    func(body []byte) bool
@@ -864,6 +885,12 @@ func (s *Store) List(ctx context.Context, endpointID int64, q ListQuery) ([]Requ
 		args = append(args, q.Status)
 	case q.Status < 0: // nothing was sent
 		where += " AND status = 0"
+	}
+	if q.Pinned {
+		where += " AND pinned"
+	}
+	if q.Anomaly {
+		where += " AND anomaly"
 	}
 	if q.Contains != nil {
 		where += " AND instr(body, ?) > 0" // both blobs: a byte search

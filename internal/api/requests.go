@@ -41,6 +41,8 @@ type summaryJSON struct {
 	BodyCut     bool   `json:"body_cut,omitempty"` // only the head was kept (Unmatched): body_size is the whole
 	ContentType string `json:"content_type"`
 	Replays     int    `json:"replays"` // replays kept of it (GET /requests/{id}/replays)
+	Pinned      bool   `json:"pinned"`  // never pruned by retention
+	Anomaly     bool   `json:"anomaly"` // kept in the anomaly lane: not answered 2xx, a failed verdict, a redelivery
 }
 
 // requestJSON is one caught request in full.
@@ -100,7 +102,7 @@ type imageJSON struct {
 func summaryView(req store.Request) summaryJSON {
 	v := summaryJSON{ID: req.ID, No: req.No, ReceivedAt: stamp(req.ReceivedAt), Method: req.Method, Path: req.Path,
 		Query: req.RawQuery, Status: req.Status, Verdict: req.Verdict, BodySize: req.Size, BodyKept: !req.TooLarge,
-		BodyCut: !req.TooLarge && req.Kept < req.Size, Replays: req.Replays}
+		BodyCut: !req.TooLarge && req.Kept < req.Size, Replays: req.Replays, Pinned: req.Pinned, Anomaly: req.Anomaly}
 	if req.EndpointID != store.Unmatched {
 		id := req.EndpointID
 		v.EndpointID = &id
@@ -207,11 +209,13 @@ type listQuery struct {
 	contains      []byte      // q
 	match         []jsonMatch // json, all of them
 	bodies        bool        // include=body
+	pinned        bool        // pinned=true
+	anomaly       bool        // anomaly=true
 }
 
 func (l listQuery) store() store.ListQuery {
 	q := store.ListQuery{Before: l.before, After: l.after, HasAfter: l.hasAfter, Limit: l.limit,
-		Verdict: l.verdict, Status: l.status, Contains: l.contains, WithBody: l.bodies}
+		Verdict: l.verdict, Status: l.status, Contains: l.contains, WithBody: l.bodies, Pinned: l.pinned, Anomaly: l.anomaly}
 	if len(l.match) > 0 {
 		q.Match = matchAll(l.match)
 	}
@@ -266,6 +270,14 @@ func parseList(w http.ResponseWriter, r *http.Request) (listQuery, bool) {
 		l.status = n
 		if n == 0 {
 			l.status = -1 // filter on "nothing sent"
+		}
+	}
+	for name, dst := range map[string]*bool{"pinned": &l.pinned, "anomaly": &l.anomaly} {
+		if q.Has(name) {
+			if q.Get(name) != "true" {
+				return bad(name, name+" is true (only those requests)")
+			}
+			*dst = true
 		}
 	}
 	if q.Has("q") {

@@ -170,7 +170,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 		o.Replay = replay.New(st, log, replay.Options{MaxWait: h.maxWait})
 	}
 	h.replay = o.Replay
-	ao := api.Options{Prefix: prefix, Reserved: h.reserve, Catch: h.catch, MaxWait: h.maxWait, Stop: h.stop, Version: version.String(),
+	ao := api.Options{Prefix: prefix, Keep: o.Retention, Reserved: h.reserve, Catch: h.catch, MaxWait: h.maxWait, Stop: h.stop, Version: version.String(),
 		Access: o.Access, Replay: o.Replay}
 	if o.Keys != nil {
 		ao.Keys, ao.Keyring = o.Keys, o.Keys // a nil *secret.Key must stay a nil interface
