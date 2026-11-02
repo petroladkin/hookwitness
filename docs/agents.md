@@ -140,6 +140,7 @@ The tools are task-shaped. Each result is a summary line, then compact JSON.
 | `export_endpoint`, `import_endpoints` | an endpoint's setup as a file (secret names and kinds, never values); endpoints created, or replaced, from one ([Sharing a setup](sharing.md)) |
 | `replay_request` | sends a caught request byte for byte to a URL (your handler) and returns its answer: status, headers, body, timings or the error ([Replaying a request](replay.md)); `get_request` lists a request's replays |
 | `set_retention`, `pin_request` | what an endpoint keeps: counts and ages of normal requests and anomalies; a pin keeps one request for good ([Keeping requests](keeping.md)); `list_requests` filters `pinned` and `anomaly` |
+| delivery checks | `configure_endpoint` takes `event` (where the sender puts an event's id) and the `duplicates`, `order` and `backoff` checks; the request tools filter by `event`, so `expect` with `event` and `count` asserts a number of attempts ([Testing a sender's retries](delivery.md)) |
 
 `delete_endpoint`, `reset_endpoint`, `set_retention` (a lower limit deletes requests) and `import_endpoints` (it can replace an endpoint's behaviour) are marked destructive, and the
 reading tools read-only, so a client can ask you before the destructive ones.

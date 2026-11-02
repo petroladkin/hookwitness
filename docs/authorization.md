@@ -162,6 +162,8 @@ redeliveries send the same signature, and a receiver should accept them.
 Stripe and Standard Webhooks sign each retry again with a new timestamp, so
 their retries get no note; a note there means the same request was sent
 twice. A request that is no longer kept (pruned or cleared) is not compared.
+To judge a sender's retries and duplicates by its event id, see [Testing
+a sender's retries, duplicates and order](delivery.md).
 Hookwitness keeps only a keyed digest of each signature for this. A re-check
 works the notes out again. Bearer tokens and Basic credentials repeat on
 every request and are never noted.

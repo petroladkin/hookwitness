@@ -175,6 +175,11 @@ jq '.outcome | {source, action, status, check}' req.json   # what was done: defa
   `{name, value}`, `body`).
 - `status` `401` with `verdict` `fail` = refused by an enforced check;
   `verdicts[].reason` says why (wrong password, missing header, bad signature).
+- Retries and duplicates: give the endpoint's behaviour an `event`
+  (`{"from":"header","key":"X-GitHub-Delivery"}`, Stripe `{"from":"body","key":"/id"}`)
+  and the checks `{"kind":"duplicates"}` and `{"kind":"backoff","first_s":5}`;
+  each request then carries `event` and `attempt`, and
+  `$API/endpoints/$ID/requests?event=<id>` lists one event's attempts.
 
 ## Pitfalls
 
