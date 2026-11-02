@@ -169,7 +169,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	h.mux = h.csrf.Handler(mux)
 
 	if o.Replay == nil {
-		o.Replay = replay.New(st, log, replay.Options{MaxWait: h.maxWait})
+		o.Replay = replay.New(st, log, replay.Options{MaxWait: h.maxWait, Live: broker})
 	}
 	h.replay = o.Replay
 	ao := api.Options{Prefix: prefix, Keep: o.Retention, Reserved: h.reserve, Catch: h.catch, MaxWait: h.maxWait, Stop: h.stop, Version: version.String(),

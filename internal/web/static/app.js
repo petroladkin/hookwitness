@@ -33,12 +33,20 @@
   }
 
   document.addEventListener("htmx:sseOpen", () => feed("live", "Recording"));
+  // A closed feed: reload onto the login page when the login ended, else
+  // say so; the SSE extension reopens it with back-off (feed.js).
+  let probing = false;
   document.addEventListener("htmx:sseError", (e) => {
     feed("lost", "Reconnecting");
-    // A feed the server refused (the login ended) is not retried by the
-    // browser: reloading lands on the login page.
     const src = e.detail && e.detail.source;
-    if (src && src.readyState === EventSource.CLOSED) location.reload();
+    if (!src || src.readyState !== EventSource.CLOSED || probing || !window.HookwitnessFeed) return;
+    probing = true;
+    HookwitnessFeed.closed(() => fetch(location.href, { redirect: "manual", cache: "no-store", credentials: "same-origin" }))
+      .then((what) => {
+        if (what === "reload") location.reload();
+        else feed("lost", "Feed lost \u2014 retrying");
+      })
+      .finally(() => { probing = false; });
   });
 
   // Each request appears once, whatever the feed resends; an "update"

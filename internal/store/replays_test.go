@@ -157,3 +157,37 @@ func TestReplaysOnRelease010Database(t *testing.T) {
 		t.Fatalf("old request after a replay: %+v", req)
 	}
 }
+
+// A replay is a change of its request: the request takes the next change
+// sequence (open feeds send its row again) and the replay names its
+// register (the endpoint, 0 for Unmatched).
+func TestReplayIsAChange(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	ep, _ := s.CreateEndpoint(ctx, "/a")
+	r := sample(ep.ID, "body")
+	if err := s.AddRequest(ctx, r, Keep{Normal: 100}, nil); err != nil {
+		t.Fatal(err)
+	}
+	un := sample(0, "unmatched")
+	if err := s.AddRequest(ctx, un, Keep{Normal: 100}, nil); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := s.ChangeSeq(ctx)
+	rp := sampleReplay(r.ID, 200)
+	if err := s.AddReplay(ctx, rp); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := s.ChangeSeq(ctx)
+	changed, _, err := s.RequestsChanged(ctx, ep.ID, r.ID, before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before+1 || rp.Register != ep.ID || len(changed) != 1 || changed[0].ID != r.ID || changed[0].Replays != 1 {
+		t.Fatalf("seq %d -> %d, register %d, changed %+v", before, after, rp.Register, changed)
+	}
+	rp = sampleReplay(un.ID, 200)
+	if err := s.AddReplay(ctx, rp); err != nil || rp.Register != 0 {
+		t.Fatalf("an Unmatched request's replay: %v, register %d", err, rp.Register)
+	}
+}

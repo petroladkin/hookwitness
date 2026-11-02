@@ -70,7 +70,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 		o.MaxWait = 5 * time.Minute
 	}
 	if o.Replay == nil {
-		o.Replay = replay.New(st, log, replay.Options{MaxWait: o.MaxWait})
+		o.Replay = replay.New(st, log, replay.Options{MaxWait: o.MaxWait, Live: broker})
 	}
 	h := &Handler{store: st, live: broker, log: log, o: o, base: Base(o.Prefix), mux: http.NewServeMux(), replay: o.Replay}
 	b := h.base

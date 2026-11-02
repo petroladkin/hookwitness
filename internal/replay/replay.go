@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/access"
+	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/send"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/wire"
@@ -69,6 +70,9 @@ type Options struct {
 	Policy  send.Policy
 	MaxWait time.Duration // the longest timeout a replay may ask for
 	Budget  Budget
+	// Live is told when a request gets a replay, so open registers show
+	// "replayed N" at once; nil tells nobody.
+	Live *live.Broker
 	// SlotWait is how long a replay waits for a slot; 0 means SlotWait.
 	SlotWait time.Duration
 
@@ -261,6 +265,9 @@ func (s *Service) Replay(ctx context.Context, id int64, in Input) (store.Replay,
 			return store.Replay{}, ErrNotFound // cleared while it was sent
 		}
 		return store.Replay{}, err
+	}
+	if s.o.Live != nil {
+		s.o.Live.Publish(rp.Register)
 	}
 	attrs := []any{"request", id, "target", Origin(u), "replay", rp.ID, "ms", rp.Duration.Milliseconds()}
 	if rp.ErrorKind != "" {

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petroladkin/hookwitness/internal/store"
 )
@@ -129,5 +131,56 @@ func TestReplayAdminsOnly(t *testing.T) {
 	}
 	if page := e.req("GET", self+"?replay", ann, "", nil).Body.String(); !strings.Contains(page, `id="dialog-title">Replay`) {
 		t.Fatal("the replay dialog not shown to an admin")
+	}
+}
+
+// A replay reaches every open page of its register: the feed sends the row
+// again ("replayed 1") without a reload, published by the replay itself.
+func TestReplayUpdatesOpenRegisters(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/hooks")
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	defer target.Close()
+	r := e.add(t, ep.ID, `{"a":1}`, func(r *store.Request) { r.Path = "/hooks" })
+	srv := httptest.NewServer(e.h)
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + fmt.Sprintf("/admin/e/%d/events?after=%d", ep.ID, r.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	events := make(chan string, 64)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		var ev []string
+		for sc.Scan() {
+			if l := sc.Text(); l != "" {
+				ev = append(ev, l)
+				continue
+			}
+			if len(ev) > 0 {
+				events <- strings.Join(ev, "\n")
+				ev = nil
+			}
+		}
+		close(events)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	if rec := e.do("POST", fmt.Sprintf("/admin/r/%d/replay", r.ID), url.Values{"url": {target.URL + "/hooks"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("replay: %d %s", rec.Code, rec.Body)
+	}
+	timeout := time.After(3 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if strings.Contains(ev, "event: update") && strings.Contains(ev, fmt.Sprintf(`id="req-%d"`, r.ID)) {
+				if !strings.Contains(ev, "replayed 1") {
+					t.Fatalf("the update lacks the replay mark: %s", ev)
+				}
+				return
+			}
+		case <-timeout:
+			t.Fatal("no update after the replay")
+		}
 	}
 }
