@@ -501,3 +501,50 @@ func TestStillValid(t *testing.T) {
 		t.Fatalf("listeners told %d times", changed)
 	}
 }
+
+func TestEmailsAndNames(t *testing.T) {
+	for in, want := range map[string]string{" Ann@Example.COM ": "ann@example.com", "a@b.co": "a@b.co", "first.last+tag@sub.example.test": "first.last+tag@sub.example.test"} {
+		if got, err := CheckEmail(in); err != nil || got != want {
+			t.Errorf("CheckEmail(%q) = %q, %v", in, got, err)
+		}
+	}
+	for _, in := range []string{"", "ann", "ann@", "@example.com", "ann@example", "a@@example.com", "ann @example.com", "ann@example.com.", "ann@.example.com", "ann\x00@example.com",
+		strings.Repeat("a", 250) + "@x.co"} {
+		if _, err := CheckEmail(in); err == nil {
+			t.Errorf("CheckEmail(%q) accepted", in)
+		} else if e, ok := IsInvalid(err); !ok || e.Field != "email" {
+			t.Errorf("CheckEmail(%q): %v", in, err)
+		}
+	}
+	for in, want := range map[string]string{"Ann.Lee@x.co": "ann.lee", "o'brien+hooks@x.co": "o-brien-hooks", "Željko@x.co": "-eljko", "---@x.co": "user",
+		strings.Repeat("b", 80) + "@x.co": strings.Repeat("b", 64)} {
+		if got := NameFromEmail(in); got != want {
+			t.Errorf("NameFromEmail(%q) = %q, want %q", in, got, want)
+		}
+		if _, err := CheckName(NameFromEmail(in)); err != nil {
+			t.Errorf("NameFromEmail(%q) is not a valid name: %v", in, err)
+		}
+	}
+}
+
+func TestReadSecretFile(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "s")
+	os.WriteFile(p, []byte("s3cret\n"), 0o600)
+	if s, warn, err := ReadSecretFile("X_FILE", p, 1); err != nil || s != "s3cret" || warn != "" {
+		t.Fatalf("%q %q %v", s, warn, err)
+	}
+	os.Chmod(p, 0o644)
+	if _, warn, _ := ReadSecretFile("X_FILE", p, 1); !strings.Contains(warn, "X_FILE names a file readable by everyone") {
+		t.Fatalf("warn %q", warn)
+	}
+	for _, body := range []string{"", " padded", "two\nlines"} {
+		os.WriteFile(p, []byte(body), 0o600)
+		if _, _, err := ReadSecretFile("X_FILE", p, 1); err == nil || !strings.Contains(err.Error(), "X_FILE") || (body != "" && strings.Contains(err.Error(), body)) {
+			t.Errorf("%q: %v", body, err)
+		}
+	}
+	if _, _, err := ReadSecretFile("X_FILE", filepath.Join(dir, "none"), 1); err == nil || !strings.HasPrefix(err.Error(), "X_FILE: ") {
+		t.Errorf("missing: %v", err)
+	}
+}

@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/send"
@@ -48,6 +50,45 @@ type Config struct {
 	ReplayAllow send.Policy
 	// MCPMaxSessions caps the MCP sessions open at once; 0: no limit.
 	MCPMaxSessions int
+	// AdminURL is the admin's external origin (-admin-url), for the OpenID
+	// Connect redirect URI; "" when not set (see AdminOrigin).
+	AdminURL string
+	// OIDC are the OpenID Connect providers people may sign in with.
+	OIDC []Provider
+}
+
+// Provider is an OpenID Connect provider from the environment
+// (HOOKWITNESS_OIDC_<NAME>_*). The client secret is read from SecretFile at
+// start and kept in memory only.
+type Provider struct {
+	Name           string // lower-case, 1-32 of a-z 0-9
+	Env            string // the variables' prefix, HOOKWITNESS_OIDC_<NAME>_
+	Issuer         string
+	ClientID       string
+	SecretFile     string
+	Label          string   // after "Sign in with"
+	AllowedDomains []string // lower-case; new identities of these become users
+}
+
+// AdminOrigin is the admin's external origin: -admin-url, or the public
+// URL when the admin shares its listener and the URL has no path; "" when
+// neither (provider sign-in then refuses to start). Never the request's
+// Host: a provider holds one registered redirect URI.
+func (c Config) AdminOrigin() string {
+	if c.AdminURL != "" {
+		return c.AdminURL
+	}
+	if c.AdminAddr == "" && c.PublicURL != "" {
+		if u, err := url.Parse(c.PublicURL); err == nil && (u.Path == "" || u.Path == "/") {
+			return u.Scheme + "://" + u.Host
+		}
+	}
+	return ""
+}
+
+// RedirectURI is where a provider sends the browser back.
+func (c Config) RedirectURI(p Provider) string {
+	return c.AdminOrigin() + c.AdminPrefix + "/oidc/" + p.Name + "/callback"
 }
 
 // Defaults.
@@ -81,7 +122,7 @@ type setting struct {
 // getenv. Usage and errors from the flag package go to out.
 func Parse(args []string, getenv func(string) string, out io.Writer) (Config, error) {
 	var c Config
-	var maxBody, maxInFlight, maxDBSize, retention, anomalies, adminHosts, maxWait, proxies, replayAllow, mcpSessions string
+	var maxBody, maxInFlight, maxDBSize, retention, anomalies, adminHosts, maxWait, proxies, replayAllow, mcpSessions, oidcProviders string
 	settings := []setting{
 		{"addr", "HOOKWITNESS_ADDR", DefaultAddr, "listen address (host:port)", &c.Addr},
 		{"db", "HOOKWITNESS_DB", DefaultDBPath, "path to the sqlite database file", &c.DBPath},
@@ -100,6 +141,8 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		{"trusted-proxies", "HOOKWITNESS_TRUSTED_PROXIES", "", "comma-separated addresses or CIDRs of reverse proxies whose X-Forwarded-For names the client (for the login limit); list only your own proxy", &proxies},
 		{"mcp-max-sessions", "HOOKWITNESS_MCP_MAX_SESSIONS", DefaultMCPSessions, "most MCP sessions open at once; a client over it is answered 503 at initialize; 0: no limit", &mcpSessions},
 		{"replay-allow", "HOOKWITNESS_REPLAY_ALLOW", "", "where caught requests may be replayed to: comma-separated host names, host:port, addresses or CIDRs, or none to turn replay off (default: anywhere but link-local and cloud-metadata addresses)", &replayAllow},
+		{"admin-url", "HOOKWITNESS_ADMIN_URL", "", "the admin's external address, e.g. https://hooks-admin.example.com: the base of the OpenID Connect redirect URI (default: -public-url when the admin shares its listener)", &c.AdminURL},
+		{"oidc-providers", "HOOKWITNESS_OIDC_PROVIDERS", "", "comma-separated names of OpenID Connect providers to sign in with, e.g. google,entra; each set by HOOKWITNESS_OIDC_<NAME>_ISSUER, _CLIENT_ID, _CLIENT_SECRET_FILE, _LABEL, _ALLOWED_DOMAINS", &oidcProviders},
 	}
 
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -180,10 +223,97 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		return Config{}, err
 	}
 	c.PublicURL = strings.TrimSuffix(c.PublicURL, "/")
+	c.AdminURL = strings.TrimSuffix(c.AdminURL, "/")
 	if c.AdminPrefix == "/" {
 		c.AdminPrefix = "" // the root of the admin's own port
 	}
+	if c.OIDC, err = parseProviders(oidcProviders, getenv); err != nil {
+		return Config{}, err
+	}
+	if len(c.OIDC) > 0 && c.AdminOrigin() == "" {
+		return Config{}, errors.New("OIDC needs the admin's address: set -admin-url / HOOKWITNESS_ADMIN_URL")
+	}
 	return c, nil
+}
+
+var (
+	providerName = regexp.MustCompile(`^[a-z0-9]{1,32}$`)
+	dnsName      = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
+)
+
+// parseProviders reads the providers named in list from the environment;
+// every error names the variable.
+func parseProviders(list string, getenv func(string) string) ([]Provider, error) {
+	var out []Provider
+	seen := map[string]bool{}
+	for name := range strings.SplitSeq(list, ",") {
+		if name = strings.TrimSpace(name); name == "" {
+			continue
+		}
+		if !providerName.MatchString(name) {
+			return nil, fmt.Errorf("HOOKWITNESS_OIDC_PROVIDERS: invalid name %q: want 1-32 of a-z and 0-9", name)
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("HOOKWITNESS_OIDC_PROVIDERS: %s is listed twice", name)
+		}
+		seen[name] = true
+		p := Provider{Name: name, Env: "HOOKWITNESS_OIDC_" + strings.ToUpper(name) + "_"}
+		p.Issuer = getenv(p.Env + "ISSUER")
+		p.ClientID = getenv(p.Env + "CLIENT_ID")
+		p.SecretFile = getenv(p.Env + "CLIENT_SECRET_FILE")
+		p.Label = getenv(p.Env + "LABEL")
+		if err := checkIssuer(p.Issuer); err != nil {
+			return nil, fmt.Errorf("%sISSUER: %w", p.Env, err)
+		}
+		if p.ClientID == "" || strings.TrimSpace(p.ClientID) != p.ClientID {
+			return nil, fmt.Errorf("%sCLIENT_ID: want the client id the provider gave", p.Env)
+		}
+		if p.SecretFile == "" {
+			return nil, fmt.Errorf("%sCLIENT_SECRET_FILE: want a file holding the client secret", p.Env)
+		}
+		if p.Label == "" {
+			p.Label = strings.ToUpper(name[:1]) + name[1:]
+		}
+		if n := utf8.RuneCountInString(p.Label); n > 32 || strings.IndexFunc(p.Label, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+			return nil, fmt.Errorf("%sLABEL: want 1-32 printable characters", p.Env)
+		}
+		for d := range strings.SplitSeq(getenv(p.Env+"ALLOWED_DOMAINS"), ",") {
+			if d = strings.ToLower(strings.TrimSpace(d)); d == "" {
+				continue
+			}
+			if !dnsName.MatchString(d) {
+				return nil, fmt.Errorf("%sALLOWED_DOMAINS: invalid domain %q: want a name such as example.com (no @, no wildcards; subdomains are not implied)", p.Env, d)
+			}
+			p.AllowedDomains = append(p.AllowedDomains, d)
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// checkIssuer: https, or http on a loopback host (a local provider, tests);
+// no query or fragment.
+func checkIssuer(s string) error {
+	if s == "" {
+		return errors.New("want the issuer URL, as the provider's discovery document states it")
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" || !strings.Contains(s, "://") {
+		return errors.New("want an absolute URL such as https://accounts.google.com")
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.User != nil {
+		return errors.New("want no query, fragment or user part")
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if h := u.Hostname(); h == "localhost" || net.ParseIP(h) != nil && net.ParseIP(h).IsLoopback() {
+			return nil
+		}
+		return errors.New("want an https URL (http only on a loopback host)")
+	}
+	return errors.New("want an https URL")
 }
 
 var units = map[string]int64{"": 1, "B": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30}
@@ -223,6 +353,12 @@ func (c Config) validate() error {
 	}
 	if err := checkPublicURL(c.PublicURL); err != nil {
 		return fmt.Errorf("invalid public URL %q: %w", c.PublicURL, err)
+	}
+	if err := checkPublicURL(c.AdminURL); err != nil {
+		return fmt.Errorf("invalid admin URL %q: %w", c.AdminURL, err)
+	}
+	if u, err := url.Parse(c.AdminURL); c.AdminURL != "" && err == nil && u.Path != "" && u.Path != "/" {
+		return fmt.Errorf("invalid admin URL %q: want an origin with no path, e.g. https://hooks-admin.example.com (the admin prefix is added to it)", c.AdminURL)
 	}
 	if c.DBPath == "" {
 		return errors.New("database path must not be empty")
