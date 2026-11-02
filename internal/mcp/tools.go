@@ -59,6 +59,8 @@ type Filters struct {
 	Status  *int     `json:"status,omitempty" jsonschema:"only requests answered with this status (0: nothing sent, e.g. a timeout)"`
 	Text    string   `json:"text,omitempty" jsonschema:"only requests whose body contains this text (case-sensitive)"`
 	JSON    []string `json:"json,omitempty" jsonschema:"only requests whose JSON body has these values, each as pointer=value, e.g. /type=order.paid; all must match"`
+	Pinned  bool     `json:"pinned,omitempty" jsonschema:"only pinned requests (never pruned by retention)"`
+	Anomaly bool     `json:"anomaly,omitempty" jsonschema:"only anomalies: not answered 2xx, a failed verdict, or a redelivery"`
 }
 
 func (f Filters) query(q url.Values) url.Values {
@@ -73,6 +75,12 @@ func (f Filters) query(q url.Values) url.Values {
 	}
 	for _, j := range f.JSON {
 		q.Add("json", j)
+	}
+	if f.Pinned {
+		q.Set("pinned", "true")
+	}
+	if f.Anomaly {
+		q.Set("anomaly", "true")
 	}
 	return q
 }
@@ -89,6 +97,12 @@ func (f Filters) String() string {
 		parts = append(parts, "text="+strconv.Quote(f.Text))
 	}
 	parts = append(parts, f.JSON...)
+	if f.Pinned {
+		parts = append(parts, "pinned")
+	}
+	if f.Anomaly {
+		parts = append(parts, "anomaly")
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -147,6 +161,16 @@ func (s *tools) register(srv *sdk.Server) {
 		Description: "Turn an endpoint off (enabled false) or on (enabled true). Off keeps its path, behaviour, secrets, requests and counter; " +
 			"requests to its path are answered 404 and kept in the Unmatched register until it is on again."},
 		s.switchEndpoint)
+	sdk.AddTool(srv, &sdk.Tool{Name: "pin_request", Annotations: idempotent,
+		Description: "Pin a request (pinned true, the default) so retention never prunes it, e.g. the one failure that matters in a long capture; pinned false returns it to its lane. " +
+			"Clearing the register or deleting the endpoint still removes it."},
+		s.pinRequest)
+	sdk.AddTool(srv, &sdk.Tool{Name: "set_retention", Annotations: destructive,
+		Description: "Set what an endpoint (or the Unmatched register: endpoint \"unmatched\") keeps. Two lanes, pruned oldest first on their own: normal requests, and anomalies " +
+			"(not answered 2xx, a failed verdict, a redelivery), so a flood of good requests never pushes out a failure; pinned requests are never pruned. " +
+			"Each lane: count (keep the newest this many; anomalies 0 = no separate lane) and max_age such as 90m, 36h or 7d; a field left out takes the server's default. " +
+			"defaults true goes back to the server's defaults. A lowered limit deletes requests at once: the result says how many."},
+		s.setRetention)
 	sdk.AddTool(srv, &sdk.Tool{Name: "export_endpoint", Annotations: readOnly,
 		Description: "Export endpoints' setup as a hookwitness setup file: path, default reply, rules, checks, variables, schemas and the names and kinds of secrets (never their values). " +
 			"Save the setup object as the named .hookwitness.json file; import_endpoints, the UI, the API or hookwitness apply recreate the endpoints from it on any instance."},
@@ -221,6 +245,109 @@ func (s *tools) getEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in Endp
 		summary += "; off: requests to it go to Unmatched"
 	}
 	return result(summary, ep)
+}
+
+type PinIn struct {
+	RequestID int64 `json:"request_id" jsonschema:"the id of the request"`
+	Pinned    *bool `json:"pinned,omitempty" jsonschema:"true (the default) pins it, false unpins it"`
+}
+
+func (s *tools) pinRequest(ctx context.Context, _ *sdk.CallToolRequest, in PinIn) (*sdk.CallToolResult, map[string]any, error) {
+	on := in.Pinned == nil || *in.Pinned
+	method := http.MethodPut
+	if !on {
+		method = http.MethodDelete
+	}
+	path := "/requests/" + strconv.FormatInt(in.RequestID, 10)
+	if _, err := s.c.call(ctx, method, path+"/pin", nil, nil); err != nil {
+		return nil, nil, err
+	}
+	r, err := s.c.get(ctx, path, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.cut(r)
+	if on {
+		return result(fmt.Sprintf("request %d is pinned: retention never prunes it", in.RequestID), r)
+	}
+	return result(fmt.Sprintf("request %d is unpinned: it is kept or pruned with its lane again", in.RequestID), r)
+}
+
+// LaneIn is one retention lane as a tool takes it.
+type LaneIn struct {
+	Count  *int   `json:"count,omitempty" jsonschema:"keep the newest this many"`
+	MaxAge string `json:"max_age,omitempty" jsonschema:"nothing older than this, e.g. 90m, 36h or 7d"`
+}
+
+type RetentionIn struct {
+	Endpoint  string  `json:"endpoint" jsonschema:"the endpoint: its id, its exact path, or unmatched"`
+	Normal    *LaneIn `json:"normal,omitempty" jsonschema:"the normal requests' lane"`
+	Anomalies *LaneIn `json:"anomalies,omitempty" jsonschema:"the anomalies' lane (not for unmatched)"`
+	Defaults  bool    `json:"defaults,omitempty" jsonschema:"true: back to the server's defaults (normal and anomalies left out)"`
+}
+
+func (s *tools) setRetention(ctx context.Context, _ *sdk.CallToolRequest, in RetentionIn) (*sdk.CallToolResult, map[string]any, error) {
+	p, err := s.c.endpointPath(ctx, in.Endpoint)
+	if err != nil {
+		return nil, nil, err
+	}
+	var policy any // nil: the defaults
+	if !in.Defaults {
+		if in.Normal == nil && in.Anomalies == nil {
+			return nil, nil, errors.New("give normal, anomalies or both, or defaults: true")
+		}
+		m := map[string]any{}
+		for name, l := range map[string]*LaneIn{"normal": in.Normal, "anomalies": in.Anomalies} {
+			if l == nil {
+				continue
+			}
+			lane := map[string]any{}
+			if l.Count != nil {
+				lane["count"] = *l.Count
+			}
+			if l.MaxAge != "" {
+				lane["max_age"] = l.MaxAge
+			}
+			m[name] = lane
+		}
+		policy = m
+	} else if in.Normal != nil || in.Anomalies != nil {
+		return nil, nil, errors.New("defaults: true goes back to the server's defaults; leave normal and anomalies out")
+	}
+	ep, err := s.c.call(ctx, http.MethodPatch, p, nil, map[string]any{"retention": policy})
+	if err != nil {
+		return nil, nil, err
+	}
+	return result(fmt.Sprintf("%s keeps %s; %v request(s) removed now", nameOf(ep, p), keeps(ep), num(ep["to_prune"])), ep)
+}
+
+// nameOf is an endpoint's path, or "Unmatched".
+func nameOf(ep map[string]any, apiPath string) string {
+	if apiPath == "/unmatched" {
+		return "Unmatched"
+	}
+	return fmt.Sprint(ep["path"])
+}
+
+// keeps reads an endpoint's effective retention as words.
+func keeps(ep map[string]any) string {
+	eff, _ := ep["retention_effective"].(map[string]any)
+	lane := func(v any, what string) string {
+		l, _ := v.(map[string]any)
+		if l == nil {
+			return ""
+		}
+		out := fmt.Sprintf("the newest %v %s", num(l["count"]), what)
+		if a, ok := l["max_age"].(string); ok {
+			out += " for at most " + a
+		}
+		return out
+	}
+	out := lane(eff["normal"], "requests")
+	if a := lane(eff["anomalies"], "anomalies"); a != "" {
+		out = lane(eff["normal"], "normal requests") + " and " + a
+	}
+	return out
 }
 
 type SwitchIn struct {
