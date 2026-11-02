@@ -138,6 +138,10 @@ type Options struct {
 	// Keep is the server's default retention: an imported endpoint is
 	// pruned to its retention at once. Zero: the housekeeping does it.
 	Keep store.Keep
+	// Receiver, when set, judges each endpoint's receiver against the one
+	// stored, inside the import's transaction (nil before: a new endpoint
+	// or none); an error refuses the whole import.
+	Receiver func(path string, before, after *emulate.Forward) error
 }
 
 // Parse reads and checks a setup file: the format marker and version,
@@ -314,6 +318,15 @@ func Apply(ctx context.Context, st Importer, f File, p Plan, o Options) ([]Resul
 				have = &c
 			}
 			c := e.Config(have)
+			if o.Receiver != nil {
+				var before *emulate.Forward
+				if have != nil {
+					before = have.Forward
+				}
+				if err := o.Receiver(e.Path, before, c.Forward); err != nil {
+					return "", err
+				}
+			}
 			if p.Value != nil {
 				for j, s := range c.Secrets {
 					if v, ok := p.Value(e.Path, s.Name, s.Kind); ok {

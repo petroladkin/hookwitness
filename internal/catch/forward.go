@@ -5,21 +5,23 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-
+	"strings"
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/forward"
+	wsend "github.com/petroladkin/hookwitness/internal/send"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
-// forwarder is the Forward service, made with the default policy when the
-// handler was given none.
+// forwarder is the Forward service; a handler given none forwards nothing
+// (sending off: every forward gets the failure answer).
 func (h *Handler) forwarder() *forward.Service {
 	h.fwOnce.Do(func() {
 		if h.Forward == nil {
-			h.Forward = forward.New(h.Log, forward.Options{MaxWait: h.maxWait(), Budget: h})
+			off, _ := wsend.ParsePolicy("none")
+			h.Forward = forward.New(h.Log, forward.Options{Policy: off, MaxWait: h.maxWait(), Budget: h})
 		}
 	})
 	return h.Forward
@@ -68,7 +70,7 @@ func (h *Handler) forwardOut(ctx context.Context, w http.ResponseWriter, r *http
 		note.Fallback = true
 		answer = h.failureAnswer(req, pl, ex.Kind)
 	}
-	answer = answer.Protect(access.CookieName)
+	answer = answer.Protect(access.CookieName).NoSniff()
 	sent, withheld := answer.AsSent(r.Method)
 	pl.out.SetReply(sent)
 	pl.out.Withheld = withheld
@@ -79,7 +81,15 @@ func (h *Handler) forwardOut(ctx context.Context, w http.ResponseWriter, r *http
 		note.SenderLeftMs = left.Milliseconds()
 		pl.out.Abandon(left.Milliseconds())
 	} else {
-		writeReply(w, answer)
+		length := ""
+		if r.Method == http.MethodHead && ex.Kind == "" {
+			for _, hd := range ex.Row.Headers {
+				if strings.EqualFold(hd.Name, "Content-Length") {
+					length = hd.Value
+				}
+			}
+		}
+		writeReplyLen(w, answer, length)
 	}
 	h.finishForward(ctx, req, pl, &ex.Row)
 }
@@ -92,17 +102,20 @@ func (h *Handler) forwardToo(ctx context.Context, w http.ResponseWriter, r *http
 	in := forwardRequest(req, pl.out.Rule)
 	go func() { done <- h.forwarder().Exchange(ctx, *pl.cfg.Forward, in) }()
 	// The body's bytes stay held until the receiver has it, not only until
-	// the rule's reply is rendered.
+	// the rule's reply is rendered. The exchange is waited for and stored
+	// however the rule's answer ends (a drop aborts the handler).
 	free := pl.free
 	pl.free = func() {}
+	defer func() {
+		ex := <-done
+		ex.Release() // the receiver's answer is not passed back
+		free()
+		note := pl.out.Forward
+		note.Pending, note.Status, note.ErrorKind = false, ex.Row.Status, ex.Kind
+		note.Ms = time.Since(start).Milliseconds()
+		h.finishForward(ctx, req, pl, &ex.Row)
+	}()
 	h.carryOut(w, r, req, pl)
-	ex := <-done
-	ex.Release() // the receiver's answer is not passed back
-	free()
-	note := pl.out.Forward
-	note.Pending, note.Status, note.ErrorKind = false, ex.Row.Status, ex.Kind
-	note.Ms = time.Since(start).Milliseconds()
-	h.finishForward(ctx, req, pl, &ex.Row)
 }
 
 // failureAnswer is what the sender gets when the receiver fails: the

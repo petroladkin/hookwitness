@@ -119,52 +119,46 @@ func (h *Handler) importSetup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, map[string]any{"endpoints": res})
 }
 
-// checkReceivers applies the receiver rules to a file's endpoints: those it
-// creates, and those it replaces whose receiver differs.
-func (h *Handler) checkReceivers(r *http.Request, f setup.File, plan setup.Plan) (int, error) {
-	replace := plan.Replace
-	if replace == nil {
-		replace = setup.Never
-	}
+// receiverError refuses an import for its receiver: 403 (a user) or 422
+// (a target the policy refuses).
+type receiverError struct {
+	status int
+	err    error
+}
+
+func (e *receiverError) Error() string { return e.err.Error() }
+
+// receiverGuard judges, inside the import's transaction, an endpoint whose
+// receiver the file adds, changes or removes: an admin's only once login is
+// on, and a target the policy accepts.
+func (h *Handler) receiverGuard(r *http.Request) func(path string, before, after *emulate.Forward) error {
 	admin := true
 	if id := access.From(r.Context()); id != nil && !id.Admin() {
 		admin = false
 	}
-	for _, e := range f.Endpoints {
-		var before *emulate.Forward
-		_, text, _, err := h.store.EndpointByPath(r.Context(), e.Path)
-		switch {
-		case errors.Is(err, store.ErrNotFound):
-		case err != nil:
-			return http.StatusInternalServerError, err
-		case !replace(e.Path):
-			continue // refused as a taken path, or kept
-		default:
-			if c, err := emulate.Parse(text); err == nil {
-				before = c.Forward
-			}
-		}
-		if !forwardChanged(before, e.Forward) {
-			continue
+	return func(path string, before, after *emulate.Forward) error {
+		if !forwardChanged(before, after) {
+			return nil
 		}
 		if !admin {
-			return http.StatusForbidden, fmt.Errorf("%s: %s", e.Path, ForwardAdminOnly)
+			return &receiverError{http.StatusForbidden, fmt.Errorf("%s: %s", path, ForwardAdminOnly)}
 		}
-		if e.Forward != nil {
-			u, err := e.Forward.Target()
-			if err == nil {
-				err = h.replay.Policy().CheckURL(u)
-			}
-			if err != nil {
-				msg := err.Error()
-				if strings.Contains(msg, "-replay-allow none") {
-					msg = "forwarding is off on this server (-replay-allow none)"
-				}
-				return http.StatusUnprocessableEntity, fmt.Errorf("%s: receiver: %s", e.Path, msg)
-			}
+		if after == nil {
+			return nil
 		}
+		u, err := after.Target()
+		if err == nil {
+			err = h.replay.Policy().CheckURL(u)
+		}
+		if err != nil {
+			msg := err.Error()
+			if strings.Contains(msg, "-replay-allow none") {
+				msg = "forwarding is off on this server (-replay-allow none)"
+			}
+			return &receiverError{http.StatusUnprocessableEntity, fmt.Errorf("%s: receiver: %s", path, msg)}
+		}
+		return nil
 	}
-	return 0, nil
 }
 
 // ApplySetup parses and applies a setup file for a caller (the API and the
@@ -183,12 +177,14 @@ func (h *Handler) ApplySetup(r *http.Request, data []byte, plan setup.Plan) ([]s
 // changes or removes an endpoint's receiver needs an admin once login is
 // on (403), and a receiver the target policy refuses is refused (422).
 func (h *Handler) ApplyFile(r *http.Request, f setup.File, plan setup.Plan) ([]setup.Result, int, error) {
-	if status, err := h.checkReceivers(r, f, plan); err != nil {
-		return nil, status, err
-	}
-	res, err := setup.Apply(r.Context(), h.store, f, plan, h.setupOptions())
+	o := h.setupOptions()
+	o.Receiver = h.receiverGuard(r)
+	res, err := setup.Apply(r.Context(), h.store, f, plan, o)
+	var re *receiverError
 	var inv *setup.InvalidError
 	switch {
+	case errors.As(err, &re):
+		return nil, re.status, re.err
 	case errors.Is(err, store.ErrDuplicatePath):
 		path, _, _ := strings.Cut(err.Error(), ": ")
 		return nil, http.StatusConflict, fmt.Errorf("%s is already an endpoint; nothing was imported. Replace its behaviour (on_conflict=replace; its requests stay) or change the path in the file", path)

@@ -25,16 +25,18 @@ func TestForwardValidation(t *testing.T) {
 		}
 	}
 	for f, want := range map[Forward]string{
-		{URL: "ftp://receiver.test/x"}:                        "http or https",
-		{URL: "https://user:pw@receiver.test/x"}:              "user name or password",
-		{URL: "https://receiver.test/x?token=1"}:              "must not have a query",
-		{URL: "https://receiver.test/x?"}:                     "must not have a query",
-		{URL: "https://receiver.test/x#top"}:                  "fragment",
-		{URL: "https:///x"}:                                   "no host",
-		{URL: "https://receiver.test/a b"}:                    "space",
-		{URL: "https://receiver.test/x", TimeoutMs: 99}:       "from 100 ms to 300000 ms",
-		{URL: "https://receiver.test/x", TimeoutMs: 300001}:   "from 100 ms to 300000 ms",
-		{URL: "https://receiver.test/x", OnFailure: "mirror"}: `on_failure is "gateway" or "default"`,
+		{URL: "ftp://receiver.test/x"}:                                   "http or https",
+		{URL: "https://user:pw@receiver.test/x"}:                         "user name or password",
+		{URL: "https://receiver.test/x?token=1"}:                         "must not have a query",
+		{URL: "https://receiver.test/x?"}:                                "must not have a query",
+		{URL: "https://receiver.test/x#top"}:                             "fragment",
+		{URL: "https:///x"}:                                              "no host",
+		{URL: "https://receiver.test/a b"}:                               "space",
+		{URL: "https://receiver.test/x", TimeoutMs: 99}:                  "from 100 ms to 300000 ms",
+		{URL: "https://receiver.test/x", TimeoutMs: 300001}:              "from 100 ms to 300000 ms",
+		{URL: "https://receiver.test/x", TimeoutMs: 9223372036854775807}: "from 100 ms to 300000 ms",
+		{URL: "https://receiver.test/x", TimeoutMs: 18446744073710}:      "from 100 ms to 300000 ms",
+		{URL: "https://receiver.test/x", OnFailure: "mirror"}:            `on_failure is "gateway" or "default"`,
 		{URL: ""}: "receiver:",
 	} {
 		c := forwarding()
@@ -84,7 +86,7 @@ func TestForwardWords(t *testing.T) {
 		good, anomaly    bool
 	}{
 		{Outcome{Source: FromForward, Action: ActForward, Forward: note(ForwardNote{Pending: true})},
-			"forwarding…", "forwarded to https://receiver.test:8443/hooks/in", "forwarding…", false, true},
+			"forwarding…", "forwarded to https://receiver.test:8443/hooks/in", "forwarding…", false, false},
 		{Outcome{Source: FromForward, Action: ActForward, Status: 200, Forward: note(ForwardNote{Status: 200, Ms: 38})},
 			"200 from receiver", "forwarded to https://receiver.test:8443/hooks/in", "receiver 200", true, false},
 		{Outcome{Source: FromForward, Action: ActForward, Status: 409, Forward: note(ForwardNote{Status: 409})},
@@ -101,6 +103,8 @@ func TestForwardWords(t *testing.T) {
 			"200 sent", "rule 1 · every 3rd · not forwarded", "not forwarded", true, true},
 		{Outcome{Source: FromRule, Rule: 2, Label: "every 2nd", Action: ActTimeout, Forward: note(ForwardNote{Status: 200})},
 			"timeout", "rule 2 · every 2nd · the receiver got it too", "receiver 200", false, true},
+		{Outcome{Source: FromRule, Rule: 2, Label: "every 2nd", Action: ActReply, Status: 200, Forward: note(ForwardNote{ErrorKind: "dial"})},
+			"200 sent", "rule 2 · every 2nd · the receiver got it too", "receiver down", true, true},
 		{Outcome{Source: FromLoop, Action: ActReply, Status: 508},
 			"508 sent", "the request came back on the server's own forward", "", false, true},
 		{Outcome{Source: FromDefault, Action: ActReply, Status: 200}, "200 sent", "default reply", "", true, false},
@@ -151,5 +155,32 @@ func TestForwardTarget(t *testing.T) {
 		if GatewayStatus(kind) != status || strings.HasPrefix(FailureWords(kind), "the forward failed") {
 			t.Errorf("%s: %d %q", kind, GatewayStatus(kind), FailureWords(kind))
 		}
+	}
+}
+
+// TestProtectAgainstShadowing: a Set-Cookie a browser could read as the
+// login cookie is dropped (also nameless, as "=hookwitness_session=…");
+// NoSniff overrides a third party's own X-Content-Type-Options.
+func TestProtectAgainstShadowing(t *testing.T) {
+	r := Rendered{Status: 200, Headers: []Header{
+		{"Set-Cookie", "hookwitness_session=a; Path=/"},
+		{"Set-Cookie", "=hookwitness_session=b; Path=/admin/"},
+		{"set-cookie", " hookwitness_session =c"},
+		{"Set-Cookie", "app=1; Path=/"},
+		{"Set-Cookie", "=other=2"},
+		{"X-Content-Type-Options", "foo"},
+	}}
+	got := r.Protect("hookwitness_session").NoSniff()
+	var cookies, sniff []string
+	for _, h := range got.Headers {
+		switch {
+		case strings.EqualFold(h.Name, "Set-Cookie"):
+			cookies = append(cookies, h.Value)
+		case strings.EqualFold(h.Name, "X-Content-Type-Options"):
+			sniff = append(sniff, h.Value)
+		}
+	}
+	if strings.Join(cookies, "|") != "app=1; Path=/|=other=2" || strings.Join(sniff, "|") != "nosniff" {
+		t.Fatalf("cookies %q, nosniff %q", cookies, sniff)
 	}
 }

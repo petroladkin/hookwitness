@@ -1,6 +1,7 @@
 package report
 
 import (
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -99,11 +100,11 @@ func receiverLine(o emulate.Outcome) string {
 	var s string
 	switch {
 	case n.Pending:
-		return "being forwarded to " + n.Target
+		return "being forwarded to " + site(n.Target)
 	case n.ErrorKind != "":
-		s = "no answer from " + n.Target + ": " + emulate.FailureWords(n.ErrorKind) + " · after " + ms(n.Ms)
+		s = "no answer from " + site(n.Target) + ": " + emulate.FailureWords(n.ErrorKind) + " · after " + ms(n.Ms)
 	default:
-		s = strconv.Itoa(n.Status) + " from " + n.Target + " in " + ms(n.Ms)
+		s = strconv.Itoa(n.Status) + " from " + site(n.Target) + " in " + ms(n.Ms)
 	}
 	if o.Source == emulate.FromRule {
 		s = "the receiver got it too: " + s
@@ -112,6 +113,17 @@ func receiverLine(o emulate.Outcome) string {
 		s += " · the sender left after " + ms(n.SenderLeftMs)
 	}
 	return s
+}
+
+// site is a receiver's scheme and host as written, without its path:
+// reports are passed around, and some receivers (chat webhooks) carry their
+// secret in the path.
+func site(target string) string {
+	u, err := url.Parse(target)
+	if err != nil || u.Host == "" {
+		return "the receiver"
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // receiverBodyNote is the line about the receiver's answer body.

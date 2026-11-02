@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -51,7 +52,7 @@ func formForward(r *http.Request) (emulate.Forward, error) {
 	}
 	if s := strings.TrimSpace(r.PostFormValue("timeout")); s != "" {
 		n, err := strconv.ParseFloat(s, 64)
-		if err != nil {
+		if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > 1e9 {
 			return f, errors.New("receiver: the timeout is a number of seconds")
 		}
 		f.TimeoutMs = int64(n * 1000)

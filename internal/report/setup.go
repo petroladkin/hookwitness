@@ -84,7 +84,7 @@ func describeSetup(c emulate.Config, mask map[string]bool) *Setup {
 		s.Schemas = append(s.Schemas, SetupSchema{Name: sc.Name, Use: use(c.SchemaUsers(sc.Name))})
 	}
 	if c.Forward != nil {
-		s.Receiver = "requests no rule takes are forwarded to " + c.Forward.Where() + " · " + c.Forward.Summary(maxWaitShown)
+		s.Receiver = "requests no rule takes are forwarded to " + site(c.Forward.URL) + " (its path is not shown) · " + c.Forward.Summary(maxWaitShown)
 	}
 	for i, r := range c.Rules {
 		sr := SetupRule{No: i + 1, When: r.When.Label(), Then: r.Action()}

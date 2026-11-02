@@ -42,8 +42,10 @@ The request goes as [Replay](replay.md#what-is-sent-exactly) sends it: the
 body byte for byte, every header line in its order and letter case, nothing
 added, as HTTP/1.1, a chunked body as one chunk. The request line is the
 receiver's path followed by the query the sender sent. The receiver's URL
-itself may not carry a query or a user name and password, so no credential
-is ever stored with the endpoint.
+itself may not carry a query or a user name and password. Some receivers,
+such as chat webhooks, carry a secret in the path: everyone who can read the
+endpoint sees it, and setup files keep it. Reports show only the receiver's
+scheme and host.
 
 **Host** names the receiver by default, as receivers route by it and no
 provider signs it. Choose **Host sent: as received** to pass the sender's.
@@ -57,7 +59,9 @@ The receiver's answer: its status, its header lines and its body, up to
 `Content-Length`, `Transfer-Encoding`, `Connection` and the other
 connection lines are its own. As every answer on a catch path, it carries
 `Content-Security-Policy: sandbox` and `nosniff`, and never sets the admin's
-login cookie.
+login cookie. Lines that would act on the whole origin the catch paths share
+with the admin (`Clear-Site-Data`, `Strict-Transport-Security`, `Alt-Svc`)
+are not passed back.
 
 When the receiver fails, the sender gets a gateway error naming the failure
 in plain text:

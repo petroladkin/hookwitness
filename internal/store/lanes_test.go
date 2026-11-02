@@ -49,6 +49,8 @@ var classCases = []classCase{
 	{`{"source":"forward","action":"forward","status":502,"forward":{"target":"http://r.test/h","error_kind":"dial","fallback":true,"ms":3}}`, 502, false, "", false},
 	{`{"source":"forward","action":"forward","status":200,"forward":{"target":"http://r.test/h","error_kind":"dial","fallback":true,"ms":3}}`, 200, false, "", false},
 	{`{"source":"forward","action":"forward","forward":{"target":"http://r.test/h","pending":true,"ms":0}}`, 0, false, "", false},
+	{`{"source":"forward","action":"forward","forward":{"target":"http://r.test/h","pending":true,"ms":0}}`, 0, false, "fail", false},
+	{`{"source":"rule","rule":1,"action":"reply","status":200,"forward":{"target":"http://r.test/h","error_kind":"timeout","ms":3}}`, 200, false, "", false},
 	{`{"source":"rule","rule":1,"action":"reply","status":200,"not_forwarded":true}`, 200, false, "", false},
 	{`{"source":"rule","rule":1,"action":"reply","status":200,"forward":{"target":"http://r.test/h","status":200,"ms":3}}`, 200, false, "", false},
 	{`{"source":"forward","action":"forward","status":200,"forward":{"target":"http://r.test/h","status":200,"ms":3}}`, 200, false, "fail", false},

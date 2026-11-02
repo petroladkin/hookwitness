@@ -16,12 +16,15 @@ import (
 // failed verdict, or a signature another kept request of the endpoint
 // carried (a redelivery: both deliveries are anomalies). On an endpoint
 // that forwards, also a request the receiver missed: kept from it by a
-// rule, or answered with the default reply because the receiver failed.
+// rule, or the receiver failed. A forward still running is judged when it
+// ends (store.FinishForward), not before: counted as an anomaly while
+// pending, a burst of forwards would prune the real anomalies.
 const anomalyExpr = `(too_large
-	OR CASE WHEN json_valid(outcome) THEN json_extract(outcome, '$.action') NOT IN ('reply', 'forward')
+	OR CASE WHEN json_valid(outcome) THEN ifnull(json_extract(outcome, '$.forward.pending'), 0) = 0 AND (
+		json_extract(outcome, '$.action') NOT IN ('reply', 'forward')
 		OR ifnull(json_extract(outcome, '$.status'), 0) NOT BETWEEN 200 AND 299
 		OR ifnull(json_extract(outcome, '$.not_forwarded'), 0) = 1
-		OR ifnull(json_extract(outcome, '$.forward.fallback'), 0) = 1
+		OR json_extract(outcome, '$.forward.error_kind') IS NOT NULL)
 		ELSE status NOT BETWEEN 200 AND 299 END
 	OR verdict = 'fail'
 	OR EXISTS (SELECT 1 FROM signature_seen s JOIN signature_seen t

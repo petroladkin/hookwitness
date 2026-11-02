@@ -421,8 +421,20 @@ func TestForwardHead(t *testing.T) {
 	configure(t, st, "/h", emulate.Config{Default: emulate.Reply{Status: 200}, Forward: &emulate.Forward{URL: fr.url()}})
 	rec := httptest.NewRecorder()
 	h.Catch(rec, httptest.NewRequest("HEAD", "/h", nil), nil, false)
-	if rec.Code != 200 || rec.Body.Len() != 0 {
-		t.Fatalf("HEAD: %d %q", rec.Code, rec.Body)
+	if rec.Code != 200 || rec.Body.Len() != 0 || rec.Header().Get("Content-Length") != "5" {
+		t.Fatalf("HEAD: %d %v %q", rec.Code, rec.Header(), rec.Body)
+	}
+}
+
+// A handler given no forward service forwards nothing: sending is off.
+func TestForwardFailsClosed(t *testing.T) {
+	h, st, _ := setup(t, 1<<20)
+	h.Forward = nil
+	fr := newFakeReceiver(t, answering("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
+	configure(t, st, "/closed", emulate.Config{Default: emulate.Reply{Status: 200}, Forward: &emulate.Forward{URL: fr.url()}})
+	rec := send(h, "POST", "/closed", strings.NewReader("{}"))
+	if rec.Code != 502 || !strings.Contains(rec.Body.String(), "target policy") || fr.count.Load() != 0 {
+		t.Fatalf("%d %q, receiver got %d", rec.Code, rec.Body, fr.count.Load())
 	}
 }
 
@@ -432,6 +444,7 @@ func TestForwardLogs(t *testing.T) {
 	ok := newFakeReceiver(t, answering("HTTP/1.1 200 OK\r\nX-R: r-secret\r\nContent-Length: 8\r\n\r\nb-secret"))
 	h, st, logs := setup(t, 1<<20)
 	h.Log = slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	h.Forward = forward.New(h.Log, forward.Options{MaxWait: h.maxWait(), Budget: h})
 	url := serve(t, h)
 	configure(t, st, "/ok", emulate.Config{Default: emulate.Reply{Status: 200}, Forward: &emulate.Forward{URL: ok.url() + "/p-secret"}})
 	configure(t, st, "/down", emulate.Config{Default: emulate.Reply{Status: 200}, Forward: &emulate.Forward{URL: "http://127.0.0.1:1/p-secret"}})

@@ -108,7 +108,8 @@ var caught = Request{ID: 7, Endpoint: "/github/push", Method: "POST", RawQuery: 
 func TestForwardsAndPassesBack(t *testing.T) {
 	rc := newReceiver(t, func(c net.Conn) {
 		io.WriteString(c, "HTTP/1.1 201 Made\r\nset-cookie: a=1\r\nConnection: X-Trace, close\r\nX-Trace: t\r\n"+
-			"Keep-Alive: timeout=5\r\nContent-Encoding: gzip\r\nSet-Cookie: b=2\r\nContent-Length: 4\r\n\r\n\x1f\x8b\x00\xff")
+			"Keep-Alive: timeout=5\r\nContent-Encoding: gzip\r\nSet-Cookie: b=2\r\nClear-Site-Data: \"*\"\r\nStrict-Transport-Security: max-age=1\r\n"+
+			"Alt-Svc: h3=\":443\"\r\nContent-Length: 4\r\n\r\n\x1f\x8b\x00\xff")
 	})
 	log, logs := quiet()
 	s := New(log, Options{})
@@ -132,7 +133,7 @@ func TestForwardsAndPassesBack(t *testing.T) {
 		t.Fatalf("passed back %d %v %q", a.Status, names, a.Body)
 	}
 	r := ex.Row
-	if r.Status != 201 || r.Reason != "Made" || len(r.Headers) != 7 || r.Headers[0].Name != "set-cookie" || r.Line != "POST /in/hooks?token=q-secret&b=2 HTTP/1.1" ||
+	if r.Status != 201 || r.Reason != "Made" || len(r.Headers) != 10 || r.Headers[0].Name != "set-cookie" || r.Line != "POST /in/hooks?token=q-secret&b=2 HTTP/1.1" ||
 		len(r.Sent) != 6 || r.Sent[1].Value != host || r.ErrorKind != "" || r.URL != rc.url()+"/in/hooks" || !strings.Contains(r.Options, `"host":"target"`) {
 		t.Fatalf("row %+v", r)
 	}

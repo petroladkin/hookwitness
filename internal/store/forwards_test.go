@@ -32,8 +32,8 @@ func TestFinishForward(t *testing.T) {
 	var anomaly bool
 	var seq0 int64
 	s.db.QueryRowContext(ctx, `SELECT anomaly, change_seq FROM requests WHERE id = ?`, r.ID).Scan(&anomaly, &seq0)
-	if !anomaly {
-		t.Fatal("a pending forward is not yet a good answer")
+	if anomaly {
+		t.Fatal("a pending forward is judged before it ends")
 	}
 	fw := sampleForward(r.ID, 200)
 	if err := s.FinishForward(ctx, fw, 200, forwardedOK); err != nil {
@@ -180,5 +180,38 @@ func TestForwardsOnRelease020Database(t *testing.T) {
 	}
 	if v, _ := s.SchemaVersion(ctx); v != 13 {
 		t.Fatalf("schema %d after the upgrade", v)
+	}
+}
+
+// A burst of forwards still running does not push real anomalies out of
+// their lane: a pending forward is judged when it ends.
+func TestPendingForwardsKeepAnomalies(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	ep, _ := s.CreateEndpoint(ctx, "/a")
+	keep := Keep{Normal: 100, Anomalies: 2}
+	var bad []int64
+	for range 2 {
+		r := sample(ep.ID, "bad")
+		r.Status, r.Outcome = 500, `{"source":"default","action":"reply","status":500}`
+		if err := s.AddRequest(ctx, r, keep, nil); err != nil {
+			t.Fatal(err)
+		}
+		bad = append(bad, r.ID)
+	}
+	for range 2 {
+		r := sample(ep.ID, "fwd")
+		r.Outcome = `{"source":"forward","action":"forward","forward":{"target":"http://receiver.test/in","pending":true,"ms":0}}`
+		if err := s.AddRequest(ctx, r, keep, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.FinishForward(ctx, sampleForward(r.ID, 200), 200, forwardedOK); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range bad {
+		if _, err := s.Request(ctx, id); err != nil {
+			t.Fatalf("anomaly %d pruned by pending forwards: %v", id, err)
+		}
 	}
 }

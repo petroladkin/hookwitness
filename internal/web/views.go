@@ -187,6 +187,8 @@ func tryCommand(base, path string) string {
 // status, a refusal, a render error, a refused body), "timeout" or "drop".
 func (r rowView) mark() string {
 	switch {
+	case r.Outcome.Pending():
+		return "ok" // judged when the receiver answers; the row refreshes then
 	case r.Outcome.HeldUp():
 		return "timeout"
 	case r.Outcome.Action == emulate.ActDrop:

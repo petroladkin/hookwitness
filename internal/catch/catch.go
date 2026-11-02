@@ -373,7 +373,11 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 
 // writeReply sends a rendered reply: its headers only (no sniffed
 // Content-Type), framed by the server.
-func writeReply(w http.ResponseWriter, rendered emulate.Rendered) {
+func writeReply(w http.ResponseWriter, rendered emulate.Rendered) { writeReplyLen(w, rendered, "") }
+
+// writeReplyLen is writeReply with the Content-Length to declare ("": the
+// body's): an answer to HEAD keeps the receiver's.
+func writeReplyLen(w http.ResponseWriter, rendered emulate.Rendered, length string) {
 	hd := w.Header()
 	hd["Content-Type"] = nil // no sniffing: only the configured headers
 	for _, x := range rendered.Headers {
@@ -382,7 +386,10 @@ func writeReply(w http.ResponseWriter, rendered emulate.Rendered) {
 		}
 		hd.Add(x.Name, x.Value)
 	}
-	hd.Set("Content-Length", strconv.Itoa(len(rendered.Body)))
+	if length == "" {
+		length = strconv.Itoa(len(rendered.Body))
+	}
+	hd.Set("Content-Length", length)
 	w.WriteHeader(rendered.Status)
 	w.Write(rendered.Body)
 }

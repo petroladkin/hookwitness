@@ -200,14 +200,19 @@ func (o Outcome) Good() bool {
 // the same rule in SQL (internal/store anomalyExpr; a test holds them
 // together). Every request the strip marks other than "ok" is one.
 func Anomalous(o Outcome, tooLarge bool, verdict string, redelivered bool) bool {
-	return tooLarge || !o.Good() || verdict == "fail" || redelivered || o.receiverMissed()
+	answered := !o.Pending() && (!o.Good() || o.receiverMissed())
+	return tooLarge || answered || verdict == "fail" || redelivered
 }
 
+// Pending reports a forward that has not ended yet: its class waits for
+// the end.
+func (o Outcome) Pending() bool { return o.Forward != nil && o.Forward.Pending }
+
 // receiverMissed reports a forwarding endpoint's request the receiver did
-// not take: a rule kept it from the receiver, or the receiver failed and
-// the sender got the default reply instead.
+// not take: a rule kept it from the receiver, or the receiver failed (the
+// sender got a gateway error, the default reply, or a rule's answer).
 func (o Outcome) receiverMissed() bool {
-	return o.NotForwarded || o.Forward != nil && o.Forward.Fallback
+	return o.NotForwarded || o.Forward != nil && o.Forward.ErrorKind != ""
 }
 
 // AsSent is the reply as HTTP sends it for a request of method, as Go's

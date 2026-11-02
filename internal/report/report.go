@@ -459,6 +459,8 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 // markKind is how the strip draws a request, as in the UI.
 func markKind(r store.Request, o emulate.Outcome) string {
 	switch {
+	case o.Pending():
+		return "ok" // still forwarding: judged when it ends
 	case o.HeldUp():
 		return "timeout"
 	case o.Action == emulate.ActDrop:
@@ -577,6 +579,9 @@ func (h *Head) item(r store.Request) Item {
 	}
 	it.Body = viewBody(r, h.bodyLimit)
 	o := emulate.ParseOutcome(r.Outcome, r.Status)
+	if o.Forward != nil {
+		o.Forward.Target = site(o.Forward.Target) // never the receiver's path in a report
+	}
 	it.Answer = Answer{Stamp: o.Stamp(), Why: o.Why(), DelayMs: o.DelayMs, WaitedMs: o.WaitedMs, Error: o.Error}
 	if o.Action == emulate.ActAbandoned {
 		it.Answer.Would = o.Would
@@ -762,6 +767,8 @@ func answerLine(a Answer) string {
 		parts = append(parts, a.Why)
 	}
 	switch {
+	case a.Would > 0 && a.DelayMs == 0:
+		parts = append(parts, "left after "+ms(a.WaitedMs)+", before the answer; nothing sent, would have been "+strconv.Itoa(a.Would))
 	case a.Would > 0:
 		parts = append(parts, "left after "+ms(a.WaitedMs)+" of a "+ms(a.DelayMs)+" delay; nothing sent, would have been "+strconv.Itoa(a.Would))
 	default:

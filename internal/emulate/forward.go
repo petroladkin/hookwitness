@@ -74,8 +74,11 @@ func (f *Forward) Target() (*url.URL, error) { return send.ParseTarget(f.URL) }
 
 // Timeout is the exchange's timeout under the cap maxWait.
 func (f *Forward) Timeout(maxWait time.Duration) time.Duration {
+	if f.TimeoutMs > 0 && f.TimeoutMs <= maxWait.Milliseconds() {
+		return time.Duration(f.TimeoutMs) * time.Millisecond
+	}
 	if f.TimeoutMs > 0 {
-		return min(time.Duration(f.TimeoutMs)*time.Millisecond, maxWait)
+		return maxWait
 	}
 	return min(DefaultForwardTimeout, maxWait)
 }
@@ -107,7 +110,7 @@ func (f *Forward) validate(maxWait time.Duration) error {
 	if u.RawQuery != "" || u.ForceQuery {
 		return errors.New("the URL must not have a query: the sender's own query is sent with each request")
 	}
-	if f.TimeoutMs != 0 && (f.TimeoutMs < MinForwardTimeout.Milliseconds() || time.Duration(f.TimeoutMs)*time.Millisecond > maxWait) {
+	if f.TimeoutMs != 0 && (f.TimeoutMs < MinForwardTimeout.Milliseconds() || f.TimeoutMs > maxWait.Milliseconds()) {
 		return fmt.Errorf("the timeout is from %d ms to %d ms (-max-wait)", MinForwardTimeout.Milliseconds(), maxWait.Milliseconds())
 	}
 	switch f.OnFailure {

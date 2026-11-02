@@ -297,9 +297,12 @@ func policyWords(err error) string {
 }
 
 // hopByHop are the answer's lines that belong to its connection or its
-// framing: the server frames what it passes back itself.
+// framing (the server frames what it passes back itself), and those that
+// would act on the whole origin the catch paths share with the admin UI:
+// clearing its site data, pinning it to HTTPS, moving it to another
+// service.
 var hopByHop = []string{"Connection", "Content-Length", "Keep-Alive", "Proxy-Authenticate", "Proxy-Connection",
-	"Te", "Trailer", "Transfer-Encoding", "Upgrade"}
+	"Te", "Trailer", "Transfer-Encoding", "Upgrade", "Clear-Site-Data", "Strict-Transport-Security", "Alt-Svc"}
 
 // passBack is the receiver's header lines without framing and hop-by-hop
 // lines, nor those its Connection line names.

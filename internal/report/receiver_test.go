@@ -39,11 +39,12 @@ func TestReceiverInReports(t *testing.T) {
 		out := render(t, f, o, rs)
 		for _, want := range []string{
 			"forwarded 3 · the receiver answered 2xx 2 · failed: timeout 1 · the sender left before the answer 1 · not forwarded (rules) 1",
-			"201 from https://receiver.test/in in 38 ms",
-			"no answer from https://receiver.test/in: the receiver did not answer within the timeout · after 30.0 s",
+			"201 from https://receiver.test in 38 ms",
+			"no answer from https://receiver.test: the receiver did not answer within the timeout · after 30.0 s",
 			"not forwarded: rule 1 took it",
 			"the sender left after 10.0 s",
-			"requests no rule takes are forwarded to https://receiver.test/in · Host of the target · timeout 30.0 s · 502/504 when it fails",
+			"left after 10.0 s, before the answer; nothing sent, would have been 200",
+			"requests no rule takes are forwarded to https://receiver.test (its path is not shown) · Host of the target · timeout 30.0 s · 502/504 when it fails",
 			"every 3rd",
 			"· not forwarded",
 			"The receiver",
@@ -55,6 +56,9 @@ func TestReceiverInReports(t *testing.T) {
 		}
 		if strings.Contains(out, "s-ecret") {
 			t.Fatalf("%s: a masked receiver header is in the report", f)
+		}
+		if strings.Contains(out, "receiver.test/in") {
+			t.Fatalf("%s: the receiver's path is in the report", f)
 		}
 	}
 	if pdf := render(t, PDF, o, rs); !strings.HasPrefix(pdf, "%PDF-") {
