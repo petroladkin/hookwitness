@@ -80,6 +80,14 @@ func timeoutField(f emulate.Forward) string {
 	return strconv.FormatFloat(float64(f.TimeoutMs)/1000, 'f', -1, 64)
 }
 
+// outcomeOf is a request's outcome, a forward that can no longer be
+// running (pending past -max-wait and a minute) shown as interrupted.
+func (h *Handler) outcomeOf(req store.Request) emulate.Outcome {
+	o := emulate.ParseOutcome(req.Outcome, req.Status)
+	o.Interrupted(req.ReceivedAt, time.Now().Add(-h.maxWait-time.Minute))
+	return o
+}
+
 // receiverOf is where an endpoint's requests are forwarded, "" when it
 // answers them itself: its badge.
 func receiverOf(config string) string {

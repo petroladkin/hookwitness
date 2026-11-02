@@ -176,3 +176,26 @@ func TestImportShowsReceivers(t *testing.T) {
 		t.Fatalf("review %d: %s", rec.Code, errorOf(rec.Body.String()))
 	}
 }
+
+// A forward still pending long after it could have ended (the server
+// stopped without recording it) is shown as interrupted.
+func TestInterruptedForward(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	ep, _ := e.st.CreateEndpoint(ctx, "/live")
+	old := &store.Request{EndpointID: ep.ID, ReceivedAt: time.Now().Add(-10 * time.Minute), Method: "POST", Path: "/live", Proto: "HTTP/1.1",
+		Outcome: `{"source":"forward","action":"forward","forward":{"target":"https://receiver.test/in","pending":true,"ms":0}}`}
+	fresh := &store.Request{EndpointID: ep.ID, ReceivedAt: time.Now(), Method: "POST", Path: "/live", Proto: "HTTP/1.1", Outcome: old.Outcome}
+	for _, r := range []*store.Request{old, fresh} {
+		if err := e.st.AddRequest(ctx, r, store.Keep{Normal: 100, Anomalies: 100}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg := e.do("GET", "/admin/e/"+id(ep.ID), nil).Body.String()
+	if !strings.Contains(reg, "interrupted: no answer recorded") || strings.Contains(reg, "0 receiver") || !strings.Contains(reg, "forwarding…") {
+		t.Fatal("the register does not tell an interrupted forward from a running one")
+	}
+	if ex := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(old.ID), nil).Body.String(); !strings.Contains(ex, "interrupted: the server stopped before the exchange ended") {
+		t.Fatal("the request page")
+	}
+}

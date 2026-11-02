@@ -52,6 +52,9 @@ const (
 	FailUpgrade  = "upgrade"   // the receiver switched protocols (101): no tunnels
 	FailBusy     = "busy"      // no forward slot or answer budget was free
 	FailLoop     = "loop"
+	// FailInterrupted: a forward still pending long after its timeout; the
+	// server stopped without recording it (shown, never stored).
+	FailInterrupted = "interrupted"
 )
 
 // ForwardNote is the receiver's side of a request, in its outcome; the
@@ -177,6 +180,8 @@ func FailureWords(kind string) string {
 		return "too many forwards at once"
 	case FailLoop:
 		return "the request came back on the server's own forward"
+	case FailInterrupted:
+		return "interrupted: the server stopped before the exchange ended, and no answer was recorded"
 	}
 	return "the forward failed (" + kind + ")"
 }
@@ -188,6 +193,8 @@ func (o Outcome) forwardStamp() string {
 	switch {
 	case n.Pending:
 		return "forwarding…"
+	case n.ErrorKind == FailInterrupted:
+		return "interrupted: no answer recorded"
 	case n.ErrorKind == "":
 		return strconv.Itoa(o.Status) + " from receiver"
 	case n.Fallback && o.Status != GatewayStatus(n.ErrorKind):
@@ -206,8 +213,21 @@ func downWord(kind string) string {
 		return "refused"
 	case FailBusy:
 		return "busy"
+	case FailInterrupted:
+		return "interrupted"
 	}
 	return "down"
+}
+
+// Interrupted turns a forward that is still pending long after it could
+// have ended (received before stale) into an interrupted one: the server
+// stopped without recording it. It reports whether it did.
+func (o *Outcome) Interrupted(received, stale time.Time) bool {
+	if o.Forward == nil || !o.Forward.Pending || !received.Before(stale) {
+		return false
+	}
+	o.Forward.Pending, o.Forward.ErrorKind = false, FailInterrupted
+	return true
 }
 
 // ReceiverMark is the small mark of the receiver's side on a register row:

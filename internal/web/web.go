@@ -27,7 +27,6 @@ import (
 	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/api"
 	"github.com/petroladkin/hookwitness/internal/catch"
-	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/mcp"
 	"github.com/petroladkin/hookwitness/internal/replay"
@@ -667,7 +666,7 @@ func (h *Handler) row(req store.Request, n int, fresh bool) rowView {
 		Delivery: n,
 		Href:     h.regPath(req.EndpointID) + "/r/" + strconv.FormatInt(req.ID, 10),
 		Fresh:    fresh,
-		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
+		Outcome:  h.outcomeOf(req),
 		Verdict:  req.Verdict,
 		Replays:  req.Replays,
 		Repeat:   repeatNote(req.Verdicts),
@@ -753,7 +752,7 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		Self:     h.regPath(req.EndpointID) + "/r/" + strconv.FormatInt(req.ID, 10),
 		Unmatch:  req.EndpointID == store.Unmatched,
 		Limit:    h.limit,
-		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
+		Outcome:  h.outcomeOf(req),
 		Verdicts: parseVerdicts(req.Verdicts),
 	}
 	if req.Event != nil && *req.Event != "" {
