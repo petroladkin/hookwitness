@@ -1417,7 +1417,7 @@ templ editorDialog(b behaviourView, e *editor) {
 					@checkFields(b, e.Check)
 				case "event":
 					<input type="hidden" name="op" value="event"/>
-					@eventFields(e.Event)
+					@eventFields(e.Event, e.Suggested)
 				case "secret":
 					<input type="hidden" name="op" value="secret-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
@@ -1442,7 +1442,7 @@ templ editorDialog(b behaviourView, e *editor) {
 				<button class="btn solid" type="submit">{ editorSave(e) }</button>
 				<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + b.Tab) }>Cancel</a>
 			</div>
-			if e.Kind != "var" && e.Kind != "secret" && e.Kind != "schema" {
+			if e.Kind != "var" && e.Kind != "secret" && e.Kind != "schema" && e.Kind != "event" {
 				@templateRef()
 			}
 		</form>
@@ -1654,8 +1654,11 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 
 // eventFields edits where the sender puts an event's id: a preset or a
 // header or body value of one's own.
-templ eventFields(src emulate.Source) {
+templ eventFields(src emulate.Source, suggested string) {
 	<p class="help">The id a sender keeps on every retry of an event. Attempts, retry groups and the delivery checks follow it; without one they follow the body, so a sender that changes a field on each attempt starts a new group each time.</p>
+	if suggested != "" {
+		<p class="note">None is set yet. { suggested }'s is chosen below because the endpoint checks { suggested }'s signature: save to use it.</p>
+	}
 	<label>
 		Event id
 		<select name="preset" autofocus>

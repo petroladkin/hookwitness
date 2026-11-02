@@ -47,6 +47,9 @@ type editor struct {
 	Draft  *draftView     // the schema was drafted from requests
 	Reply  emulate.Reply  // the default reply
 	Event  emulate.Source // the event id source ({} for none)
+	// Suggested names the preset Event holds when the endpoint has no
+	// source yet and one of its signature checks is that provider's.
+	Suggested string
 }
 
 // behaviourTabs in the order a request meets them.
@@ -80,6 +83,15 @@ func openEditor(cfg emulate.Config, which string) *editor {
 		e := &editor{Kind: "event"}
 		if cfg.Event != nil {
 			e.Event = *cfg.Event
+			return e
+		}
+		for _, c := range cfg.Checks {
+			for _, p := range emulate.EventPresets {
+				if p.Kind != "" && c.Kind == p.Kind {
+					e.Event, e.Suggested = p.Source, p.Name
+					return e
+				}
+			}
 		}
 		return e
 	}

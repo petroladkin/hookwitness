@@ -29,6 +29,10 @@ line **Event id** above the checks says where the endpoint takes it from;
 | Standard Webhooks | header `webhook-id` |
 | Svix | header `svix-id` |
 
+When the endpoint already checks GitHub's, Stripe's or Standard Webhooks'
+signature, the dialog starts on that provider's place; nothing changes until
+you save it.
+
 ![The Checks tab with the event id from GitHub's header and the three delivery checks](images/delivery-checks.webp)
 
 With an event id, attempts, the register's **retry** chips, the strip's

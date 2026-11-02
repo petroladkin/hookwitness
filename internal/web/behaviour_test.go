@@ -519,7 +519,23 @@ func TestDeliveryEditors(t *testing.T) {
 	if !strings.Contains(dlg, `<h2 id="dialog-title">Event id</h2>`) || !strings.Contains(dlg, "GitHub: header X-GitHub-Delivery") {
 		t.Fatalf("event dialog")
 	}
+	e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"new"}, "name": {"GH"}, "secret_kind": {"key"}, "value": {"gh_test_secret"}})
+	e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"github"}, "secret": {"GH"}})
+	dlg = e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=checks&edit=event", nil).Body.String()
+	if !strings.Contains(dlg, `<option value="GitHub" selected>`) || !strings.Contains(dlg, "None is set yet. GitHub's is chosen below") {
+		t.Fatalf("the GitHub signature check does not suggest GitHub's event id:\n%s", dlg)
+	}
+	if strings.Contains(dlg, `id="templates"`) {
+		t.Fatal("the event dialog explains templates, which it has none of")
+	}
+	if e.config(t, ep.ID).Event != nil {
+		t.Fatal("a suggestion was saved without a save")
+	}
 	e.edit(ep.ID, url.Values{"op": {"event"}, "preset": {"GitHub"}})
+	if dlg := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=checks&edit=event", nil).Body.String(); strings.Contains(dlg, "None is set yet") {
+		t.Fatal("a saved source is still called a suggestion")
+	}
+	e.edit(ep.ID, url.Values{"op": {"check-del"}, "i": {"0"}})
 	cfg := e.config(t, ep.ID)
 	if cfg.Event == nil || cfg.Event.Key != "X-GitHub-Delivery" {
 		t.Fatalf("preset: %+v", cfg.Event)

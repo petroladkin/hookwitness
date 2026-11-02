@@ -31,6 +31,10 @@
 | Standard Webhooks | заголовок `webhook-id` |
 | Svix | заголовок `svix-id` |
 
+Коли ендпоінт уже перевіряє підпис GitHub, Stripe чи Standard Webhooks,
+діалог одразу пропонує місце цього провайдера; нічого не змінюється, доки ви
+його не збережете.
+
 ![Вкладка Checks: event id із заголовка GitHub і три перевірки доставки](../images/delivery-checks.webp)
 
 З event id за ним ідуть спроби, мітки **retry** у реєстрі, дужки на стрічці
