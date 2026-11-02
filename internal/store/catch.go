@@ -506,6 +506,22 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 	}
 	where := "endpoint_id IS ? AND id > ?"
 	args := []any{register(endpointID), int64(0)}
+	if !sel.From.IsZero() || !sel.To.IsZero() {
+		// A time span: its ids first, by the time index, so the pages below
+		// read the span's rows only (ids follow arrival; the received_at
+		// conditions still drop a straggler inside the range). The span's
+		// start is the cursor's: one lower bound, which the index range uses.
+		lo, hi, ok, err := s.idSpan(ctx, endpointID, sel.From, sel.To)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		args[1] = lo - 1
+		where += " AND id <= ?"
+		args = append(args, hi)
+	}
 	if !sel.From.IsZero() {
 		where += " AND received_at >= ?"
 		args = append(args, millis(sel.From))
@@ -526,6 +542,7 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 	}
 	query := `SELECT ` + cols + ` FROM requests WHERE ` + where + ` ORDER BY id LIMIT ` + strconv.Itoa(page)
 	for {
+		traced(query, args)
 		rows, err := s.db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return fmt.Errorf("read requests: %w", err)
@@ -564,6 +581,39 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 	}
 }
 
+// traceQuery, when set (tests), sees the queries that read requests, so a
+// test can check their plans as the code issues them.
+var traceQuery func(query string, args []any)
+
+func traced(query string, args []any) {
+	if traceQuery != nil {
+		traceQuery(query, args)
+	}
+}
+
+// idSpan is the lowest and highest id of a register's requests received in
+// [from, to] (a zero end is open), read from the time index alone; ok is
+// false when there are none.
+func (s *Store) idSpan(ctx context.Context, endpointID int64, from, to time.Time) (lo, hi int64, ok bool, err error) {
+	where := "endpoint_id IS ?"
+	args := []any{register(endpointID)}
+	if !from.IsZero() {
+		where += " AND received_at >= ?"
+		args = append(args, millis(from))
+	}
+	if !to.IsZero() {
+		where += " AND received_at <= ?"
+		args = append(args, millis(to))
+	}
+	var l, h sql.NullInt64
+	query := `SELECT min(id), max(id) FROM requests INDEXED BY requests_by_time WHERE ` + where
+	traced(query, args)
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&l, &h); err != nil {
+		return 0, 0, false, fmt.Errorf("read requests: %w", err)
+	}
+	return l.Int64, h.Int64, l.Valid, nil
+}
+
 // RequestsChanged lists a register's requests up to upToID whose outcome
 // or verdicts changed, or that were replayed, after the change sequence
 // value afterSeq, oldest
@@ -579,9 +629,11 @@ func (s *Store) RequestsChanged(ctx context.Context, endpointID, upToID, afterSe
 	if seq <= afterSeq { // nothing new; a value from another database is pulled back
 		return nil, seq, nil
 	}
-	reqs, err := s.listRequests(ctx, `SELECT `+requestColumns+` FROM requests
-		WHERE endpoint_id IS ? AND id <= ? AND change_seq > ? AND change_seq <= ? ORDER BY id`,
-		register(endpointID), upToID, afterSeq, seq)
+	// By the change sequence's index: a wake reads the rows that changed,
+	// not the register up to upToID (the planner would pick that one).
+	reqs, err := s.listRequests(ctx, `SELECT `+requestColumns+` FROM requests INDEXED BY requests_change_seq
+		WHERE endpoint_id IS ? AND change_seq > ? AND change_seq <= ? AND id <= ? ORDER BY id`,
+		register(endpointID), afterSeq, seq, upToID)
 	if err != nil {
 		return nil, afterSeq, err
 	}
@@ -832,6 +884,7 @@ func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, er
 }
 
 func (s *Store) listRequests(ctx context.Context, query string, args ...any) ([]Request, error) {
+	traced(query, args)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list requests: %w", err)
