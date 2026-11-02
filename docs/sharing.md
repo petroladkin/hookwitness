@@ -165,3 +165,7 @@ full URL: `-url http://127.0.0.1:8081/api/v1`.
 
 An AI agent has the same through MCP: `export_endpoint` and
 `import_endpoints` ([Testing a sender with an AI agent](agents.md)).
+
+A setup file is at most 16 MiB, in the UI, the API, `hookwitness apply` and
+MCP alike. Through MCP an export gives at most 4 MiB, more than an agent
+keeps in mind; a larger one is downloaded with `GET <prefix>/api/v1/setup`.

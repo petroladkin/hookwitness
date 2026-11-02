@@ -214,10 +214,13 @@ that makes it false.
   validation, errors and access), mounted by `internal/web` at
   `<prefix>/mcp`; `wait_for_request` and `expect` chain the API's long-polls
   and end on cancellation and at shutdown (a tool error); open sessions are
-  tracked and closed on shutdown (`Streamable.CloseSessions`, called by
-  `StopStreams`) and capped (`-mcp-max-sessions`, default 32: a slot taken at
-  `initialize`, 503 over it); results are a summary line and compact JSON,
-  bodies cut at 16 KiB; `Bridge` pipes stdio to Streamable HTTP.
+  tracked from `initialize` (with their slot, one owner: `hold`) and closed
+  on shutdown (`Streamable.CloseSessions`, called by `StopStreams`), and
+  capped (`-mcp-max-sessions`, default 32: a slot taken at `initialize`, 503
+  over it); a request is at most `MaxRequest` (a 16 MiB setup file and its
+  message; over it 413 from the SDK); results are a summary line and compact
+  JSON, bodies cut at 16 KiB, an export at most 4 MiB (`MaxExport`, then an
+  error naming the API's address); `Bridge` pipes stdio to Streamable HTTP.
 - `internal/send` — one HTTP/1.1 exchange written and read by hand (header
   lines in order and case, the body as is, the answer never decompressed,
   no redirects), and the target `Policy` checked on the dialled address
