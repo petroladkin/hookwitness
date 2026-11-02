@@ -408,11 +408,12 @@ answered ([Replaying a request](replay.md)).
 Refusals: `409 body_not_kept` when the body was not kept whole (over the
 limit, or cut in Unmatched); `422 invalid` (field `url`, `host` or
 `timeout_ms`): not http or https, a user name or password in the URL, a
-timeout out of range; `422 target_refused` (field `url`): a link-local or
-cloud-metadata address, also through a name resolving to one, or a target
-outside `-replay-allow`, with the rule in the message; `503 busy` when 4
-replays are running or `-max-inflight` is spent (`Retry-After`). A request
-carries `"replays"`: how many it has.
+space or control character in the URL, a timeout out of range; `422
+target_refused` (field `url`): a link-local or cloud-metadata address, also
+through a name resolving to one, or a target outside `-replay-allow`, with
+the rule in the message; `503 busy` when 4 replays are running or
+`-max-inflight` is spent (`Retry-After`). A request carries `"replays"`: how
+many it has.
 
 ```json
 {"id":3,"request_id":12,"created_at":"2026-10-19T09:14:02.118Z","by":"ann","url":"http://localhost:3000/webhooks/github",

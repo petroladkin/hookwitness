@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -212,6 +213,12 @@ func compose(h Head, body []byte, o Options, res *Response) ([]byte, error) {
 	if !chunked && !length && len(body) > 0 {
 		lines = append(lines, wire.Header{Name: "Content-Length", Value: strconv.Itoa(len(body))})
 		res.Notes = append(res.Notes, "Content-Length added: the request had no framing for its body")
+	}
+	if chunked && length {
+		// Both framings at once is an ambiguous message (a request
+		// smuggling shape): the body goes chunked, so its length is left out.
+		lines = slices.DeleteFunc(lines, func(hd wire.Header) bool { return strings.EqualFold(hd.Name, "Content-Length") })
+		res.Notes = append(res.Notes, "Content-Length left out: the body is sent chunked")
 	}
 	if chunked {
 		res.Notes = append(res.Notes, "the chunked body is sent as one chunk, without chunk extensions or trailers")

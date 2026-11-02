@@ -59,14 +59,19 @@ instead of a status.
 
 By default a replay can go to any address except **link-local** ones
 (`169.254.0.0/16`, `fe80::/10`) and **cloud metadata** services
-(`fd00:ec2::254`, `100.100.100.200`): the address is checked when the
-connection is made, so a host name that resolves to one is refused too.
-A URL with a user name or password is refused (it would be kept with the
-replay); a token in its query is kept as typed.
+(`fd00:ec2::254`, `100.100.100.200`, and Azure's WireServer
+`168.63.129.16`): the address is checked when the connection is made, so a
+host name that resolves to one is refused too, and listing it in
+`-replay-allow` does not open it. A URL with a user name or password is
+refused (it would be kept with the replay), and so is one with a space or a
+control character (write it as `%20`); a token in its query is kept as
+typed.
 
 On a shared server, narrow the targets with `-replay-allow` (or
 `HOOKWITNESS_REPLAY_ALLOW`): host names, `host:port`, addresses and CIDR
-networks, separated by commas. `none` turns replay off.
+networks, separated by commas. An IPv4-mapped network such as
+`::ffff:198.51.100.0/120` means the IPv4 network it maps (`198.51.100.0/24`).
+`none` turns replay off.
 
 <!-- docs-check: skip: starts a long-running server -->
 ```sh

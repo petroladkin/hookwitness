@@ -50,6 +50,7 @@ var denied = []struct {
 	{netip.MustParsePrefix("fe80::/10"), "a link-local address (fe80::/10)"},
 	{netip.MustParsePrefix("fd00:ec2::254/128"), "a cloud metadata address (fd00:ec2::254)"},
 	{netip.MustParsePrefix("100.100.100.200/32"), "a cloud metadata address (100.100.100.200)"},
+	{netip.MustParsePrefix("168.63.129.16/32"), "a cloud platform address (Azure WireServer, 168.63.129.16)"},
 }
 
 // nat64 is the well-known NAT64 prefix: its addresses reach the IPv4
@@ -111,6 +112,14 @@ func parseRule(item string) (rule, error) {
 		if err != nil {
 			return rule{}, errors.New("not a CIDR network such as 198.51.100.0/24")
 		}
+		if pre.Addr().Is4In6() {
+			// The dialled address is unmapped before the check, so a mapped
+			// network means the IPv4 network it maps.
+			if pre.Bits() < 96 {
+				return rule{}, errors.New("an IPv4-mapped network needs at least /96")
+			}
+			pre = netip.PrefixFrom(pre.Addr().Unmap(), pre.Bits()-96)
+		}
 		return rule{prefix: pre.Masked()}, nil
 	}
 	host, port := item, 0
@@ -163,7 +172,13 @@ func (p Policy) String() string {
 // ParseTarget reads a target URL: http or https, a host, no user name or
 // password (they would be stored with the replay), no fragment.
 func ParseTarget(s string) (*url.URL, error) {
-	u, err := url.Parse(strings.TrimSpace(s))
+	s = strings.TrimSpace(s)
+	// url.Parse keeps a raw space in the query, which no request line may
+	// carry: the replay would fail only when written.
+	if strings.IndexFunc(s, func(r rune) bool { return r <= 0x20 || r == 0x7f }) >= 0 {
+		return nil, errors.New("the URL has a space or control character; encode it (%20)")
+	}
+	u, err := url.Parse(s)
 	if err != nil {
 		return nil, errors.New("the URL cannot be read: " + strings.TrimPrefix(err.Error(), "parse "))
 	}

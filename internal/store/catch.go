@@ -866,6 +866,26 @@ func (s *Store) Request(ctx context.Context, id int64) (Request, error) {
 	return r, err
 }
 
+// RequestHead is Request without the body: for a caller that decides
+// whether to load the body before holding its bytes.
+func (s *Store) RequestHead(ctx context.Context, id int64) (Request, error) {
+	r, err := scanRequest(s.db.QueryRowContext(ctx, `SELECT `+requestColumns+` FROM requests WHERE id = ?`, id), false)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Request{}, ErrNotFound
+	}
+	return r, err
+}
+
+// RequestBody is the stored body of request id (nil when none was kept).
+func (s *Store) RequestBody(ctx context.Context, id int64) ([]byte, error) {
+	var body []byte
+	err := s.db.QueryRowContext(ctx, `SELECT body FROM requests WHERE id = ?`, id).Scan(&body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return body, err
+}
+
 // DeliveryNumbers is Deliveries for every request of reqs (a page of a
 // register, the requests a live feed sends) in one query, by id.
 func (s *Store) DeliveryNumbers(ctx context.Context, reqs []Request) (map[int64]int, error) {
