@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"sync"
@@ -357,5 +359,21 @@ func TestSenderLeavingDoesNotCancel(t *testing.T) {
 	cancel()
 	if ex := s.Exchange(ctx, emulate.Forward{URL: "http://receiver.test/in"}, caught); ex.Kind != "" || ex.Answer.Status != 200 {
 		t.Fatalf("a gone caller: %q %d", ex.Kind, ex.Answer.Status)
+	}
+}
+
+// A receiver with a certificate the server does not trust fails the TLS
+// handshake, unless the forward accepts any certificate.
+func TestTLS(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	t.Cleanup(srv.Close)
+	log, _ := quiet()
+	s := New(log, Options{})
+	if ex := s.Exchange(context.Background(), emulate.Forward{URL: srv.URL + "/in"}, caught); ex.Kind != "tls" {
+		t.Fatalf("an untrusted certificate: %q %q", ex.Kind, ex.Row.Error)
+	}
+	ex := s.Exchange(context.Background(), emulate.Forward{URL: srv.URL + "/in", InsecureTLS: true}, caught)
+	if ex.Kind != "" || ex.Answer.Status != 204 || !strings.Contains(ex.Row.Options, `"insecure_tls":true`) {
+		t.Fatalf("any certificate accepted: %q %d", ex.Kind, ex.Answer.Status)
 	}
 }

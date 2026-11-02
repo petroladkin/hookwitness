@@ -199,3 +199,24 @@ func TestInterruptedForward(t *testing.T) {
 		t.Fatal("the request page")
 	}
 }
+
+// AC-8 for the UI's import: a user's import that brings a receiver is
+// refused and creates nothing; an admin's goes through.
+func TestImportReceiverNeedsAdmin(t *testing.T) {
+	e := newAccessEnv(t, "")
+	e.addUser(t, "ann", "admin", "admin-password-1234")
+	e.addUser(t, "bob", "user", "user-password-5678")
+	ann, bob := e.login(t, "ann", "admin-password-1234"), e.login(t, "bob", "user-password-5678")
+	file := `{"hookwitness":2,"endpoints":[{"path":"/live","default":{"status":200},"forward":{"url":"https://receiver.test/in"},"rules":[],"checks":[],"vars":[],"schemas":[],"secrets":[]}]}`
+	f := url.Values{"op": {"import"}, "text": {file}, "path_0": {"/live"}}
+	rec := e.form("/admin/import", bob, f)
+	if !strings.Contains(rec.Body.String(), "only an admin can change where requests are forwarded") {
+		t.Fatalf("a user's import: %d %q", rec.Code, rec.Body.String()[:min(300, rec.Body.Len())])
+	}
+	if _, _, _, err := e.st.EndpointByPath(context.Background(), "/live"); err != store.ErrNotFound {
+		t.Fatal("a refused import created the endpoint")
+	}
+	if rec := e.form("/admin/import", ann, f); rec.Code != http.StatusSeeOther {
+		t.Fatalf("an admin's import: %d", rec.Code)
+	}
+}
