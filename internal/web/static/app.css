@@ -97,6 +97,7 @@ code{font:400 .9em/1 var(--f-data)}
 .rec i{width:8px;height:8px;border-radius:50%;background:var(--muted)}
 .rec[data-state="live"] i{background:var(--alarm);animation:blink 1.6s steps(2,start) infinite}
 .rec[data-state="lost"]{color:var(--alarm)}
+.rec[data-state="lost"] i{background:transparent;box-shadow:inset 0 0 0 2px var(--alarm)}
 @keyframes blink{to{visibility:hidden}}
 .btn{display:inline-block;font:600 11px/1 var(--f-data);letter-spacing:.08em;text-transform:uppercase;color:var(--ink);background:transparent;border:1px solid var(--ink);padding:7px 10px;cursor:pointer;text-decoration:none;white-space:nowrap}
 .btn:hover{background:var(--ink);color:var(--paper)}
@@ -401,8 +402,10 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
   .mast .status{order:2;column-gap:10px}
   .mast .sections{order:3;flex-basis:100%}
   .mast .addr{display:none}
-  /* the live state as its dot alone; the word stays for screen readers */
+  /* the live state as its dot alone; the word stays for screen readers,
+     and shows when the feed is lost */
   .mast .rec>span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .mast .rec[data-state="lost"]>span{position:static;width:auto;height:auto;overflow:visible;clip-path:none}
 }
 /* A menu: a details element whose list drops below its summary. */
 .menu{position:relative}
