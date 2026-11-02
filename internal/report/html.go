@@ -188,7 +188,7 @@ const htmlSource = `{{define "head" -}}
 <table class="retries">
 <caption>Retries · the same body delivered more than once</caption>
 {{if .Retries}}<tr><th scope="col">Deliveries</th><th scope="col">Gaps</th><th scope="col">Body SHA-256</th></tr>
-{{range .Retries}}<tr><td>{{range $i, $n := .Nos}}{{if $i}}, {{end}}<a href="#r{{$n}}">#{{$n}}</a>{{end}}</td><td>{{range $i, $g := .Gaps}}{{if $i}}, {{end}}{{gap $g}}{{end}}</td><td><code title="{{.SHA256}}">{{short .SHA256}}</code></td></tr>
+{{range .Retries}}<tr><td>{{range $i, $n := .Nos}}{{if $i}}, {{end}}<a href="#r{{$n}}">#{{$n}}</a>{{end}}</td><td>{{range $i, $g := .Gaps}}{{if $i}}, {{end}}{{gap $g}}{{end}}</td><td>{{if .Event}}event <code>{{.Event}}</code>{{else}}<code title="{{.SHA256}}">{{short .SHA256}}</code>{{end}}</td></tr>
 {{end}}{{else}}<tr><td class="none">None.</td></tr>
 {{end}}</table>
 {{with .PrunedLine}}<p class="pruned"><b>Pruned</b> {{.}}</p>

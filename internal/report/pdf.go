@@ -400,7 +400,7 @@ func (p *pdfWriter) head(h *Head) error {
 			for _, g := range r.Gaps {
 				gaps = append(gaps, gap(g))
 			}
-			rows = append(rows, [2]string{strings.Join(nos, ", "), strings.Join(gaps, ", ") + "  sha256 " + r.SHA256[:16] + "…"})
+			rows = append(rows, [2]string{strings.Join(nos, ", "), strings.Join(gaps, ", ") + "  " + pdfRetryKey(r)})
 		}
 		for _, b := range p.kv(rows, nil) {
 			p.place(b)
@@ -956,4 +956,13 @@ func clip(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n-1]) + "…"
+}
+
+// pdfRetryKey names a retry group in the PDF: the event id, or the body's
+// digest cut short.
+func pdfRetryKey(r Retry) string {
+	if r.Event != "" {
+		return "event " + r.Event
+	}
+	return "sha256 " + r.SHA256[:16] + "…"
 }

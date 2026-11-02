@@ -672,8 +672,12 @@ func (h *Handler) row(req store.Request, n int, fresh bool) rowView {
 		Pinned:   req.Pinned,
 		Anomaly:  req.Anomaly,
 	}
-	if len(req.BodySHA256) > 0 {
-		v.Group = hex.EncodeToString(req.BodySHA256[:6])
+	// Retries group by the event when the endpoint names one, else by body.
+	if key, byEvent := req.RetryGroup(); len(key) > 0 {
+		v.Group = hex.EncodeToString(key[:6])
+		if byEvent {
+			v.Delivery = req.Attempt
+		}
 	}
 	if req.EndpointID == store.Unmatched {
 		v.Detail = req.Path
@@ -739,6 +743,7 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		TooLarge: req.TooLarge,
 		Status:   req.Status,
 		Delivery: n,
+		Event:    req.Event,
 		Headers:  req.Headers,
 		Query:    parseQuery(req.RawQuery),
 		Body:     viewBody(req.Body),
@@ -748,6 +753,9 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		Limit:    h.limit,
 		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
 		Verdicts: parseVerdicts(req.Verdicts),
+	}
+	if req.Event != nil && *req.Event != "" {
+		v.Delivery = req.Attempt
 	}
 	if bad := badPaths(v.Verdicts); len(bad) > 0 && v.Body.Kind == bodyJSON {
 		markBad(v.Body.JSON, bad)

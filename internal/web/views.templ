@@ -884,7 +884,11 @@ templ exhibit(x exhibitView) {
 				<span>from <b>{ host(x.From) }</b></span>
 				<span>body <b>{ size(x.Size) }</b></span>
 				<span>{ x.Proto }</span>
-				if x.Delivery > 1 {
+				if x.Event != nil && *x.Event != "" {
+					<span>
+						attempt <b>{ strconv.Itoa(x.Delivery) }</b> of event <code>{ *x.Event }</code>
+					</span>
+				} else if x.Delivery > 1 {
 					<span>delivery <b>{ strconv.Itoa(x.Delivery) }</b> of this body</span>
 				}
 			</div>

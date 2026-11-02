@@ -76,7 +76,7 @@ func (m *mdWriter) head(h *Head) error {
 			for _, g := range r.Gaps {
 				gaps = append(gaps, gap(g))
 			}
-			m.p("| ", strings.Join(nos, ", "), " | ", strings.Join(gaps, ", "), " | ", mdCode(r.SHA256[:16]+"…"), " |\n")
+			m.p("| ", strings.Join(nos, ", "), " | ", strings.Join(gaps, ", "), " | ", retryKey(r, mdCode), " |\n")
 		}
 		m.p("\n")
 	}

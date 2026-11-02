@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -121,4 +122,14 @@ func relate(ctx context.Context, tx *sql.Tx, endpoint, id int64, bodySHA []byte,
 		return fmt.Errorf("delivery verdicts: %w", err)
 	}
 	return nil
+}
+
+// RetryGroup is what a request's retries are grouped by: its event when one
+// was recorded (byEvent), else its body's digest; nil when neither.
+func (r Request) RetryGroup() (key []byte, byEvent bool) {
+	if r.Event != nil && *r.Event != "" {
+		h := sha256.Sum256([]byte("event\x00" + *r.Event))
+		return h[:], true
+	}
+	return r.BodySHA256, false
 }
