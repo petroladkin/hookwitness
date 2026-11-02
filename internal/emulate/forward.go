@@ -52,7 +52,6 @@ const (
 	FailUpgrade  = "upgrade"   // the receiver switched protocols (101): no tunnels
 	FailBusy     = "busy"      // no forward slot or answer budget was free
 	FailLoop     = "loop"
-	FailStopped  = "stopped" // the server stopped before the answer ended
 )
 
 // ForwardNote is the receiver's side of a request, in its outcome; the
@@ -60,7 +59,7 @@ const (
 type ForwardNote struct {
 	Target       string `json:"target"`               // origin and path at the time
 	Status       int    `json:"status,omitempty"`     // the receiver's; 0 when none
-	ErrorKind    string `json:"error_kind,omitempty"` // dial, tls, timeout, reset, write, answer, refused, too_large, upgrade, busy, stopped
+	ErrorKind    string `json:"error_kind,omitempty"` // dial, tls, timeout, reset, write, answer, refused, too_large, upgrade, busy, loop
 	Fallback     bool   `json:"fallback,omitempty"`   // the sender got the failure answer
 	SenderLeftMs int64  `json:"sender_left_ms,omitempty"`
 	Ms           int64  `json:"ms"`                // the exchange's duration
@@ -178,8 +177,6 @@ func FailureWords(kind string) string {
 		return "too many forwards at once"
 	case FailLoop:
 		return "the request came back on the server's own forward"
-	case FailStopped:
-		return "the server stopped before the answer ended"
 	}
 	return "the forward failed (" + kind + ")"
 }

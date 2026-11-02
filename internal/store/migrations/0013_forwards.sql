@@ -20,6 +20,6 @@ CREATE TABLE forwards (
     truncated   INTEGER NOT NULL DEFAULT 0,
     duration_ms INTEGER NOT NULL DEFAULT 0,
     ttfb_ms     INTEGER NOT NULL DEFAULT 0,
-    error_kind  TEXT    NOT NULL DEFAULT '',   -- dial, tls, timeout, reset, write, answer, refused, too_large, upgrade, busy, stopped
+    error_kind  TEXT    NOT NULL DEFAULT '',   -- dial, tls, timeout, reset, write, answer, refused, too_large, upgrade, busy
     error       TEXT    NOT NULL DEFAULT ''
 ) STRICT;
