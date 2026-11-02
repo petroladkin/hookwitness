@@ -140,6 +140,31 @@ page), see [Users, login and tokens](access.md#tokens-for-scripts-and-agents).
 `401 invalid_token` means the token is wrong or was revoked, or its owner
 was removed.
 
+## Signing in with a provider fails
+
+The login page names the reason, and the server log has one line per
+refusal (`oidc sign-in refused provider=… reason=…`):
+
+- **The provider says the redirect URI does not match.** Register exactly
+  the `redirect_uri` the start log prints (`oidc provider configured`); it
+  is built on `-admin-url`, not on the address you opened the admin by.
+- **The server will not start: OIDC needs the admin's address.** Set
+  `-admin-url` (`HOOKWITNESS_ADMIN_URL`) to the admin's external address.
+- **"… cannot be reached right now"** (`unreachable`): the server cannot
+  fetch the provider's discovery document or token endpoint. Check the
+  issuer: it must be exactly what the provider's
+  `/.well-known/openid-configuration` states, trailing slash included.
+- **"… could not be verified"** (`invalid_token`) with `expired` or `not
+  valid yet` in the log: the server's clock is off. Keep it synchronised
+  (NTP); a token's expiry has no grace period.
+- **"… belongs to an account already signed in with another … identity"**
+  (`linked_elsewhere`): a new app registration (Entra) or a new client gives
+  people new identities. Unlink the old one on the Users page, then sign in
+  again.
+- **"There is no account here for …"** (`no_account`): add a user with
+  that email, or allow its domain for that provider.
+- **Behind a proxy**, forward `<prefix>/oidc/` like the rest of the admin.
+
 ## Nobody can log in any more
 
 On the server, `hookwitness user passwd <name>` sets a new password and

@@ -165,6 +165,95 @@ start and has the user role. Setting it closes the API and MCP even while
 there are no users (only the token gets in); the web UI then stays open,
 with the "no login" line, until the first user exists.
 
+## Signing in with Google, Microsoft Entra ID or another provider
+
+People can sign in through an OpenID Connect provider (Google Workspace,
+Microsoft Entra ID, Keycloak, Authentik, GitLab, any provider with
+discovery), next to their passwords.
+
+**Who gets in.** Only people an admin added, by default: give them an email
+on the Users page (or `hookwitness user add pat -email pat@example.com
+-no-password`). At their first sign-in the provider's verified address
+links them to that user; from then on the provider's identity (its issuer
+and subject) decides, so a changed address at the provider stays the same
+account. A provider may also let anyone of your email domains in
+(`_ALLOWED_DOMAINS`): a new address of such a domain becomes a user with
+the role `user`, named after the address, without a password. Roles stay
+local: an admin changes them on the Users page. Provider sign-in starts only
+once a first admin exists.
+
+Check emails as you type them: a provider that confirms an address hands
+the account with that address to whoever owns it. Allow only domains you
+control (never `gmail.com`), and only at providers that verify addresses.
+
+**Settings.** One name per provider in `HOOKWITNESS_OIDC_PROVIDERS`, then
+for each name (upper-cased) its issuer, client id and a file holding the
+client secret; these are environment variables only:
+
+<!-- docs-check: skip: needs an OpenID Connect provider -->
+```sh
+docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
+  -v ./google-secret.txt:/run/secrets/google:ro \
+  -e HOOKWITNESS_ADMIN_URL=https://hooks.example.com \
+  -e HOOKWITNESS_OIDC_PROVIDERS=google \
+  -e HOOKWITNESS_OIDC_GOOGLE_ISSUER=https://accounts.google.com \
+  -e HOOKWITNESS_OIDC_GOOGLE_CLIENT_ID=1234-abc.apps.googleusercontent.com \
+  -e HOOKWITNESS_OIDC_GOOGLE_CLIENT_SECRET_FILE=/run/secrets/google \
+  -e HOOKWITNESS_OIDC_GOOGLE_ALLOWED_DOMAINS=example.com \
+  ghcr.io/petroladkin/hookwitness:0.2
+```
+
+| Variable | Meaning |
+|---|---|
+| `HOOKWITNESS_OIDC_PROVIDERS` | names, comma-separated, each `a-z0-9`, e.g. `google,entra` |
+| `HOOKWITNESS_OIDC_<NAME>_ISSUER` | the issuer, exactly as the provider's discovery document states it (`https://`; `http://` only on a loopback host) |
+| `HOOKWITNESS_OIDC_<NAME>_CLIENT_ID` | the client id the provider gave |
+| `HOOKWITNESS_OIDC_<NAME>_CLIENT_SECRET_FILE` | a file holding the client secret, one line; read once at start, never stored or logged |
+| `HOOKWITNESS_OIDC_<NAME>_LABEL` | the button's text after "Sign in with" (default: the name, capitalised) |
+| `HOOKWITNESS_OIDC_<NAME>_ALLOWED_DOMAINS` | email domains whose new people become users, comma-separated; none: only users an admin added |
+
+**The redirect URI.** The provider sends people back to
+`<admin URL><prefix>/oidc/<name>/callback`. The admin URL is `-admin-url`
+(`HOOKWITNESS_ADMIN_URL`), or `-public-url` when the admin shares its port
+and that URL has no path; the server refuses to start with providers and
+neither. The start log prints each provider's exact redirect URI: paste it
+into the provider's console. A sign-in starts on that address: a button
+pressed on another address of the server sends you there first.
+
+**Google.** In the Google Cloud console, create an OAuth client of type
+*Web application* with the redirect URI from the start log; for a
+Workspace, set the consent screen to *Internal*, so that only your
+organisation's accounts can sign in. Issuer: `https://accounts.google.com`.
+
+**Microsoft Entra ID.** Register an application for *this organisational
+directory only* (single tenant), add a *Web* redirect URI from the start
+log, make a client secret, and in *Token configuration* add the optional
+claims `email` and `xms_edov` (Entra sends no `email_verified`; `xms_edov`
+says the domain owns the address). Issuer:
+`https://login.microsoftonline.com/<tenant id>/v2.0`, never `common`. A new
+app registration gives everyone new identities: unlink the old ones first,
+or their sign-ins are refused as linked elsewhere.
+
+**Another provider.** Keycloak (`https://<host>/realms/<realm>`), Authentik
+(`https://<host>/application/o/<slug>/`), GitLab (`https://gitlab.com`) or
+any provider with discovery: a confidential client with the authorization
+code flow and PKCE, the scopes `openid email profile`, and the redirect URI
+from the start log. Configure only providers that confirm email addresses.
+
+**Users without a password** sign in through a provider only; the Users
+page says so. They can set a first password on their account page within
+10 minutes of signing in; an admin can set one any time, and so can
+`hookwitness user passwd` on the server. A user's identities show on their
+account page and on the Users page; **Unlink** removes one and ends that
+user's logins (nobody unlinks their own last way in).
+
+**Logging out** ends the login here only: signing in again may pass
+through the provider without a prompt. Someone disabled at the provider
+keeps an open login until it ends (a day idle, a week at most): remove or
+unlink them here to end it now. When a provider is down, passwords still
+work; keep the first admin's password for that (`HOOKWITNESS_ADMIN_USER`
+with `HOOKWITNESS_ADMIN_EMAIL` gives it an email too).
+
 ## Behind a reverse proxy
 
 - The login cookie is marked *Secure* when the browser reached the admin
@@ -198,8 +287,11 @@ hookwitness user list
 does (`-db` / `HOOKWITNESS_DB`, `HOOKWITNESS_SECRET_KEY` or the `.key` file
 next to the database). Its exit codes, for scripts: `0` done, `1` failed
 (database, key), `2` usage (a bad name, a short password), `3` no such user,
-`4` refused (the name is taken, or the last admin). `user add` without
-`--admin` cannot make the first user.
+`4` refused (the name or the email is taken, or the last admin). `user add`
+without `--admin` cannot make the first user. With providers: `user add
+<name> -email <address> [-no-password]`, `user email <name> [<address>]`
+(none clears it), `user unlink <name> <provider or issuer>`; `user list`
+shows each user's email and ways in.
 
 ## What is never shown
 
@@ -211,8 +303,10 @@ API answers or pages; the logs name who made each change (`user=ann`, or
 Cookies ignore ports, so a browser logged in to an admin on another port of
 the same host sends its login cookie to catch paths too. Hookwitness never
 keeps it: in a caught request's `Cookie` header the value of
-`hookwitness_session` reads `[hookwitness session]`, and nothing else is
-changed.
+`hookwitness_session` (and of a provider sign-in's `hookwitness_oidc`) reads
+`[hookwitness session]`, and nothing else is changed. Nothing a provider
+hands out (codes, tokens) is kept or logged; a provider's client secret is
+read from its file and kept in memory only.
 
 ## Turning login off again
 

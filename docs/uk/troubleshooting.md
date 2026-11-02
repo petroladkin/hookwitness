@@ -145,6 +145,31 @@ Hookwitness уже читав стільки байтів тіл запитів,
 `401 invalid_token` означає, що токен хибний чи відкликаний або його
 власника видалено.
 
+## Вхід через провайдера не вдається
+
+Сторінка входу називає причину, а лог сервера має по рядку на кожну відмову
+(`oidc sign-in refused provider=… reason=…`):
+
+- **Провайдер каже, що redirect URI не збігається.** Зареєструйте точно той
+  `redirect_uri`, що друкує лог старту (`oidc provider configured`); він
+  побудований на `-admin-url`, а не на адресі, якою ви відкрили адмінку.
+- **Сервер не стартує: OIDC needs the admin's address.** Задайте
+  `-admin-url` (`HOOKWITNESS_ADMIN_URL`) — зовнішню адресу адмінки.
+- **"… cannot be reached right now"** (`unreachable`): сервер не може взяти
+  документ discovery чи token endpoint провайдера. Перевірте issuer: він має
+  бути точно таким, як у `/.well-known/openid-configuration` провайдера,
+  разом із кінцевою скісною рискою.
+- **"… could not be verified"** (`invalid_token`) з `expired` чи `not valid
+  yet` у лозі: годинник сервера збився. Тримайте його синхронізованим (NTP);
+  строк дії токена не має запасу.
+- **"… belongs to an account already signed in with another … identity"**
+  (`linked_elsewhere`): нова реєстрація застосунку (Entra) чи новий клієнт
+  дають людям нові ідентичності. Відв'яжіть стару на сторінці Users і увійдіть
+  знову.
+- **"There is no account here for …"** (`no_account`): додайте користувача з
+  цим email або дозвольте його домен для цього провайдера.
+- **За проксі** пересилайте `<prefix>/oidc/` так само, як решту адмінки.
+
 ## Ніхто більше не може увійти
 
 На сервері `hookwitness user passwd <name>` задає новий пароль, а

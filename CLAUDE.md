@@ -78,6 +78,16 @@ per /64; `-trusted-proxies`); a revoked token (or its user removed or
 given another role) ends the live feeds, MCP waits and MCP sessions it
 opened; token and user management needs a session; the
 catcher replaces the session cookie's value in recorded `Cookie` headers.
+Sign-in through OpenID Connect providers (Google, Entra ID, any provider
+with discovery; `-oidc-providers` + `HOOKWITNESS_OIDC_<NAME>_*` env, the
+client secret from a file, `-admin-url` for the redirect URI): code flow
+with PKCE, state and nonce kept server-side, the ID token verified
+(go-oidc); a pre-created user links by a verified email once (then by
+issuer + subject), allowed domains per provider create `user`-role users
+without a password; provider sign-in is off until a first admin exists;
+users have an optional email, may have no password (a first one from a
+sign-in under 10 minutes old), identities are unlinked by an admin or by
+the user (never their own last way in), which ends their logins.
 Replay: a caught request whose body was kept whole is sent again, byte for
 byte (Host replaced in place unless kept), to a URL from the UI, the API
 (`POST <prefix>/api/v1/requests/{id}/replays`) or MCP (`replay_request`), by an admin once login is on;
@@ -139,9 +149,20 @@ that makes it false.
   logs), the `Authenticator` over the store and `internal/secret`
   (`StillValid`: a token's row and its owner's role, for streams and waits
   opened earlier; `OnChange`/`Changed`: told when this process revokes a
-  token, removes a user or changes a role).
+  token, removes a user or changes a role); emails (`CheckEmail`,
+  `NameFromEmail`), the provider sign-in's flow cookie (`hookwitness_oidc`),
+  a login of a user without a password checked against a dummy record.
+- `internal/oidc` — OpenID Connect providers (coreos/go-oidc,
+  x/oauth2): lazy discovery (retried after 30 s, refreshed after 24 h), the
+  flows in progress in memory (single use, 10 minutes, at most 10 000),
+  `Exchange` (the code with PKCE, the ID token's signature, iss, aud, exp,
+  nonce, azp; `email_verified` or Entra's `xms_edov`); `oidctest` is a test
+  provider (forged tokens, rotation, outages) that `scripts/oidcmock` serves
+  for scripts; neither is in the server's package graph (a repoguard test).
 - `internal/config` — `serve` settings from flags and `HOOKWITNESS_*` env
-  (the admin's own address and the public URL validated with the rest).
+  (the admin's own address and the public URL validated with the rest;
+  OpenID Connect providers from `HOOKWITNESS_OIDC_*`, every error naming
+  its variable; `AdminOrigin`, `RedirectURI`).
 - `internal/store` — sqlite (modernc.org/sqlite, no cgo): pragmas, embedded
   migrations in `internal/store/migrations/NNNN_name.sql`, applied in order and
   recorded in `schema_migrations`; a newer database schema is refused. New
@@ -153,7 +174,8 @@ that makes it false.
   empty with mode 0600, the database's mode given when complete); a new
   database file is created 0600, an existing one keeps its mode.
   Users, sessions and tokens (`access.go`; the last admin guarded inside the
-  write transaction).
+  write transaction); emails and provider identities (`identity.go`:
+  `SignIn` links, creates or refuses in one write transaction; `Unlink`).
   The size limit (`evict.go`: `Evict` in batches under the writer's lock,
   a pass bounded by the requests it started with, moved up a few times
   when requests that arrived meanwhile hold work of an earlier step;
@@ -394,7 +416,7 @@ that makes it false.
 
 - In the first release: the features above.
 - Out of scope: Kafka / MQTT / gRPC, roles beyond user and admin
-  (per-endpoint permissions, RBAC), SSO/OIDC, a hosted cloud version.
+  (per-endpoint permissions, RBAC), SAML, a hosted cloud version.
 
 ## Stack
 

@@ -569,16 +569,19 @@ admin.
 
 | Route | Does |
 |---|---|
-| `GET /me` | who the caller is: `{"login":true,"name","role","via"}` (`via`: `session`, `token`, `machine token`), or `{"login":false}` while login is off |
-| `PUT /me/password` `{"current","new"}` | changes your password (at least 12 characters); your other logins end. `204`; `422` (field `current` or `new`) |
+| `GET /me` | who the caller is: `{"login":true,"name","role","via","email","password","identities"}` (`via`: `session`, `token`, `machine token`; `email` or `null`; `password`: whether one is set; `identities`: the providers linked, each `provider`, `label`, `issuer`, `email`, `linked_at`, `last_login_at`), or `{"login":false}` while login is off |
+| `PUT /me/password` `{"current","new"}` | changes your password (at least 12 characters); your other logins end. `204`; `422` (field `current` or `new`). Without a password yet (you sign in through a provider), leave `current` out: allowed within 10 minutes of signing in, else `422 reauth` |
+| `DELETE /me/identities/{provider}` | unlinks one of your provider identities; all your logins end. `204`; `409 last_way_in` when it is your only way in; `?issuer=` for a provider no longer configured |
 | `GET /me/tokens` | your tokens: `id`, `name`, `shown` (`hkw_<id>_…`), `created_at`, `last_used_at`; never the value |
 | `POST /me/tokens` `{"name"}` | makes a token; the answer's `token` is the value, **shown this once**. `201`; `409 exists` for a name you use |
 | `DELETE /me/tokens/{id}` | revokes one of yours: refused from its next request. `204` |
-| `GET /users` | users with `name`, `role`, `created_at`, `tokens` (admins) |
-| `POST /users` `{"name","role","password"}` | adds a user (`role` `user` by default). `201`; `409 exists`; `422` naming the field |
-| `PATCH /users/{name}` `{"role"?, "password"?}` | changes a role or sets a password; either ends that user's logins. `409 last_admin` for the last admin, `409 self_demotion` when you would make yourself a user |
+| `GET /users` | users with `name`, `role`, `email`, `password`, `identities`, `created_at`, `tokens` (admins) |
+| `POST /users` `{"name","role","password"?,"email"?}` | adds a user (`role` `user` by default); without a password, an email is needed (they sign in through a provider), except for the first user. `201`; `409 exists`, `409 email_taken`; `422` naming the field |
+| `PATCH /users/{name}` `{"role"?, "password"?, "email"?}` | changes a role, sets a password, or sets an email (`null` clears it); a role or a password ends that user's logins. `409 last_admin` for the last admin, `409 self_demotion` when you would make yourself a user, `409 email_taken` |
+| `DELETE /users/{name}/identities/{provider}` | unlinks a user's provider identity; their logins end. `204`; `409 last_way_in` for your own only way in; `?issuer=` for a provider no longer configured |
 | `DELETE /users/{name}` | removes a user with their tokens. `204`; `409 last_admin`, `409 self_removal` when it is you |
 | `GET /tokens`, `DELETE /tokens/{id}` | everyone's tokens, with their `owner`; revoke any (admins) |
+| `GET /login/providers` | open, without a login: the providers to sign in with, `[{"name","label"}]` ([Signing in with a provider](access.md#signing-in-with-google-microsoft-entra-id-or-another-provider)) |
 
 ### OpenAPI
 
