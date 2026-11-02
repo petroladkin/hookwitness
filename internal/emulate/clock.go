@@ -178,9 +178,13 @@ func (c Config) Decide(in ChooseIn) (Choice, string) {
 		st.Rules = rules
 	}
 	ch := Choice{Do: ActReply, Reply: c.Default, Elapsed: elapsed}
+	if c.Forward != nil {
+		ch.Do, ch.Forward = ActForward, true
+	}
 	for i, r := range c.Rules {
 		if holds[i] {
-			ch = Choice{Rule: i + 1, Label: r.When.Label(), Do: r.Do, Reply: r.Reply, Elapsed: elapsed, BlockUntil: block[i]}
+			ch = Choice{Rule: i + 1, Label: r.When.Label(), Do: r.Do, Reply: r.Reply, Elapsed: elapsed, BlockUntil: block[i],
+				Forward: r.Forward && c.Forward != nil}
 			if until[i] > 0 {
 				ch.RetryAfter = int(math.Ceil(until[i].Seconds()))
 				ch.RetryAfter = max(ch.RetryAfter, 1)

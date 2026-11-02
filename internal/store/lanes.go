@@ -14,10 +14,14 @@ import (
 // migration 0010 classified the rows of older versions with it): not
 // answered 2xx (no reply, a refusal, a render error, too large, busy), a
 // failed verdict, or a signature another kept request of the endpoint
-// carried (a redelivery: both deliveries are anomalies).
+// carried (a redelivery: both deliveries are anomalies). On an endpoint
+// that forwards, also a request the receiver missed: kept from it by a
+// rule, or answered with the default reply because the receiver failed.
 const anomalyExpr = `(too_large
-	OR CASE WHEN json_valid(outcome) THEN json_extract(outcome, '$.action') IS NOT 'reply'
+	OR CASE WHEN json_valid(outcome) THEN json_extract(outcome, '$.action') NOT IN ('reply', 'forward')
 		OR ifnull(json_extract(outcome, '$.status'), 0) NOT BETWEEN 200 AND 299
+		OR ifnull(json_extract(outcome, '$.not_forwarded'), 0) = 1
+		OR ifnull(json_extract(outcome, '$.forward.fallback'), 0) = 1
 		ELSE status NOT BETWEEN 200 AND 299 END
 	OR verdict = 'fail'
 	OR EXISTS (SELECT 1 FROM signature_seen s JOIN signature_seen t
