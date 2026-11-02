@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -387,5 +388,32 @@ func TestPrunedAndPinned(t *testing.T) {
 	}
 	if prunedLine(nil, time.Time{}) != "" || prunedLine(&Pruned{Pinned: 3}, time.Time{}) != "" {
 		t.Error("a line without anything pruned")
+	}
+}
+
+// TestRetriesByEvent: with an event recorded, the retry groups follow it,
+// not the body (a sender that changes a field on every attempt).
+func TestRetriesByEvent(t *testing.T) {
+	rs := fixture(t)
+	ev := "evt_7"
+	for i := range rs[:2] {
+		rs[i].Event, rs[i].Attempt = &ev, i+1
+		rs[i].BodySHA256 = []byte(fmt.Sprintf("%032d", i)) // different bodies
+	}
+	md := render(t, Markdown, goldenOptions(), rs)
+	if !strings.Contains(md, "event `evt_7`") {
+		t.Fatalf("no retry group by event:\n%s", md)
+	}
+	html := render(t, HTML, goldenOptions(), rs)
+	if !strings.Contains(html, "event <code>evt_7</code>") {
+		t.Fatal("HTML: no retry group by event")
+	}
+	// The PDF's text is glyph-encoded: its label comes from the same
+	// summary, through pdfRetryKey.
+	if pdf := render(t, PDF, goldenOptions(), rs); len(pdf) < 1000 {
+		t.Fatalf("PDF of %d bytes", len(pdf))
+	}
+	if got := pdfRetryKey(Retry{Event: "evt_7", SHA256: strings.Repeat("ab", 32)}); got != "event evt_7" {
+		t.Fatalf("PDF retry label %q", got)
 	}
 }

@@ -226,6 +226,16 @@ The document (fields left out take their zero value; `default.status` 0 means 20
   when absent), refer to each other by name (`{"$ref": "Address"}`), are never
   fetched from anywhere, and assert `format`. An invalid schema is a `422`
   with field `schemas`.
+- **Delivery** checks judge a request against the endpoint's earlier kept
+  requests and never refuse ([guide](delivery.md)): `{"kind":
+  "duplicates"}` (a repeat of an event after a 2xx answer fails), `{"kind":
+  "order", "order": {"from": "body", "key": "/created", "as": "number" |
+  "time"}, "group": {"from", "key"}}` and `{"kind": "backoff", "first_s": 5,
+  "factor": 2, "max_s": 3600, "max_attempts": 8, "tolerance_pct": 25,
+  "retry_after": true}`. The behaviour's `event`, `{"from": "header", "key":
+  "X-GitHub-Delivery"}`, names where the sender puts an event's id; without
+  it attempts are counted per body. Requests then carry `event` and
+  `attempt`.
 
 - Templates: `{{.Header "X-Id"}}`, `{{.Query "x"}}`, `{{.JSON "a.b.0"}}`,
   `{{.Var.NAME}}`, `{{.N}}`, `{{.Method}}`, `{{.Path}}`, `{{.Body}}`.
@@ -302,6 +312,7 @@ $ curl -X PUT $API/endpoints/1/secrets/ORDERS_PASSWORD -H 'Content-Type: applica
 | `GET /unmatched/requests` | the Unmatched register (requests to paths no endpoint has), with the same parameters; read-only |
 | `GET /unmatched`, `PATCH /unmatched` | the Unmatched register's `requests`, `last_request_at`, `retention`, `retention_effective`, `kept`, `pruned`; PATCH sets its `retention` (normal only: it has one lane) |
 | `…/requests?pinned=true`, `?anomaly=true` | only pinned requests, only anomalies |
+| `…/requests?event=<id>` | every kept attempt of an event (the endpoint's event source, below) |
 | `PUT /requests/{id}/pin`, `DELETE /requests/{id}/pin` | pin a request (retention never prunes it; clearing the register still does) or unpin it; send `Content-Type: application/json` (no body needed). `204` |
 | `GET /requests/{id}` | one request in full, Unmatched ones too |
 | `GET /requests/{id}/body` | the exact body as received, with the sender's `Content-Type`, always as a download (`attachment`, `nosniff`, a `sandbox` CSP): whatever a sender sent never runs as a page; `404 not_kept` when it was over the limit |
@@ -311,7 +322,7 @@ A list item:
 
 ```json
 {"id":1,"endpoint_id":1,"no":1,"received_at":"2026-10-12T17:28:07.433Z","method":"POST","path":"/orders/events",
- "query":"","status":200,"verdict":"pass","body_size":28,"body_kept":true,"content_type":"application/json","replays":0,"pinned":false,"anomaly":false}
+ "query":"","status":200,"verdict":"pass","body_size":28,"body_kept":true,"content_type":"application/json","replays":0,"pinned":false,"anomaly":false,"event":null,"attempt":null}
 ```
 
 - `status` is what hookwitness answered (`0` while a timeout still holds it).

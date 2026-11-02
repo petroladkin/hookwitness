@@ -61,6 +61,7 @@ type Filters struct {
 	JSON    []string `json:"json,omitempty" jsonschema:"only requests whose JSON body has these values, each as pointer=value, e.g. /type=order.paid; all must match"`
 	Pinned  bool     `json:"pinned,omitempty" jsonschema:"only pinned requests (never pruned by retention)"`
 	Anomaly bool     `json:"anomaly,omitempty" jsonschema:"only anomalies: not answered 2xx, a failed verdict, or a redelivery"`
+	Event   string   `json:"event,omitempty" jsonschema:"only the attempts of this event id (the endpoint's event source)"`
 }
 
 func (f Filters) query(q url.Values) url.Values {
@@ -75,6 +76,9 @@ func (f Filters) query(q url.Values) url.Values {
 	}
 	for _, j := range f.JSON {
 		q.Add("json", j)
+	}
+	if f.Event != "" {
+		q.Set("event", f.Event)
 	}
 	if f.Pinned {
 		q.Set("pinned", "true")
@@ -97,6 +101,9 @@ func (f Filters) String() string {
 		parts = append(parts, "text="+strconv.Quote(f.Text))
 	}
 	parts = append(parts, f.JSON...)
+	if f.Event != "" {
+		parts = append(parts, "event="+f.Event)
+	}
 	if f.Pinned {
 		parts = append(parts, "pinned")
 	}
@@ -126,7 +133,10 @@ func (s *tools) register(srv *sdk.Server) {
 			"default: the reply {status, headers:[{name,value}], body (a Go template) or body_base64 (exact bytes), delay_ms, jitter_ms}. " +
 			"rules: in order, the first whose condition holds decides: {when:{kind: every|first|random, n | percent}, do: reply|timeout|drop, reply}. " +
 			"checks: run first: a required header {header, match: present|equals|regex, value}, an authorization check " +
-			"{kind: github|stripe|standard|hmac|bearer|basic, secret, user (basic), enforce} or a JSON Schema check {kind: schema, schema | schemas | select}. " +
+			"{kind: github|stripe|standard|hmac|bearer|basic, secret, user (basic), enforce}, a JSON Schema check {kind: schema, schema | schemas | select}, " +
+			"or a delivery check, judged against the earlier requests: {kind: duplicates} (a repeat of an event after a 2xx answer fails), " +
+			"{kind: order, order: {from, key, as: number|time}, group} or {kind: backoff, first_s, factor, max_s, max_attempts, tolerance_pct, retry_after}. " +
+			"event: {from: header|body, key}, where the sender puts an event's id (attempts and retry groups follow it). " +
 			"vars: [{name, value}] for templates. schemas: [{name, text}] JSON Schemas. Secrets are set with set_secret."},
 		s.configureEndpoint)
 	sdk.AddTool(srv, &sdk.Tool{Name: "set_secret", Annotations: idempotent,
@@ -383,6 +393,7 @@ type ConfigureIn struct {
 	Checks   any    `json:"checks,omitempty" jsonschema:"the checks, in order (replaces all checks)"`
 	Vars     any    `json:"vars,omitempty" jsonschema:"template variables [{name, value}] (replaces all)"`
 	Schemas  any    `json:"schemas,omitempty" jsonschema:"JSON Schemas [{name, text}] (replaces all)"`
+	Event    any    `json:"event,omitempty" jsonschema:"where the sender puts an event's id, the same on every retry: {from: header|body, key}, e.g. {from: header, key: X-GitHub-Delivery} or {from: body, key: /id}"`
 }
 
 func (s *tools) configureEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in ConfigureIn) (*sdk.CallToolResult, map[string]any, error) {
@@ -390,15 +401,15 @@ func (s *tools) configureEndpoint(ctx context.Context, _ *sdk.CallToolRequest, i
 	if err != nil {
 		return nil, nil, err
 	}
-	parts := map[string]any{"default": in.Default, "rules": in.Rules, "checks": in.Checks, "vars": in.Vars, "schemas": in.Schemas}
+	parts := map[string]any{"default": in.Default, "rules": in.Rules, "checks": in.Checks, "vars": in.Vars, "schemas": in.Schemas, "event": in.Event}
 	var changed []string
-	for _, k := range []string{"default", "rules", "checks", "vars", "schemas"} {
+	for _, k := range []string{"default", "rules", "checks", "vars", "schemas", "event"} {
 		if parts[k] != nil {
 			changed = append(changed, k)
 		}
 	}
 	if len(changed) == 0 {
-		return nil, nil, errors.New("give at least one of default, rules, checks, vars, schemas")
+		return nil, nil, errors.New("give at least one of default, rules, checks, vars, schemas, event")
 	}
 	// Read, change the parts given, write with If-Match; a change made in
 	// between (the UI, another agent) is retried once.

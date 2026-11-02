@@ -272,7 +272,10 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
 .card:has(select[name=kind] option[value=hmac]:checked) .kinded:not(.k-hmac),
 .card:has(select[name=kind] option[value=bearer]:checked) .kinded:not(.k-bearer),
 .card:has(select[name=kind] option[value=basic]:checked) .kinded:not(.k-basic),
-.card:has(select[name=kind] option[value=schema]:checked) .kinded:not(.k-schema){display:none}
+.card:has(select[name=kind] option[value=schema]:checked) .kinded:not(.k-schema),
+.card:has(select[name=kind] option[value=duplicates]:checked) .kinded:not(.k-duplicates),
+.card:has(select[name=kind] option[value=order]:checked) .kinded:not(.k-order),
+.card:has(select[name=kind] option[value=backoff]:checked) .kinded:not(.k-backoff){display:none}
 .reply-fields{display:flex;flex-direction:column;gap:8px}
 /* The report dialog shows the fields of the chosen requests. */
 .grid2.even{grid-template-columns:repeat(2,minmax(0,1fr))}

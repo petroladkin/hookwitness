@@ -228,7 +228,7 @@ func TestClassChangeMovesLane(t *testing.T) {
 		t.Fatal(err)
 	}
 	failing := add(200)
-	if err := s.SetVerdicts(ctx, failing.ID, "fail", "[]", nil, nil); err != nil {
+	if err := s.SetVerdicts(ctx, failing.ID, "fail", "[]", nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	signed := add(200, Signature{1, "d-x"})
@@ -707,5 +707,40 @@ func TestLaneCountsExact(t *testing.T) {
 	s.db.QueryRowContext(ctx, `SELECT count(*) FROM lane_counts WHERE reg = ?`, a.ID).Scan(&left)
 	if left != 0 {
 		t.Errorf("a deleted endpoint left %d counts", left)
+	}
+}
+
+// TestDeliveryLookupsUseIndexes: the delivery checks' lookups search an
+// index, so a catch stays O(log n) in the register's size.
+func TestDeliveryLookupsUseIndexes(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	for q, args := range map[string][]any{
+		`SELECT count(*) FROM event_seen WHERE endpoint_id = ? AND event = ? AND request_id < ?`: {int64(1), "e", int64(9)},
+		`SELECT r.id, r.no, r.received_at, r.status, r.outcome FROM event_seen e JOIN requests r ON r.id = e.request_id
+			WHERE e.endpoint_id = ? AND e.event = ? AND e.request_id < ? ORDER BY e.request_id DESC LIMIT 1`: {int64(1), "e", int64(9)},
+		`SELECT id, no, received_at, status, outcome FROM requests WHERE endpoint_id = ? AND body_sha256 = ? AND id < ? ORDER BY id DESC LIMIT 1`: {int64(1), []byte{1}, int64(9)},
+		`SELECT e.order_value, r.no FROM event_seen e INDEXED BY event_seen_by_order JOIN requests r ON r.id = e.request_id
+			WHERE e.endpoint_id = ? AND e.order_group = ? AND e.order_value IS NOT NULL AND e.request_id < ? AND e.event IS NOT ? ORDER BY e.order_value DESC LIMIT 1`: {int64(1), "", int64(9), "e"},
+		`SELECT request_id FROM event_seen INDEXED BY event_seen_by_event WHERE endpoint_id IS ? AND event = ?`: {int64(1), "e"},
+	} {
+		rows, err := s.db.QueryContext(ctx, `EXPLAIN QUERY PLAN `+q, args...)
+		if err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		var plan []string
+		for rows.Next() {
+			var id, parent, notused int
+			var detail string
+			rows.Scan(&id, &parent, &notused, &detail)
+			plan = append(plan, detail)
+		}
+		rows.Close()
+		t.Logf("%s\n  %v", strings.Join(strings.Fields(q), " "), plan)
+		for _, d := range plan {
+			if strings.HasPrefix(d, "SCAN ") && !strings.Contains(d, "INDEX") || strings.Contains(d, "TEMP B-TREE") {
+				t.Errorf("%s\n  %v", q, plan)
+			}
+		}
 	}
 }

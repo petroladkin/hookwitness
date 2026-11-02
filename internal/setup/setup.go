@@ -48,6 +48,8 @@ type Endpoint struct {
 	// Retention is the endpoint's own retention (format 2); absent: the
 	// importing server's defaults.
 	Retention *store.Retention `json:"retention,omitempty"`
+	// Event is where the sender puts an event's id (format 2).
+	Event *emulate.Source `json:"event,omitempty"`
 }
 
 // Secret names a secret the endpoint needs, and its kind: "key" (a signing
@@ -78,6 +80,18 @@ func Export(eps ...Source) File {
 			r := ep.Retention
 			e.Retention = &r
 			f.Hookwitness = 2
+		}
+		// The delivery checks and the event source are format 2: 0.2 would
+		// refuse them with "unknown field", not "newer hookwitness".
+		if c.Event != nil {
+			ev := *c.Event
+			e.Event = &ev
+			f.Hookwitness = 2
+		}
+		for _, ch := range c.Checks {
+			if ch.IsDelivery() {
+				f.Hookwitness = 2
+			}
 		}
 		f.Endpoints = append(f.Endpoints, e)
 	}
@@ -159,7 +173,7 @@ func Parse(data []byte, o Options) (File, error) {
 // value; the file's other secrets are not set, and secrets the file does
 // not name are dropped. Applying the same file twice gives the same result.
 func (e Endpoint) Config(old *emulate.Config) emulate.Config {
-	c := emulate.Config{Default: e.Default, Rules: e.Rules, Checks: e.Checks, Vars: e.Vars, Schemas: e.Schemas}
+	c := emulate.Config{Default: e.Default, Rules: e.Rules, Checks: e.Checks, Vars: e.Vars, Schemas: e.Schemas, Event: e.Event}
 	if c.Default.Status == 0 {
 		c.Default.Status = 200 // as stored configurations read
 	}

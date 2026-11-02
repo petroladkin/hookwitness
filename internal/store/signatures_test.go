@@ -92,21 +92,21 @@ func TestSetVerdictsRecomputesRepeats(t *testing.T) {
 	}
 	var got map[int]int64
 	// Oldest first, as a re-check goes: #1 has nothing before it.
-	if err := s.SetVerdicts(ctx, reqs[0].ID, "pass", "v1", []Signature{{1, "d-x"}}, noted(&got)); err != nil || got != nil {
+	if err := s.SetVerdicts(ctx, reqs[0].ID, "pass", "v1", []Signature{{1, "d-x"}}, noted(&got), nil); err != nil || got != nil {
 		t.Fatalf("%v %v", got, err)
 	}
-	s.SetVerdicts(ctx, reqs[1].ID, "pass", "v2", []Signature{{1, "d-y"}}, noted(&got))
-	if err := s.SetVerdicts(ctx, reqs[2].ID, "pass", "v3", []Signature{{1, "d-x"}}, noted(&got)); err != nil || fmt.Sprint(got) != "map[1:1]" {
+	s.SetVerdicts(ctx, reqs[1].ID, "pass", "v2", []Signature{{1, "d-y"}}, noted(&got), nil)
+	if err := s.SetVerdicts(ctx, reqs[2].ID, "pass", "v3", []Signature{{1, "d-x"}}, noted(&got), nil); err != nil || fmt.Sprint(got) != "map[1:1]" {
 		t.Fatalf("%v %v", got, err)
 	}
 	// Re-checking #1 again does not see the later #3.
 	got = nil
-	s.SetVerdicts(ctx, reqs[0].ID, "pass", "v1", []Signature{{1, "d-x"}}, noted(&got))
+	s.SetVerdicts(ctx, reqs[0].ID, "pass", "v1", []Signature{{1, "d-x"}}, noted(&got), nil)
 	if got != nil {
 		t.Fatalf("a later request counted: %v", got)
 	}
 	// Without signatures, the request's rows go.
-	s.SetVerdicts(ctx, reqs[2].ID, "", "", nil, nil)
+	s.SetVerdicts(ctx, reqs[2].ID, "", "", nil, nil, nil)
 	var n int
 	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM signature_seen WHERE request_id = ?`, reqs[2].ID).Scan(&n)
 	if n != 0 {

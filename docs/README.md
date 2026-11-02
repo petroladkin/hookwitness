@@ -34,6 +34,8 @@ by task: what to click and what happens. [Українською](uk/README.md).
     teammates and tokens, backups.
 14. [Keeping requests](keeping.md): what a register keeps over days of
     capture: normal requests and anomalies apart, counts and ages, pins.
+15. [Testing a sender's retries, duplicates and order](delivery.md): the
+    event id, and verdicts on duplicates, order and retry backoff.
 
 Reference: the [REST API](api.md) (English only), and its OpenAPI 3.1
 description served at `/admin/api/v1/openapi.json`.

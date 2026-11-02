@@ -97,8 +97,9 @@ type exhibitView struct {
 	TooLarge bool
 	Status   int
 	Delivery int
-	Pinned   bool   // never pruned by retention
-	PinURL   string // where Pin / Unpin posts
+	Event    *string // the event it belongs to; nil or "" when counted per body
+	Pinned   bool    // never pruned by retention
+	PinURL   string  // where Pin / Unpin posts
 	Headers  []store.Header
 	Query    []queryParam
 	Body     bodyView

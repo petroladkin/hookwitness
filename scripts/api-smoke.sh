@@ -1,9 +1,10 @@
 #!/bin/bash
 # API scenario: the Basic-credentials recipe of docs/api.md end to end —
 # create an endpoint, set a password, require it, send JSON events with
-# right and wrong credentials, wait for them and read their verdicts. On a
-# server it starts itself (--binary, --image) it then turns login on: the
-# first admin, a login, a token, the API with and without it (docs/access.md).
+# right and wrong credentials, wait for them and read their verdicts; a
+# sender's retry and duplicate judged by event id. On a server it starts
+# itself (--binary, --image) it then turns login on: the first admin, a
+# login, a token, the API with and without it (docs/access.md).
 #
 # Usage:
 #   scripts/api-smoke.sh <base-url>            against a running hookwitness
@@ -133,7 +134,34 @@ expect 422 "a metadata target"
 [ "$(jq -r .error.code <<<"$body")" = target_refused ] || fail "metadata target: $body"
 ok "replay: the same body and credentials arrived; a metadata address refused"
 
-# 8. Login (only on a server of our own: it cannot be turned off again).
+# 8. Delivery: an endpoint names GitHub's delivery header as its event id,
+# answers the first request 503 and checks duplicates. The delivery, its
+# retry and the same delivery again after the 200: pass, pass, fail, and
+# ?event= lists the three attempts.
+call POST /endpoints '{"path":"/github/push"}'
+expect 201 "create the delivery endpoint"
+D=$(jq -r .id <<<"$body"); DURL=$(jq -r .url <<<"$body")
+call GET /endpoints/$D/behaviour
+TAG=$(grep -i '^etag:' "$WORK/headers" | tr -d '\r' | cut -d' ' -f2)
+call PUT /endpoints/$D/behaviour '{"event":{"from":"header","key":"X-GitHub-Delivery"},"rules":[{"when":{"kind":"first","n":1},"do":"reply","reply":{"status":503}}],"checks":[{"kind":"duplicates"}]}' -H "If-Match: $TAG"
+expect 200 "event id and duplicates check"
+for want in 503 200 200; do
+  echo "\$ curl -H 'X-GitHub-Delivery: smoke-delivery-1' -d '{\"ref\":\"main\"}' $DURL"
+  sent=$(curl -sS -o /dev/null -w '%{http_code}' -H 'X-GitHub-Delivery: smoke-delivery-1' -d '{"ref":"main"}' "$DURL")
+  echo "$sent"; echo
+  [ "$sent" = "$want" ] || fail "delivery answered $sent, want $want"
+done
+call GET "/endpoints/$D/requests?event=smoke-delivery-1"
+expect 200 "list by event"
+[ "$(jq -c '[.requests[] | [.attempt, .status, .verdict, .event]]' <<<"$body")" = \
+  '[[3,200,"fail","smoke-delivery-1"],[2,200,"pass","smoke-delivery-1"],[1,503,"pass","smoke-delivery-1"]]' ] || fail "attempts: $body"
+call GET "/requests/$(jq -r '.requests[0].id' <<<"$body")"
+[ "$(jq -r '.verdicts[0].reason' <<<"$body")" = "duplicate of #2, which was answered 200" ] || fail "duplicate verdict: $body"
+call GET "/endpoints/$D/requests?event="
+expect 422 "an empty event"
+ok "delivery: 503, retry, duplicate after the 200 failed; event= lists 3 attempts"
+
+# 9. Login (only on a server of our own: it cannot be turned off again).
 if [ -n "$OWN" ]; then
   call POST /users '{"name":"smoke-admin","role":"admin","password":"smoke-admin-password"}'
   expect 201 "the first admin"

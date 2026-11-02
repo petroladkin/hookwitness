@@ -197,3 +197,10 @@ setup_capture() {
   local id; id=$(hw_endpoint /orders/capture)
   hw_behave "$id" '.rules = [{"when":{"kind":"every","n":4},"do":"reply","reply":{"status":500}}]'
 }
+
+# --- delivery ----------------------------------------------------------------
+
+setup_duplicates() {
+  local id; id=$(hw_endpoint /github/push)
+  hw_behave "$id" '.event = {"from":"header","key":"X-GitHub-Delivery"} | .checks = [{"kind":"duplicates"}] | .rules = [{"when":{"kind":"first","n":1},"do":"reply","reply":{"status":503}}]'
+}

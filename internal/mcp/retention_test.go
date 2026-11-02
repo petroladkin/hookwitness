@@ -51,3 +51,32 @@ func TestRetentionTools(t *testing.T) {
 		t.Fatalf("a missing request: %s", text)
 	}
 }
+
+func TestDeliveryTools(t *testing.T) {
+	e := newEnv(t)
+	e.ok(t, "create_endpoint", map[string]any{"path": "/gh"})
+	_, text := e.ok(t, "configure_endpoint", map[string]any{"endpoint": "/gh",
+		"event":  map[string]any{"from": "header", "key": "X-GitHub-Delivery"},
+		"checks": []any{map[string]any{"kind": "duplicates"}}})
+	if !strings.Contains(text, "event") {
+		t.Fatalf("configure: %s", text)
+	}
+	for range 2 {
+		e.deliver("/gh", "{}", "X-GitHub-Delivery", "d-7")
+	}
+	out, text := e.ok(t, "list_requests", map[string]any{"endpoint": "/gh", "event": "d-7"})
+	reqs, _ := out["requests"].([]any)
+	if len(reqs) != 2 {
+		t.Fatalf("event filter: %s", text)
+	}
+	newest, _ := reqs[0].(map[string]any)
+	if newest["event"] != "d-7" || num(newest["attempt"]) != 2 || newest["verdict"] != "fail" {
+		t.Fatalf("the second delivery: %v", newest)
+	}
+	e.deliver("/gh", "{}", "X-GitHub-Delivery", "d-8")
+	e.deliver("/gh", "{}", "X-GitHub-Delivery", "d-7")
+	out, text = e.ok(t, "expect", map[string]any{"endpoint": "/gh", "event": "d-7", "count": 3, "after": 0, "within_s": 5})
+	if out["result"] != "pass" || !strings.HasPrefix(text, "pass: 3 request(s) with event=d-7 arrived") {
+		t.Fatalf("expect three attempts of d-7: %s", text)
+	}
+}

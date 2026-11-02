@@ -61,8 +61,8 @@ func (h *Handler) marks(w http.ResponseWriter, r *http.Request) {
 	err = h.store.EachSelected(ctx, reg, store.Selection{From: from}, false, func(req store.Request) error {
 		v := rowView{TooLarge: req.TooLarge, Outcome: emulate.ParseOutcome(req.Outcome, req.Status)}
 		group := ""
-		if len(req.BodySHA256) > 0 {
-			group = hex.EncodeToString(req.BodySHA256[:6])
+		if key, _ := req.RetryGroup(); len(key) > 0 {
+			group = hex.EncodeToString(key[:6])
 		}
 		out.Marks = append(out.Marks, []any{req.ID, req.ReceivedAt.UnixMilli(), req.Size, v.mark(), req.Verdict, group, req.Pinned})
 		return nil

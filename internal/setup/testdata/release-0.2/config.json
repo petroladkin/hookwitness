@@ -1,0 +1,34 @@
+{
+  "default": {"status": 202, "headers": [{"name": "X-Seen", "value": "{{.Var \"ENV\"}}"}], "body": "ok {{.Request.Path}}", "delay_ms": 50, "jitter_ms": 10},
+  "rules": [
+    {"when": {"kind": "every", "n": 3}, "do": "reply", "reply": {"status": 503, "headers": [{"name": "Retry-After", "value": "5"}], "body": "try later"}},
+    {"when": {"kind": "first", "n": 2}, "do": "timeout"},
+    {"when": {"kind": "random", "percent": 12.5}, "do": "drop"},
+    {"when": {"kind": "every", "n": 7}, "do": "reply", "reply": {"status": 200, "body_base64": "/w=="}}
+  ],
+  "checks": [
+    {"header": "X-Env", "match": "present"},
+    {"kind": "header", "header": "X-Team", "match": "equals", "value": "qa", "error": {"status": 400, "body": "who?"}},
+    {"kind": "github", "secret": "GH", "enforce": true},
+    {"kind": "stripe", "secret": "ST", "tolerance_s": 600},
+    {"kind": "standard", "secret": "SW", "ignore_timestamp": true},
+    {"kind": "hmac", "secret": "GH", "header": "X-Signature", "algo": "sha1", "encoding": "base64", "prefix": "sha1=", "content": "{{.Header \"X-Time\"}}.{{.Body}}"},
+    {"kind": "bearer", "secret": "TOK"},
+    {"kind": "basic", "user": "qa", "secret": "PW"},
+    {"kind": "schema", "schema": "Order"},
+    {"kind": "schema", "schemas": ["Order", "Refund"]},
+    {"kind": "schema", "select": {"from": "body", "key": "/type", "map": [{"value": "order.paid", "schema": "Order"}, {"value": "refund", "schema": "Refund"}], "default": ["Order", "Refund"]}}
+  ],
+  "vars": [{"name": "ENV", "value": "staging"}],
+  "schemas": [
+    {"name": "Order", "text": "{\"type\":\"object\",\"required\":[\"id\"]}"},
+    {"name": "Refund", "text": "{\"type\":\"object\",\"required\":[\"refund_id\"]}"}
+  ],
+  "secrets": [
+    {"name": "GH", "kind": "key", "sealed": "SEALED-gh_test_value", "fingerprint": "fp-gh-1234"},
+    {"name": "ST", "kind": "key", "sealed": "SEALED-st_test_value", "fingerprint": "fp-st-1234"},
+    {"name": "SW", "kind": "key", "sealed": "SEALED-sw_test_value", "fingerprint": "fp-sw-1234", "standard": true},
+    {"name": "TOK", "kind": "token", "hash": "HASHED-tok_test_value", "fingerprint": "fp-tok-5678"},
+    {"name": "PW", "kind": "token", "hash": "HASHED-pw_test_value", "fingerprint": "fp-pw-5678"}
+  ]
+}

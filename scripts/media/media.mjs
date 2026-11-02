@@ -302,6 +302,33 @@ if (!only.length || only.includes("report-html")) {
 }
 await shot("report-html", `file://${join(work, "report.html")}`, { maxHeight: 1000 });
 
+// docs/delivery.md: /github/push names GitHub's delivery header as its event
+// id and has the three delivery checks; its first delivery is answered 503
+// by a rule, and the same delivery comes three times (pass, pass, fail).
+{
+  const gp = (await api("POST", "/endpoints", { path: "/github/push" })).json.id;
+  await behave(gp, {
+    event: { from: "header", key: "X-GitHub-Delivery" },
+    checks: [{ kind: "duplicates" }, { kind: "order", order: { from: "body", key: "/head_commit/timestamp", as: "time" } },
+      { kind: "backoff", first_s: 1, max_s: 3600, max_attempts: 8 }],
+    rules: [{ when: { kind: "first", n: 1 }, do: "reply", reply: { status: 503 } }],
+  });
+  const push = JSON.stringify({ ref: "refs/heads/main", head_commit: { id: "3f9c2e1", timestamp: "2026-11-02T12:00:00Z" } });
+  const delivery = { "X-GitHub-Delivery": "7a1e0c3e-delivery", "X-GitHub-Event": "push" };
+  await send("/github/push", push, delivery);
+  await sleep(1000);
+  await send("/github/push", push, delivery);
+  await sleep(600);
+  await send("/github/push", push, delivery);
+  await shot("delivery-checks", `${UI}/e/${gp}/behaviour?tab=checks`, { maxHeight: 700 });
+  // Wide, the exhibit scrolls on its own: bring its Verdicts to the top.
+  // Narrow, the page scrolls: shoot the verdicts themselves.
+  await shot("delivery-duplicate", `${UI}/e/${gp}/r/${await byNo(gp, 3)}`, WIDTH < 821 ? { selector: "#exhibit .verdicts", maxHeight: 1600 } : { maxHeight: 800,
+    step: `(() => { const x = document.getElementById("exhibit"), v = x.querySelector(".verdicts").previousElementSibling;
+      if (x.scrollHeight > x.clientHeight) x.scrollTop = v.offsetTop - x.offsetTop - 12; else v.scrollIntoView(); })()` });
+  await api("DELETE", `/endpoints/${gp}`);
+}
+
 // docs/keeping.md: a minute of capture on /orders/capture, whose Rules tab
 // answers every 4th request 500, keeping the newest 5 normal requests and 4
 // anomalies, with #2 pinned: the strip hatches what both lanes lost (not

@@ -1,8 +1,10 @@
 package setup
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -200,5 +202,54 @@ func TestRetentionInSetup(t *testing.T) {
 	}
 	if got, _ := st.Endpoint(ctx, ep.ID); !got.Kept.Policy.IsZero() {
 		t.Fatalf("a file without retention left %+v", got.Kept.Policy)
+	}
+}
+
+// TestDeliveryInSetup: the event source and the delivery checks travel in
+// format 2; nothing new used stays format 1.
+func TestDeliveryInSetup(t *testing.T) {
+	cfg := emulate.Config{Default: emulate.Reply{Status: 200}, Event: &emulate.Source{From: emulate.FromHeader, Key: "X-GitHub-Delivery"},
+		Checks: []emulate.Check{{Kind: emulate.KindBackoff, FirstS: 5}}}
+	f := Export(Source{Path: "/gh", Config: cfg})
+	b := f.JSON()
+	if f.Hookwitness != 2 || !strings.Contains(string(b), `"event": {`) || !strings.Contains(string(b), `"kind": "backoff"`) {
+		t.Fatalf("format %d:\n%s", f.Hookwitness, b)
+	}
+	parsed, err := Parse(b, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parsed.Endpoints[0].Config(nil)
+	if got.Event == nil || *got.Event != *cfg.Event || len(got.Checks) != 1 || got.Checks[0].FirstS != 5 {
+		t.Fatalf("round trip: %+v", got)
+	}
+	if f := Export(Source{Path: "/x", Config: emulate.Config{Default: emulate.Reply{Status: 200}, Checks: []emulate.Check{{Kind: emulate.KindDuplicates}}}}); f.Hookwitness != 2 {
+		t.Fatalf("a delivery check alone: format %d", f.Hookwitness)
+	}
+}
+
+// An export that uses nothing newer than 0.2 is what 0.2.0 wrote, byte for
+// byte, so 0.2 reads it: testdata/release-0.2/export.json was written by the
+// v0.2.0 code from config.json, an endpoint with every part 0.2 knew.
+func TestExportAsRelease02(t *testing.T) {
+	b, err := os.ReadFile("testdata/release-0.2/config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	var c emulate.Config
+	if err := d.Decode(&c); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Validate(time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile("testdata/release-0.2/export.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Export(Source{Path: "/orders", Config: c}).JSON(); !bytes.Equal(got, want) {
+		t.Fatalf("the export differs from 0.2.0's:\n%s", got)
 	}
 }

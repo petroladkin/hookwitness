@@ -260,7 +260,8 @@ type CheckCount struct {
 // Retry is one body delivered more than once: the request numbers in order
 // and the gaps between consecutive deliveries.
 type Retry struct {
-	SHA256 string
+	SHA256 string // the body's digest, when retries are grouped by body
+	Event  string // the event id, when the endpoint names one
 	Nos    []int64
 	Gaps   []time.Duration
 }
@@ -343,6 +344,7 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 		at time.Time
 	}
 	bySHA := map[string][]delivery{}
+	events := map[string]string{} // group key → event id, for groups by event
 	var shaOrder []string
 	var markSHA []string // per mark, the body digest
 	var first, last time.Time
@@ -376,10 +378,13 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 			}
 		}
 		k := ""
-		if len(r.BodySHA256) > 0 {
-			k = hex.EncodeToString(r.BodySHA256)
+		if key, byEvent := r.RetryGroup(); len(key) > 0 {
+			k = hex.EncodeToString(key)
 			if _, ok := bySHA[k]; !ok {
 				shaOrder = append(shaOrder, k)
+				if byEvent {
+					events[k] = *r.Event
+				}
 			}
 			bySHA[k] = append(bySHA[k], delivery{r.No, r.ReceivedAt})
 			if n := len(bySHA[k]); n > 1 {
@@ -414,7 +419,10 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 		if len(ds) < 2 {
 			continue
 		}
-		rt := Retry{SHA256: k}
+		rt := Retry{SHA256: k, Event: events[k]}
+		if rt.Event != "" {
+			rt.SHA256 = ""
+		}
 		for i, d := range ds {
 			rt.Nos = append(rt.Nos, d.no)
 			if i > 0 {
@@ -808,4 +816,13 @@ func imageNote(f picture.Found) string {
 		parts = append(parts, "not checked: "+f.NotChecked)
 	}
 	return strings.Join(parts, " · ")
+}
+
+// retryKey names a retry group: its event id, or its body digest cut short;
+// code formats the value.
+func retryKey(r Retry, code func(string) string) string {
+	if r.Event != "" {
+		return "event " + code(r.Event)
+	}
+	return code(r.SHA256[:16] + "…")
 }
