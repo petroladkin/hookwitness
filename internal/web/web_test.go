@@ -207,8 +207,8 @@ func TestRegisterAndExhibit(t *testing.T) {
 	if strings.Index(body, `id="req-`+id(big.ID)) > strings.Index(body, `id="req-`+id(first.ID)) {
 		t.Error("register is not newest first")
 	}
-	if !strings.Contains(body, `data-keep="1000"`) {
-		t.Error("the page does not know the retention limit")
+	if !strings.Contains(body, `data-lane="normal"`) || !strings.Contains(body, "keeps 1000 newest") {
+		t.Error("the page does not show the retention limit or the rows' lanes")
 	}
 	if !strings.Contains(body, "retry 1") || !strings.Contains(body, "Refused: body over the limit") {
 		t.Error("retry or refusal not shown in the register")

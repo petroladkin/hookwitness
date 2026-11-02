@@ -43,11 +43,12 @@ type registerView struct {
 	Seq      int64 // the change sequence the rows are complete up to
 	Base     string
 	Selected int64
-	Keep     int // retention: the register never holds more
+	Keeps    keepsView // retention: limits in force, pinned, pruned
 	Verdicts verdictsView
-	Export   *exportView       // the report dialog, when open
-	Draft    *draftDialogView  // the schema draft dialog, when open
-	Replay   *replayDialogView // the replay dialog, when open
+	Export   *exportView          // the report dialog, when open
+	Draft    *draftDialogView     // the schema draft dialog, when open
+	Replay   *replayDialogView    // the replay dialog, when open
+	Retain   *retentionDialogView // the retention dialog, when open
 }
 
 // rowView is one line of the register.
@@ -67,6 +68,19 @@ type rowView struct {
 	Verdict  string // overall authorization verdict, "" without checks
 	Replays  int    // replays kept of it
 	Repeat   string // the note of a signature an earlier request carried
+	Pinned   bool   // never pruned by retention
+	Anomaly  bool   // kept in the anomaly lane
+}
+
+// lane is the retention lane a row is in, for the page's pruning.
+func (r rowView) lane() string {
+	switch {
+	case r.Pinned:
+		return "pinned"
+	case r.Anomaly:
+		return "anomaly"
+	}
+	return "normal"
 }
 
 // exhibitView is one request in full.
@@ -83,6 +97,8 @@ type exhibitView struct {
 	TooLarge bool
 	Status   int
 	Delivery int
+	Pinned   bool   // never pruned by retention
+	PinURL   string // where Pin / Unpin posts
 	Headers  []store.Header
 	Query    []queryParam
 	Body     bodyView

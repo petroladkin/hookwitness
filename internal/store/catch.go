@@ -285,16 +285,6 @@ func (s *Store) UpdateOutcome(ctx context.Context, id int64, status int, outcome
 	})
 }
 
-// changeRequest runs the update of request id, whose query ends in
-// "change_seq = ? WHERE id = ?" (args are the ones before), with the next
-// value of the change sequence.
-func (s *Store) changeRequest(ctx context.Context, id int64, query string, args ...any) error {
-	return s.changeRequestTx(ctx, id, func(tx *sql.Tx, seq int64) error {
-		_, err := tx.ExecContext(ctx, query, append(args, seq, id)...)
-		return err
-	})
-}
-
 // changeRequestTx runs fn, a change to one request, in one transaction with
 // the next value of the change sequence: one writer at a time, so the
 // sequence orders changes as they were committed.
@@ -575,23 +565,6 @@ func (s *Store) deleteEndpoint(ctx context.Context, id int64) error {
 		return ErrNotFound
 	}
 	return nil
-}
-
-// KeptFrom is when the oldest kept request of a register arrived, when
-// requests older than it are no longer kept (pruned past the retention, or
-// cleared): before it, the register cannot say what arrived. ok is false
-// while the register still holds its first request, or nothing.
-func (s *Store) KeptFrom(ctx context.Context, endpointID int64) (time.Time, bool, error) {
-	var no, at int64
-	err := s.db.QueryRowContext(ctx, `SELECT no, received_at FROM requests WHERE endpoint_id IS ? ORDER BY id LIMIT 1`,
-		register(endpointID)).Scan(&no, &at)
-	if errors.Is(err, sql.ErrNoRows) {
-		return time.Time{}, false, nil
-	}
-	if err != nil {
-		return time.Time{}, false, fmt.Errorf("oldest request: %w", err)
-	}
-	return fromMillis(at), no > 1, nil
 }
 
 // ClearRequests removes every request of a register and gives the space
