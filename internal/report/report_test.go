@@ -353,3 +353,39 @@ func TestLazy(t *testing.T) {
 		t.Fatalf("written %v, started %d, %q", l.Written(), started, buf.String())
 	}
 }
+
+// TestPrunedAndPinned: a register that lost requests to retention says so
+// when the range reaches back to them, in every format; a pinned request
+// is marked.
+func TestPrunedAndPinned(t *testing.T) {
+	rs := fixture(t)
+	rs[0].Pinned = true
+	o := goldenOptions()
+	until := rs[len(rs)-1].ReceivedAt // within or before the reported range
+	o.Pruned = &Pruned{NormalUntil: until, Pinned: 1}
+	for _, f := range []Format{Markdown, HTML, PDF} {
+		got := render(t, f, o, rs)
+		if f == PDF {
+			if len(got) < 1000 {
+				t.Fatalf("PDF of %d bytes", len(got))
+			}
+			continue
+		}
+		for _, want := range []string{"Retention removed normal requests up to " + stamp(until), "1 pinned request(s)", "never pruned by retention"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: no %q", f, want)
+			}
+		}
+	}
+	// A range that starts after the watermark lost nothing.
+	o.From = until.Add(time.Hour)
+	if got := render(t, Markdown, o, rs); strings.Contains(got, "Retention removed") {
+		t.Errorf("a later range says requests were pruned")
+	}
+	if prunedLine(&Pruned{NormalUntil: until, AnomaliesUntil: until}, time.Time{}) != "Retention removed every request up to "+stamp(until)+"; the range may miss them." {
+		t.Errorf("both lanes at once: %q", prunedLine(&Pruned{NormalUntil: until, AnomaliesUntil: until}, time.Time{}))
+	}
+	if prunedLine(nil, time.Time{}) != "" || prunedLine(&Pruned{Pinned: 3}, time.Time{}) != "" {
+		t.Error("a line without anything pruned")
+	}
+}

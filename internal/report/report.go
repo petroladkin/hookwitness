@@ -90,6 +90,43 @@ type Options struct {
 	// Fonts holds the UI's woff2 files (vendor/<family>/<file>.woff2) that
 	// an HTML report embeds; nil writes the HTML with system fonts only.
 	Fonts fs.FS
+	// Pruned is what the register's retention removed; nil: nothing.
+	Pruned *Pruned
+}
+
+// Pruned is what a register lost to retention: up to when each lane lost
+// requests (zero: never) and how many requests are pinned.
+type Pruned struct {
+	NormalUntil, AnomaliesUntil time.Time
+	Pinned                      int
+}
+
+// prunedLine says what retention removed before or inside a range that
+// starts at from (zero: the whole register).
+func prunedLine(p *Pruned, from time.Time) string {
+	if p == nil {
+		return ""
+	}
+	var parts []string
+	for _, l := range []struct {
+		what  string
+		until time.Time
+	}{{"normal requests", p.NormalUntil}, {"anomalies", p.AnomaliesUntil}} {
+		if !l.until.IsZero() && (from.IsZero() || !l.until.Before(from)) {
+			parts = append(parts, l.what+" up to "+stamp(l.until))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	if len(parts) == 2 && p.NormalUntil.Equal(p.AnomaliesUntil) {
+		parts = []string{"every request up to " + stamp(p.NormalUntil)}
+	}
+	line := "Retention removed " + strings.Join(parts, " and ") + "; the range may miss them."
+	if p.Pinned > 0 {
+		line += fmt.Sprintf(" %d pinned request(s) are kept whatever their age.", p.Pinned)
+	}
+	return line
 }
 
 // FileName is hookwitness-<endpoint>-<UTC timestamp>.<ext>, the endpoint
@@ -190,6 +227,9 @@ type Head struct {
 	Version   string
 	Masked    []string // the masked header names, as given, sorted
 	Setup     *Setup   // the endpoint's setup when asked for; nil otherwise
+	// PrunedLine says what retention removed from the reported range; ""
+	// when the range lost nothing.
+	PrunedLine string
 
 	Count    int
 	Outcomes []Count // answers by class, in a fixed order
@@ -284,6 +324,7 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 	if h.Endpoint == "" {
 		h.Endpoint = "Unmatched"
 	}
+	h.PrunedLine = prunedLine(o.Pruned, h.From)
 	for _, m := range o.Mask {
 		if k := strings.ToLower(strings.TrimSpace(m)); k != "" && !h.mask[k] {
 			h.mask[k] = true
@@ -425,7 +466,8 @@ type Item struct {
 	Body     Body
 	Answer   Answer
 	Verdicts []auth.Verdict
-	Delivery int // 2 for the first retry of a body, 3 for the next…; 0 otherwise
+	Delivery int  // 2 for the first retry of a body, 3 for the next…; 0 otherwise
+	Pinned   bool // never pruned by retention
 	Images   []ItemImage
 }
 
@@ -487,6 +529,7 @@ func (h *Head) item(r store.Request) Item {
 		Proto:    r.Proto,
 		Remote:   r.RemoteAddr,
 		Delivery: h.deliveries[r.ID],
+		Pinned:   r.Pinned,
 	}
 	var masked []string
 	for _, hd := range r.Headers {

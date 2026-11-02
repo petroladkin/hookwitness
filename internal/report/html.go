@@ -191,7 +191,8 @@ const htmlSource = `{{define "head" -}}
 {{range .Retries}}<tr><td>{{range $i, $n := .Nos}}{{if $i}}, {{end}}<a href="#r{{$n}}">#{{$n}}</a>{{end}}</td><td>{{range $i, $g := .Gaps}}{{if $i}}, {{end}}{{gap $g}}{{end}}</td><td><code title="{{.SHA256}}">{{short .SHA256}}</code></td></tr>
 {{end}}{{else}}<tr><td class="none">None.</td></tr>
 {{end}}</table>
-</section>
+{{with .PrunedLine}}<p class="pruned"><b>Pruned</b> {{.}}</p>
+{{end}}</section>
 {{with .Setup}}<section class="setup">
 <h2>Setup</h2>
 <p class="intro">{{setupIntro $.Head}}</p>
@@ -234,7 +235,8 @@ const htmlSource = `{{define "head" -}}
 <dl class="facts">
 <div><dt>Received</dt><dd>{{stamp .At}} from <code>{{.Remote}}</code> · {{.Proto}}</dd></div>
 <div><dt>Answer</dt><dd>{{answer .Answer}}</dd></div>
-{{if gt .Delivery 1}}<div><dt>Delivery</dt><dd>{{ordinal .Delivery}} of this body (a retry)</dd></div>
+{{if .Pinned}}<div><dt>Pinned</dt><dd>never pruned by retention</dd></div>
+{{end}}{{if gt .Delivery 1}}<div><dt>Delivery</dt><dd>{{ordinal .Delivery}} of this body (a retry)</dd></div>
 {{end}}</dl>
 {{if .Verdicts}}<section class="verdicts">
 <h3>Verdicts</h3>
@@ -340,6 +342,7 @@ th,td{text-align:left;padding:4px 12px 4px 0;border-bottom:1px solid var(--rule)
 .counts th{font-weight:400;color:var(--muted)}
 .hot{color:var(--alarm)}
 .retries{margin-top:16px;width:100%}
+.pruned{margin:12px 0 0}
 .summary caption{white-space:nowrap}
 .checks td.none{font:inherit;color:var(--muted)}
 .none{color:var(--muted)}

@@ -80,6 +80,9 @@ func (m *mdWriter) head(h *Head) error {
 		}
 		m.p("\n")
 	}
+	if h.PrunedLine != "" {
+		m.p("**Pruned** ", mdText(h.PrunedLine), "\n\n")
+	}
 	if h.Setup != nil {
 		m.setup(h)
 	}
@@ -170,6 +173,9 @@ func (m *mdWriter) item(it Item) error {
 	m.p("| | |\n|---|---|\n")
 	m.p("| Received | ", stamp(it.At), " from ", mdCode(it.Remote), " · ", mdCell(it.Proto), " |\n")
 	m.p("| Answer | ", mdCell(answerLine(it.Answer)), " |\n")
+	if it.Pinned {
+		m.p("| Pinned | never pruned by retention |\n")
+	}
 	if it.Delivery > 1 {
 		m.p("| Delivery | ", ordinal(it.Delivery), " of this body (a retry) |\n")
 	}
