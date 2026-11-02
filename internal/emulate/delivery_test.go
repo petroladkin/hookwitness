@@ -41,6 +41,7 @@ func TestJudgeDelivery(t *testing.T) {
 		{"in order", order, Facts{HasOrder: true, Order: ptrF(41)}, Relation{High: &Mark{40, 16}}, 0, auth.Pass, "41 after 40 (#16)"},
 		{"a tie passes", order, Facts{HasOrder: true, Order: ptrF(40)}, Relation{High: &Mark{40, 16}}, 0, auth.Pass, "40 after 40"},
 		{"out of order", order, Facts{HasOrder: true, Order: ptrF(40)}, Relation{High: &Mark{41, 17}}, 0, auth.Fail, "out of order: 40 after 41 (#17)"},
+		{"a retry is not judged again", order, Facts{Event: "evt_1", HasOrder: true, Order: ptrF(40)}, Relation{Attempt: 2, Prev: prev(3, 0, reply(503)), High: &Mark{41, 17}}, 0, auth.Pass, "attempt 2 of evt_1: judged on its first delivery"},
 		{"no order value", order, Facts{HasOrder: true, OrderErr: "no value at /created"}, Relation{}, 0, auth.NotVerifiable, "no value at /created"},
 
 		{"backoff: first attempt", backoff, ev, Relation{Attempt: 1}, 0, auth.NotChecked, "first attempt"},

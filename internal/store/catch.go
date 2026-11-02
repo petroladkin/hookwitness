@@ -76,6 +76,12 @@ type Request struct {
 	// returns the verdicts to store instead.
 	Signatures []Signature
 	Repeated   func(earlier map[int]int64) (verdicts string)
+	// Delivery, when given, finishes the delivery checks' verdicts against
+	// the earlier kept requests (delivery.go).
+	Delivery *Delivery
+
+	Event   *string // the event it belongs to (nil: none recorded; "" counted per body)
+	Attempt int     // its attempt among the event's kept requests; 0: none recorded
 }
 
 // Signature is a signature a request carried, as the keyed digest of the
@@ -346,36 +352,61 @@ func (s *Store) KeyCheck(ctx context.Context, check string) (same bool, err erro
 // and outcome, what the sender saw, stay as they are. Its signatures are
 // replaced by sigs, and repeated (when given) notes the verdicts against the
 // earlier kept requests, as AddRequest does.
-func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts string, sigs []Signature, repeated func(map[int]int64) string) error {
+func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts string, sigs []Signature, repeated func(map[int]int64) string, d *Delivery) error {
 	return s.changeRequestTx(ctx, id, func(tx *sql.Tx, seq int64) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM signature_seen WHERE request_id = ?`, id); err != nil {
-			return err
+		for _, q := range []string{`DELETE FROM signature_seen WHERE request_id = ?`, `DELETE FROM event_seen WHERE request_id = ?`} {
+			if _, err := tx.ExecContext(ctx, q, id); err != nil {
+				return err
+			}
 		}
 		var endpoint int64
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(endpoint_id, 0) FROM requests WHERE id = ?`, id).Scan(&endpoint); err != nil {
+		var sha []byte
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(endpoint_id, 0), body_sha256 FROM requests WHERE id = ?`, id).Scan(&endpoint, &sha); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil // gone meanwhile
 			}
 			return err
 		}
-		if v, err := noteRepeats(ctx, tx, endpoint, id, sigs, repeated); err != nil {
-			return err
-		} else if v != nil {
-			verdicts = *v
-		}
 		if _, err := tx.ExecContext(ctx, `UPDATE requests SET verdict = ?, verdicts = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
 			verdict, verdicts, millis(time.Now()), seq, id); err != nil {
 			return err
+		}
+		if err := recordSignatures(ctx, tx, endpoint, id, sigs); err != nil {
+			return err
+		}
+		if err := relate(ctx, tx, endpoint, id, sha, d); err != nil {
+			return err
+		}
+		if v, err := lookupRepeats(ctx, tx, endpoint, id, sigs, repeated); err != nil {
+			return err
+		} else if v != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE requests SET verdicts = ? WHERE id = ?`, *v, id); err != nil {
+				return err
+			}
 		}
 		return classify(ctx, tx, id)
 	})
 }
 
-// noteRepeats records request id's signatures and, when an earlier kept
-// request of the endpoint carried one of them, returns the verdicts
-// repeated gives for them (nil: none repeated).
-func noteRepeats(ctx context.Context, tx *sql.Tx, endpoint, id int64, sigs []Signature, repeated func(map[int]int64) string) (*string, error) {
-	if endpoint == Unmatched || len(sigs) == 0 {
+// recordSignatures records request id's signatures (keyed digests).
+func recordSignatures(ctx context.Context, tx *sql.Tx, endpoint, id int64, sigs []Signature) error {
+	if endpoint == Unmatched {
+		return nil
+	}
+	for _, sg := range sigs {
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO signature_seen (request_id, endpoint_id, check_no, digest) VALUES (?, ?, ?, ?)`,
+			id, endpoint, sg.Check, sg.Digest); err != nil {
+			return fmt.Errorf("record signatures: %w", err)
+		}
+	}
+	return nil
+}
+
+// lookupRepeats finds, for each of request id's signatures, the earliest
+// earlier kept request of the endpoint that carried it, and returns the
+// verdicts repeated gives for them (nil: none repeated).
+func lookupRepeats(ctx context.Context, tx *sql.Tx, endpoint, id int64, sigs []Signature, repeated func(map[int]int64) string) (*string, error) {
+	if endpoint == Unmatched || len(sigs) == 0 || repeated == nil {
 		return nil, nil
 	}
 	earlier := map[int]int64{}
@@ -389,12 +420,8 @@ func noteRepeats(ctx context.Context, tx *sql.Tx, endpoint, id int64, sigs []Sig
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("earlier signatures: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO signature_seen (request_id, endpoint_id, check_no, digest) VALUES (?, ?, ?, ?)`,
-			id, endpoint, sg.Check, sg.Digest); err != nil {
-			return nil, fmt.Errorf("record signatures: %w", err)
-		}
 	}
-	if len(earlier) == 0 || repeated == nil {
+	if len(earlier) == 0 {
 		return nil, nil
 	}
 	v := repeated(earlier)
@@ -693,37 +720,29 @@ func (s *Store) AddRequest(ctx context.Context, r *Request, keep Keep, decide De
 	if err != nil {
 		return err
 	}
-	// Signatures first, then the class, then the prune: a redelivery's
-	// earlier delivery is in the anomaly lane before the lanes are pruned.
-	// A note that names a request the prune then removed is made again.
-	plain := r.Verdicts
-	note := func() error {
-		v, err := noteRepeats(ctx, tx, r.EndpointID, id, r.Signatures, r.Repeated)
-		if err != nil {
-			return err
-		}
-		r.Verdicts = plain
-		if v != nil {
-			r.Verdicts = *v
-		}
-		return nil
-	}
-	if err := note(); err != nil {
+	// Signatures recorded and the delivery verdicts finished first, then the
+	// class (a failed verdict or a redelivery is an anomaly, and a
+	// redelivery's earlier delivery joins it), then the prune, and last the
+	// notes of repeated signatures, which name only requests still kept.
+	if err := recordSignatures(ctx, tx, r.EndpointID, id, r.Signatures); err != nil {
 		return err
 	}
-	noted := r.Verdicts != plain
+	if err := relate(ctx, tx, r.EndpointID, id, r.BodySHA256, r.Delivery); err != nil {
+		return err
+	}
 	if err := classify(ctx, tx, id); err != nil {
 		return err
 	}
 	if err := pruneOnInsert(ctx, tx, r.EndpointID, keep); err != nil {
 		return err
 	}
-	if noted {
-		if err := note(); err != nil {
-			return err
-		}
+	if err := tx.QueryRowContext(ctx, `SELECT verdict, verdicts FROM requests WHERE id = ?`, id).Scan(&r.Verdict, &r.Verdicts); err != nil {
+		return err
 	}
-	if r.Verdicts != plain {
+	if v, err := lookupRepeats(ctx, tx, r.EndpointID, id, r.Signatures, r.Repeated); err != nil {
+		return err
+	} else if v != nil {
+		r.Verdicts = *v
 		if _, err := tx.ExecContext(ctx, `UPDATE requests SET verdicts = ? WHERE id = ?`, r.Verdicts, id); err != nil {
 			return fmt.Errorf("note repeated signatures: %w", err)
 		}
@@ -747,15 +766,18 @@ func pairs(hs []Header) [][2]string {
 
 const requestColumns = `id, endpoint_id, no, received_at, method, path, raw_query, proto, remote_addr,
 	headers, body_sha256, size, too_large, status, outcome, verdict, verdicts, ifnull(length(body), 0),
-	(SELECT COUNT(*) FROM replays WHERE replays.request_id = requests.id), pinned, anomaly`
+	(SELECT COUNT(*) FROM replays WHERE replays.request_id = requests.id), pinned, anomaly,
+	(SELECT event FROM event_seen WHERE event_seen.request_id = requests.id),
+	ifnull((SELECT attempt FROM event_seen WHERE event_seen.request_id = requests.id), 0)`
 
 func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, error) {
 	var r Request
 	var ep sql.NullInt64
 	var at int64
 	var headers string
+	var event sql.NullString
 	dst := []any{&r.ID, &ep, &r.No, &at, &r.Method, &r.Path, &r.RawQuery, &r.Proto, &r.RemoteAddr,
-		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts, &r.Kept, &r.Replays, &r.Pinned, &r.Anomaly}
+		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts, &r.Kept, &r.Replays, &r.Pinned, &r.Anomaly, &event, &r.Attempt}
 	if withBody {
 		dst = append(dst, &r.Body)
 	}
@@ -764,6 +786,9 @@ func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, er
 	}
 	r.EndpointID = ep.Int64
 	r.ReceivedAt = fromMillis(at)
+	if event.Valid {
+		r.Event = &event.String
+	}
 	if len(r.BodySHA256) == 0 {
 		r.BodySHA256 = nil
 	}
@@ -824,11 +849,12 @@ type ListQuery struct {
 	Before, After int64
 	HasAfter      bool
 	Limit         int
-	Verdict       string // pass, fail, n/v, n/c; "" for any
-	Status        int    // 0 for any; -1 for "nothing sent" (status 0)
-	Contains      []byte // a byte substring of the kept body; nil for any
-	Pinned        bool   // only pinned requests
-	Anomaly       bool   // only anomalies
+	Verdict       string  // pass, fail, n/v, n/c; "" for any
+	Status        int     // 0 for any; -1 for "nothing sent" (status 0)
+	Contains      []byte  // a byte substring of the kept body; nil for any
+	Event         *string // only requests of this event id
+	Pinned        bool    // only pinned requests
+	Anomaly       bool    // only anomalies
 	// Match, when set, is asked about each kept body that passed the other
 	// filters; requests without a kept body never match.
 	Match    func(body []byte) bool
@@ -858,6 +884,10 @@ func (s *Store) List(ctx context.Context, endpointID int64, q ListQuery) ([]Requ
 		args = append(args, q.Status)
 	case q.Status < 0: // nothing was sent
 		where += " AND status = 0"
+	}
+	if q.Event != nil {
+		where += " AND id IN (SELECT request_id FROM event_seen INDEXED BY event_seen_by_event WHERE endpoint_id IS ? AND event = ?)"
+		args = append(args, register(endpointID), *q.Event)
 	}
 	if q.Pinned {
 		where += " AND pinned"

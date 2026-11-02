@@ -344,6 +344,9 @@ func judge(ch Check, f Facts, rel Relation, at time.Time) (auth.Result, string) 
 			return auth.NotVerifiable, f.OrderErr
 		case f.Order == nil:
 			return auth.NotVerifiable, "no order value"
+		case rel.Prev != nil:
+			// Late by nature: its order was judged on its first delivery.
+			return auth.Pass, fmt.Sprintf("attempt %d of %s: judged on its first delivery", rel.Attempt, event)
 		case rel.High == nil:
 			return auth.Pass, "first in order"
 		case *f.Order < rel.High.Value:
