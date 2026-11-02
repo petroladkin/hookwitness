@@ -134,8 +134,9 @@ func (s *tools) register(srv *sdk.Server) {
 		s.getEndpoint)
 	sdk.AddTool(srv, &sdk.Tool{Name: "configure_endpoint", Annotations: idempotent,
 		Description: "Set parts of an endpoint's behaviour; the parts given replace those parts, the others stay. " +
+			"forward: a receiver ({url, keep_host, insecure_tls, timeout_ms, on_failure: gateway|default}) makes the endpoint a recorder in the middle: requests no rule takes are sent there byte for byte, live traffic leaving the server, and its answer goes back to the sender; false removes it; admin only once login is on. " +
 			"default: the reply {status, headers:[{name,value}], body (a Go template) or body_base64 (exact bytes), delay_ms, jitter_ms}. " +
-			"rules: in order, the first whose condition holds decides: {when: condition, do: reply|timeout|drop, reply}; conditions: {kind: every|first, n}, {kind: random, percent}, " +
+			"rules: in order, the first whose condition holds decides: {when: condition, do: reply|timeout|drop, reply, forward: true lets an endpoint's receiver get the request too}; conditions: {kind: every|first, n}, {kind: random, percent}, " +
 			"and by the clock, which starts at the first request after a reset: {kind: window, from_s, to_s (none: for ever)}, {kind: flap, down, up, unit: s|requests} (down first, repeating), " +
 			"{kind: rate, n, per_s, block_s} (more than n within per_s seconds: then for block_s), {kind: attempts, n} (the first n attempts of each event). " +
 			"Reply templates may say {{.RetryAfter}} (seconds until the matched condition ends), {{.Elapsed}} (seconds since the start), {{.Attempt}}. " +
@@ -407,6 +408,7 @@ type ConfigureIn struct {
 	Vars     any    `json:"vars,omitempty" jsonschema:"template variables [{name, value}] (replaces all)"`
 	Schemas  any    `json:"schemas,omitempty" jsonschema:"JSON Schemas [{name, text}] (replaces all)"`
 	Event    any    `json:"event,omitempty" jsonschema:"where the sender puts an event's id, the same on every retry: {from: header|body, key}, e.g. {from: header, key: X-GitHub-Delivery} or {from: body, key: /id}"`
+	Forward  any    `json:"forward,omitempty" jsonschema:"a receiver to pass requests through to, sending live traffic outward: {url, keep_host, insecure_tls, timeout_ms, on_failure: gateway|default}; false removes it. Admin only once login is on"`
 }
 
 func (s *tools) configureEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in ConfigureIn) (*sdk.CallToolResult, map[string]any, error) {
@@ -414,15 +416,16 @@ func (s *tools) configureEndpoint(ctx context.Context, _ *sdk.CallToolRequest, i
 	if err != nil {
 		return nil, nil, err
 	}
-	parts := map[string]any{"default": in.Default, "rules": in.Rules, "checks": in.Checks, "vars": in.Vars, "schemas": in.Schemas, "event": in.Event}
+	parts := map[string]any{"default": in.Default, "rules": in.Rules, "checks": in.Checks, "vars": in.Vars, "schemas": in.Schemas, "event": in.Event,
+		"forward": in.Forward}
 	var changed []string
-	for _, k := range []string{"default", "rules", "checks", "vars", "schemas", "event"} {
+	for _, k := range []string{"default", "rules", "checks", "vars", "schemas", "event", "forward"} {
 		if parts[k] != nil {
 			changed = append(changed, k)
 		}
 	}
 	if len(changed) == 0 {
-		return nil, nil, errors.New("give at least one of default, rules, checks, vars, schemas, event")
+		return nil, nil, errors.New("give at least one of default, rules, checks, vars, schemas, event, forward")
 	}
 	// Read, change the parts given, write with If-Match; a change made in
 	// between (the UI, another agent) is retried once.
@@ -438,6 +441,9 @@ func (s *tools) configureEndpoint(ctx context.Context, _ *sdk.CallToolRequest, i
 		delete(doc, "secrets")
 		for _, k := range changed {
 			doc[k] = parts[k]
+			if k == "forward" && parts[k] == false {
+				delete(doc, k) // no receiver: the endpoint answers itself
+			}
 		}
 		out, err := s.c.putBehaviour(ctx, p, hd.Get("ETag"), doc)
 		var ae *apiError
@@ -447,7 +453,16 @@ func (s *tools) configureEndpoint(ctx context.Context, _ *sdk.CallToolRequest, i
 		if err != nil {
 			return nil, nil, err
 		}
-		return result("Set "+strings.Join(changed, ", ")+"; the next request is answered by the new behaviour", out)
+		summary := "Set " + strings.Join(changed, ", ") + "; the next request is answered by the new behaviour"
+		if f, ok := out["forward"].(map[string]any); ok {
+			summary += fmt.Sprintf("; requests no rule takes are forwarded to %v (live traffic leaves the server)", f["url"])
+		}
+		if ws, ok := out["warnings"].([]any); ok {
+			for _, w := range ws {
+				summary += fmt.Sprintf("; warning: %v", w)
+			}
+		}
+		return result(summary, out)
 	}
 }
 
@@ -914,10 +929,27 @@ func verdictOr(v any) string {
 // describe is a request's summary line: "#3 POST /hooks answered 200, verdict fail (GitHub signature: signature does not match)".
 func describe(r map[string]any) string {
 	s := fmt.Sprintf("#%v %v %v", num(r["no"]), r["method"], r["path"])
-	if out, ok := r["outcome"].(map[string]any); ok && out["action"] != nil && out["action"] != "reply" {
+	fw, _ := r["forward"].(map[string]any)
+	switch out, ok := r["outcome"].(map[string]any); {
+	case fw != nil && ok && out["action"] == "forward" && fw["error_kind"] == nil && fw["pending"] == nil:
+		s += fmt.Sprintf(" → receiver %v in %v ms", num(fw["status"]), num(fw["ms"]))
+	case fw != nil && fw["pending"] != nil:
+		s += " forwarding…"
+	case ok && out["action"] != nil && out["action"] != "reply":
 		s += fmt.Sprintf(" %v", out["action"])
-	} else {
+	default:
 		s += fmt.Sprintf(" answered %v", num(r["status"]))
+	}
+	switch {
+	case fw != nil && fw["error_kind"] != nil:
+		s += fmt.Sprintf(" (receiver failed: %v)", fw["error_kind"])
+	case fw != nil && out(r) != "forward" && fw["status"] != nil:
+		s += fmt.Sprintf(" (the receiver got it too: %v)", num(fw["status"]))
+	case r["not_forwarded"] == true:
+		s += " (not forwarded)"
+	}
+	if left, ok := fw["sender_left_ms"]; ok && left != nil {
+		s += fmt.Sprintf("; the sender left after %v ms", num(left))
 	}
 	if v, _ := r["verdict"].(string); v != "" {
 		s += ", verdict " + v
@@ -929,6 +961,11 @@ func describe(r map[string]any) string {
 		}
 	}
 	return s
+}
+
+func out(r map[string]any) any {
+	o, _ := r["outcome"].(map[string]any)
+	return o["action"]
 }
 
 // notes are the verdicts' notes in short ("same signature as #1"); the
