@@ -76,7 +76,13 @@ templ accountPage(nav navView, v accountView) {
 		<main class="sheet">
 			<div class="title-row full">
 				<h1 class="title">{ nav.User }</h1>
-				<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/account?dialog=password") }>Change password</a>
+				<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/account?dialog=password") }>
+					if v.HasPassword {
+						Change password
+					} else {
+						Set a password
+					}
+				</a>
 			</div>
 			<p class="lede">
 				if nav.Admin {
@@ -87,6 +93,27 @@ templ accountPage(nav navView, v accountView) {
 			</p>
 			if v.Saved != "" {
 				<p class="saved banner" role="status">{ v.Saved }</p>
+			}
+			if v.Err != "" && v.Dialog == "" {
+				<p class="error banner" role="alert">{ v.Err }</p>
+			}
+			<h2 class="sub">Sign-in</h2>
+			<p class="note">
+				Email:
+				if v.Email != "" {
+					<b>{ v.Email }</b>
+				} else {
+					none (an admin sets it)
+				}
+				· Password:
+				if v.HasPassword {
+					<b>set</b>
+				} else {
+					<b>not set</b>: you sign in through a provider
+				}
+			</p>
+			if len(v.Identities) > 0 {
+				@identityTable(nav, v.Identities, nav.Prefix+"/account/unlink", "Your logins end, this one too.")
 			}
 			<h2 class="sub">Tokens</h2>
 			<div class="toolbar">
@@ -137,17 +164,27 @@ templ accountPage(nav navView, v accountView) {
 				<dialog class="modal" data-modal data-close={ nav.Prefix + "/account" } open aria-labelledby="dialog-title">
 					<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/account/password") }>
 						<div class="modal-head">
-							<h2 id="dialog-title">Change password</h2>
+							<h2 id="dialog-title">
+								if v.HasPassword {
+									Change password
+								} else {
+									Set a password
+								}
+							</h2>
 							<a class="close" href={ templ.SafeURL(nav.Prefix + "/account") } aria-label="Close">×</a>
 						</div>
 						if v.Err != "" {
 							<p class="error banner" role="alert">Not changed: { v.Err }</p>
 						}
 						<input type="hidden" name="username" value={ nav.User } autocomplete="username"/>
-						<label for="current">Current password</label>
-						<input id="current" name="current" type="password" autocomplete="current-password" required autofocus/>
+						if v.HasPassword {
+							<label for="current">Current password</label>
+							<input id="current" name="current" type="password" autocomplete="current-password" required autofocus/>
+						} else if !v.Fresh {
+							<p class="note">A first password needs a sign-in from the last 10 minutes: log out and sign in again first.</p>
+						}
 						<label for="new">New password</label>
-						<input id="new" name="new" type="password" autocomplete="new-password" minlength={ strconv.Itoa(access.MinPassword) } required/>
+						<input id="new" name="new" type="password" autocomplete="new-password" minlength={ strconv.Itoa(access.MinPassword) } required autofocus?={ !v.HasPassword }/>
 						<label for="again">New password again</label>
 						<input id="again" name="again" type="password" autocomplete="new-password" required/>
 						<p class="help">At least { strconv.Itoa(access.MinPassword) } characters. Your other logins end; this one stays.</p>
@@ -211,6 +248,37 @@ templ tokenTable(nav navView, ts []store.Token, owners bool) {
 	}
 }
 
+// identityTable lists linked identities, each with an Unlink form posting
+// its issuer to action (or why it cannot be unlinked).
+templ identityTable(nav navView, rows []identityRow, action, consequence string) {
+	<div class="scroll">
+		<table class="eps people">
+			<thead>
+				<tr><th>Provider</th><th>Email at the last sign-in</th><th>Last sign-in</th><th><span class="sr">Actions</span></th></tr>
+			</thead>
+			<tbody>
+				for _, row := range rows {
+					<tr>
+						<td>{ row.Label }</td>
+						<td>{ row.Email }</td>
+						<td class="when">{ lastSeen(row.LastLogin) }</td>
+						<td class="acts">
+							if row.Unlink {
+								<form method="post" action={ templ.SafeURL(action) } data-confirm={ "Unlink " + row.Label + "? " + consequence }>
+									<input type="hidden" name="issuer" value={ row.Issuer }/>
+									<button class="btn quiet" type="submit">Unlink</button>
+								</form>
+							} else {
+								<span class="help">{ row.Why }</span>
+							}
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}
+
 templ usersPage(nav navView, v usersView) {
 	@layout(nav, "Users") {
 		<main class="sheet">
@@ -239,13 +307,15 @@ templ usersPage(nav navView, v usersView) {
 				<div class="scroll">
 					<table class="eps people">
 						<thead>
-							<tr><th>Name</th><th>Role</th><th>Added</th><th class="num">Tokens</th><th><span class="sr">Actions</span></th></tr>
+							<tr><th>Name</th><th>Email</th><th>Role</th><th>Sign-in</th><th>Added</th><th class="num">Tokens</th><th><span class="sr">Actions</span></th></tr>
 						</thead>
 						<tbody>
 							for _, u := range v.Users {
 								<tr>
 									<td>{ u.Name }</td>
+									<td>{ u.Email }</td>
 									<td>{ u.Role }</td>
+									<td>{ signInWays(u, v.Identities[u.ID]) }</td>
 									<td class="when">{ lastSeen(u.CreatedAt) }</td>
 									<td class="num">{ strconv.Itoa(u.Tokens) }</td>
 									<td class="acts">
@@ -266,6 +336,15 @@ templ usersPage(nav navView, v usersView) {
 												</form>
 											}
 											<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users?dialog=password&name=" + u.Name) }>Set password</a>
+											<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users?dialog=email&name=" + u.Name) }>Set email</a>
+											for _, row := range v.Identities[u.ID] {
+												if row.Unlink {
+													<form method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/unlink") } data-confirm={ "Unlink " + row.Label + " from " + u.Name + "? Their logins end." }>
+														<input type="hidden" name="issuer" value={ row.Issuer }/>
+														<button class="btn quiet" type="submit">Unlink { row.Label }</button>
+													</form>
+												}
+											}
 											if !v.lastAdmin(u) && u.Name != nav.User {
 												<form method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + u.Name + "/remove") } data-confirm={ "Remove " + u.Name + " with their " + strconv.Itoa(u.Tokens) + " tokens?" }>
 													<button class="btn quiet" type="submit">Remove</button>
@@ -303,11 +382,45 @@ templ usersPage(nav navView, v usersView) {
 								<option value="admin" selected?={ v.FormRole == "admin" }>admin</option>
 							}
 						</select>
+						<label for="email">Email</label>
+						<input id="email" name="email" type="email" value={ v.FormEmail } autocomplete="off" spellcheck="false"/>
+						<p class="help">
+							if v.Providers {
+								They sign in through a provider with this address (it links at their first sign-in). Optional with a password.
+							} else {
+								Optional: it lets them sign in through a provider once one is configured.
+							}
+						</p>
 						<label for="password">Password</label>
-						<input id="password" name="password" type="password" autocomplete="new-password" minlength={ strconv.Itoa(access.MinPassword) } required/>
-						<p class="help">At least { strconv.Itoa(access.MinPassword) } characters. Give it to them another way; they can change it on their account page.</p>
+						<input id="password" name="password" type="password" autocomplete="new-password" minlength={ strconv.Itoa(access.MinPassword) } required?={ !v.Providers || len(v.Users) == 0 }/>
+						<p class="help">
+							At least { strconv.Itoa(access.MinPassword) } characters. Give it to them another way; they can change it on their account page.
+							if v.Providers && len(v.Users) > 0 {
+								Leave it empty for a user who signs in through a provider only: then an email is needed.
+							}
+						</p>
 						<div class="acts">
 							<button class="btn solid" type="submit">Add user</button>
+							<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users") }>Cancel</a>
+						</div>
+					</form>
+				</dialog>
+			}
+			if v.Dialog == "email" {
+				<dialog class="modal" data-modal data-close={ nav.Prefix + "/users" } open aria-labelledby="dialog-title">
+					<form class="card" method="post" action={ templ.SafeURL(nav.Prefix + "/users/" + v.Form + "/email") }>
+						<div class="modal-head">
+							<h2 id="dialog-title">Email of { v.Form }</h2>
+							<a class="close" href={ templ.SafeURL(nav.Prefix + "/users") } aria-label="Close">×</a>
+						</div>
+						if v.Err != "" {
+							<p class="error banner" role="alert">Not saved: { v.Err }</p>
+						}
+						<label for="email">Email</label>
+						<input id="email" name="email" type="email" value={ v.FormEmail } autocomplete="off" spellcheck="false" autofocus/>
+						<p class="help">A sign-in through a provider with this verified address links to { v.Form } (once; then the provider's identity decides). Check it: a typo hands the account to whoever owns the typo. Empty clears it.</p>
+						<div class="acts">
+							<button class="btn solid" type="submit">Save email</button>
 							<a class="btn quiet" href={ templ.SafeURL(nav.Prefix + "/users") }>Cancel</a>
 						</div>
 					</form>

@@ -1,11 +1,13 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/access"
@@ -57,18 +59,79 @@ type accountView struct {
 	Saved    string
 	NewToken string // a token just made, shown once
 	NewName  string
+	// Sign-in: the email an admin set, whether a password is set, the
+	// linked identities; Fresh: the session is young enough to set a first
+	// password.
+	Email       string
+	HasPassword bool
+	Fresh       bool
+	Identities  []identityRow
+}
+
+// identityRow is a linked identity as the pages show it.
+type identityRow struct {
+	Issuer, Label, Email string
+	LastLogin            time.Time
+	Unlink               bool   // may be unlinked here
+	Why                  string // why not
+}
+
+// firstPasswordWindow is how young a session must be to set a first
+// password without a current one: a stolen session cookie must not become
+// a lasting password (a seam for tests).
+var firstPasswordWindow = 10 * time.Minute
+
+// label names an identity's provider: the configured label of its issuer,
+// else the name it was signed in with, else the issuer.
+func (h *Handler) label(id store.Identity) string {
+	for _, p := range h.oidc {
+		if p.Issuer == id.Issuer {
+			return p.Label
+		}
+	}
+	if id.Provider != "" {
+		return id.Provider
+	}
+	return id.Issuer
+}
+
+// identityRows: own identities (self) may be unlinked only when another way
+// in is left; an admin may unlink anyone else's.
+func (h *Handler) identityRows(u store.User, ids []store.Identity, self bool) []identityRow {
+	var out []identityRow
+	for _, id := range ids {
+		row := identityRow{Issuer: id.Issuer, Label: h.label(id), Email: id.Email, LastLogin: id.LastLoginAt, Unlink: true}
+		if self && !u.HasPassword() && len(ids) == 1 {
+			row.Unlink, row.Why = false, "your only way to log in"
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// freshSession reports whether a session started within the first
+// password window.
+func (h *Handler) freshSession(ctx context.Context, id *access.Identity) bool {
+	if id.Via != access.ViaSession {
+		return false
+	}
+	at, err := h.store.SessionCreatedAt(ctx, id.SessionID)
+	return err == nil && time.Since(at) < firstPasswordWindow
 }
 
 // usersView is the users page.
 type usersView struct {
-	Users    []store.User
-	Tokens   []store.Token
-	Admins   int
-	Dialog   string // "add" or "password"
-	Form     string // the name typed, or whose password is set
-	FormRole string
-	Err      string
-	Saved    string
+	Users      []store.User
+	Tokens     []store.Token
+	Admins     int
+	Identities map[int64][]identityRow
+	Providers  bool   // provider sign-in is configured: a password is optional then
+	Dialog     string // "add", "password" or "email"
+	Form       string // the name typed, or whose password or email is set
+	FormRole   string
+	FormEmail  string
+	Err        string
+	Saved      string
 }
 
 // lastAdmin reports whether u is the only admin: its role and removal
@@ -174,6 +237,18 @@ func (h *Handler) account(w http.ResponseWriter, r *http.Request, status int, v 
 		return
 	}
 	v.Tokens = ts
+	u, err := h.store.UserByID(r.Context(), id.UserID)
+	if err != nil {
+		h.fail(w, "account", err)
+		return
+	}
+	ids, err := h.store.Identities(r.Context(), u.ID)
+	if err != nil {
+		h.fail(w, "account", err)
+		return
+	}
+	v.Email, v.HasPassword, v.Identities = u.Email, u.HasPassword(), h.identityRows(u, ids, true)
+	v.Fresh = h.freshSession(r.Context(), id)
 	nav, err := h.nav(r, -1, false)
 	if err != nil {
 		h.fail(w, "account", err)
@@ -211,7 +286,18 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		bad(err.Error() + ".")
 		return
 	}
-	if _, err := h.auth.Login(r.Context(), id.Name, r.PostFormValue("current")); err != nil {
+	u, err := h.store.UserByID(r.Context(), id.UserID)
+	if err != nil {
+		h.fail(w, "change password", err)
+		return
+	}
+	if !u.HasPassword() {
+		// A first password: no current one to give, so a fresh sign-in.
+		if !h.freshSession(r.Context(), id) {
+			bad("sign in again to set a password: a first password needs a sign-in from the last 10 minutes.")
+			return
+		}
+	} else if _, err := h.auth.Login(r.Context(), id.Name, r.PostFormValue("current")); err != nil {
 		switch {
 		case errors.Is(err, access.ErrWrongLogin):
 			bad("the current password is wrong.")
@@ -289,11 +375,18 @@ func (h *Handler) users(w http.ResponseWriter, r *http.Request, status int, v us
 		h.fail(w, "users", err)
 		return
 	}
-	v.Users, v.Tokens = us, ts
+	all, err := h.store.AllIdentities(ctx)
+	if err != nil {
+		h.fail(w, "users", err)
+		return
+	}
+	v.Users, v.Tokens, v.Providers, v.Identities = us, ts, len(h.oidc) > 0, map[int64][]identityRow{}
+	me := access.From(ctx)
 	for _, u := range us {
 		if u.Role == store.RoleAdmin {
 			v.Admins++
 		}
+		v.Identities[u.ID] = h.identityRows(u, all[u.ID], me != nil && me.UserID == u.ID)
 	}
 	nav, err := h.nav(r, -1, false)
 	if err != nil {
@@ -310,10 +403,12 @@ func (h *Handler) usersPage(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	v := usersView{Dialog: q.Get("dialog"), Form: q.Get("name")}
-	if v.Dialog == "password" {
-		if _, err := h.store.UserByName(r.Context(), v.Form); err != nil {
+	if v.Dialog == "password" || v.Dialog == "email" {
+		u, err := h.store.UserByName(r.Context(), v.Form)
+		if err != nil {
 			v.Dialog = ""
 		}
+		v.FormEmail = u.Email
 	}
 	if s := q.Get("saved"); s != "" {
 		v.Saved = savedUsers[s]
@@ -327,6 +422,8 @@ var savedUsers = map[string]string{
 	"password": "Password set; their logins have ended.",
 	"removed":  "User removed with their tokens.",
 	"revoked":  "Token revoked.",
+	"email":    "Email saved.",
+	"unlinked": "Identity unlinked; their logins have ended.",
 }
 
 // who is the log attribute of the user making a change, if any.
@@ -345,13 +442,25 @@ func (h *Handler) addUser(w http.ResponseWriter, r *http.Request) {
 	}
 	first = !first
 	name, role := r.PostFormValue("name"), r.PostFormValue("role")
-	u, err := api.AddUser(ctx, h.store, h.auth, name, role, r.PostFormValue("password"))
+	email, pw := strings.TrimSpace(r.PostFormValue("email")), r.PostFormValue("password")
+	again := func(status int, msg string) {
+		h.users(w, r, status, usersView{Dialog: "add", Form: name, FormRole: role, FormEmail: email, Err: msg})
+	}
+	if pw == "" && len(h.oidc) == 0 {
+		again(http.StatusUnprocessableEntity, "a password is needed.")
+		return
+	}
+	u, err := api.AddUser(ctx, h.store, h.auth, name, role, pw, email)
 	if e, ok := access.IsInvalid(err); ok {
-		h.users(w, r, http.StatusUnprocessableEntity, usersView{Dialog: "add", Form: name, FormRole: role, Err: e.Message + "."})
+		again(http.StatusUnprocessableEntity, e.Message+".")
 		return
 	}
 	if errors.Is(err, store.ErrExists) {
-		h.users(w, r, http.StatusUnprocessableEntity, usersView{Dialog: "add", Form: name, FormRole: role, Err: "a user with this name exists."})
+		again(http.StatusUnprocessableEntity, "a user with this name exists.")
+		return
+	}
+	if errors.Is(err, store.ErrEmailTaken) {
+		again(http.StatusConflict, "another user has this email.")
 		return
 	}
 	if err != nil {
@@ -365,6 +474,82 @@ func (h *Handler) addUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, h.prefix+"/users?saved=added", http.StatusSeeOther)
+}
+
+// setEmail sets or clears a user's email (an admin's).
+func (h *Handler) setEmail(w http.ResponseWriter, r *http.Request) {
+	name := pathUser(r)
+	email := strings.TrimSpace(r.PostFormValue("email"))
+	again := func(status int, msg string) {
+		h.users(w, r, status, usersView{Dialog: "email", Form: name, FormEmail: email, Err: msg})
+	}
+	if email != "" {
+		e, err := access.CheckEmail(email)
+		if err != nil {
+			again(http.StatusUnprocessableEntity, "an email is an address such as ann@example.com.")
+			return
+		}
+		email = e
+	}
+	u, err := h.store.SetEmail(r.Context(), name, email)
+	if errors.Is(err, store.ErrEmailTaken) {
+		again(http.StatusConflict, "another user has this email.")
+		return
+	}
+	if err != nil {
+		h.userError(w, r, "set email", err)
+		return
+	}
+	h.log.Info("user email set", append([]any{"name", u.Name, "email", email}, who(r)...)...)
+	http.Redirect(w, r, h.prefix+"/users?saved=email", http.StatusSeeOther)
+}
+
+// unlinkUser removes a user's identity at an issuer (an admin's): that
+// user's logins end; an admin's own last way in is refused.
+func (h *Handler) unlinkUser(w http.ResponseWriter, r *http.Request) {
+	name := pathUser(r)
+	me := access.From(r.Context())
+	gone, err := h.store.Unlink(r.Context(), name, r.PostFormValue("issuer"), me != nil && me.Name == name)
+	if errors.Is(err, store.ErrLastWayIn) {
+		h.users(w, r, http.StatusConflict, usersView{Err: "Not unlinked: you would have no way to log in. Set a password first."})
+		return
+	}
+	if err != nil {
+		h.userError(w, r, "unlink", err)
+		return
+	}
+	h.log.Info("oidc identity unlinked", append([]any{"name", name, "provider", gone.Provider, "issuer", gone.Issuer}, who(r)...)...)
+	if me != nil && me.Name == name {
+		http.SetCookie(w, access.Cookie("", h.prefix, h.secure(r)))
+		http.Redirect(w, r, h.prefix+"/login", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, h.prefix+"/users?saved=unlinked", http.StatusSeeOther)
+}
+
+// unlinkOwn removes one's own identity at an issuer, unless it is one's
+// only way in; one's logins end, this one too.
+func (h *Handler) unlinkOwn(w http.ResponseWriter, r *http.Request) {
+	id := access.From(r.Context())
+	if id == nil || id.Via != access.ViaSession {
+		http.Redirect(w, r, h.prefix+"/users", http.StatusSeeOther)
+		return
+	}
+	gone, err := h.store.Unlink(r.Context(), id.Name, r.PostFormValue("issuer"), true)
+	switch {
+	case errors.Is(err, store.ErrLastWayIn):
+		h.account(w, r, http.StatusConflict, accountView{Err: "Not unlinked: it is your only way to log in. Set a password first."})
+		return
+	case errors.Is(err, store.ErrNotFound):
+		http.NotFound(w, r)
+		return
+	case err != nil:
+		h.fail(w, "unlink", err)
+		return
+	}
+	h.log.Info("oidc identity unlinked", "name", id.Name, "provider", gone.Provider, "issuer", gone.Issuer, "user", id.Name)
+	http.SetCookie(w, access.Cookie("", h.prefix, h.secure(r)))
+	http.Redirect(w, r, h.prefix+"/login", http.StatusSeeOther)
 }
 
 // userError answers a failed change of a user on the users page.
@@ -478,4 +663,20 @@ func (h *Handler) revokeAnyToken(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("token revoked", append([]any{"owner", t.Owner, "token", t.Name, "token_id", t.PublicID}, who(r)...)...)
 	h.auth.Changed()
 	http.Redirect(w, r, h.prefix+"/users?saved=revoked", http.StatusSeeOther)
+}
+
+// signInWays says how a user logs in: "password", the providers linked, or
+// both.
+func signInWays(u store.User, ids []identityRow) string {
+	var ways []string
+	if u.HasPassword() {
+		ways = append(ways, "password")
+	}
+	for _, id := range ids {
+		ways = append(ways, id.Label)
+	}
+	if len(ways) == 0 {
+		return "none yet"
+	}
+	return strings.Join(ways, ", ")
 }

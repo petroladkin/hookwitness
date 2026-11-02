@@ -170,7 +170,7 @@ func userCmd(ctx context.Context, args []string, getenv func(string) string, std
 	if *admin {
 		role = store.RoleAdmin
 	}
-	_, err = api.AddUser(ctx, st, auth, name, role, pw)
+	_, err = api.AddUser(ctx, st, auth, name, role, pw, "")
 	if e, ok := access.IsInvalid(err); ok {
 		if e.Field == "role" {
 			return fail(exitRefused, "%s (add -admin)", e.Message)

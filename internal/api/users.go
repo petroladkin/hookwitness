@@ -251,7 +251,12 @@ func checkRole(role string) error {
 
 // AddUser creates a user for the UI and the API: the first one must be an
 // admin (or nobody could manage users).
-func AddUser(ctx context.Context, st *store.Store, a *access.Authenticator, name, role, password string) (store.User, error) {
+//
+// email ("" : none) lets the user sign in through a provider; with one, the
+// password may be "" (provider sign-in only), except for the first user,
+// who keeps a password: provider sign-in is off until a first admin exists,
+// and a password is the way in when the provider is down.
+func AddUser(ctx context.Context, st *store.Store, a *access.Authenticator, name, role, password, email string) (store.User, error) {
 	n, err := access.CheckName(name)
 	if err != nil {
 		return store.User{}, err
@@ -259,17 +264,31 @@ func AddUser(ctx context.Context, st *store.Store, a *access.Authenticator, name
 	if err := checkRole(role); err != nil {
 		return store.User{}, err
 	}
-	if err := access.CheckPassword(password); err != nil {
-		return store.User{}, err
-	}
-	if role != store.RoleAdmin {
-		if on, err := st.HasUsers(ctx); err != nil {
+	if email != "" {
+		if email, err = access.CheckEmail(email); err != nil {
 			return store.User{}, err
-		} else if !on {
-			return store.User{}, &access.ErrInvalid{Field: "role", Message: "the first user must be an admin: otherwise nobody could manage users"}
 		}
 	}
-	return st.AddUser(ctx, n, role, a.HashPassword(password))
+	on, err := st.HasUsers(ctx)
+	if err != nil {
+		return store.User{}, err
+	}
+	record := ""
+	switch {
+	case password != "":
+		if err := access.CheckPassword(password); err != nil {
+			return store.User{}, err
+		}
+		record = a.HashPassword(password)
+	case !on:
+		return store.User{}, &access.ErrInvalid{Field: "password", Message: "the first user needs a password: the way in when a provider is down"}
+	case email == "":
+		return store.User{}, &access.ErrInvalid{Field: "password", Message: "a password is needed, or an email to sign in through a provider"}
+	}
+	if role != store.RoleAdmin && !on {
+		return store.User{}, &access.ErrInvalid{Field: "role", Message: "the first user must be an admin: otherwise nobody could manage users"}
+	}
+	return st.AddUserWithEmail(ctx, n, role, record, email)
 }
 
 func (h *Handler) addUser(w http.ResponseWriter, r *http.Request) {
@@ -277,6 +296,7 @@ func (h *Handler) addUser(w http.ResponseWriter, r *http.Request) {
 		Name     string `json:"name"`
 		Role     string `json:"role"`
 		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 	if !decode(w, r, &in, false) {
 		return
@@ -284,12 +304,16 @@ func (h *Handler) addUser(w http.ResponseWriter, r *http.Request) {
 	if in.Role == "" {
 		in.Role = store.RoleUser
 	}
-	u, err := AddUser(r.Context(), h.store, h.o.Access, in.Name, in.Role, in.Password)
+	u, err := AddUser(r.Context(), h.store, h.o.Access, in.Name, in.Role, in.Password, in.Email)
 	if writeInvalid(w, err) {
 		return
 	}
 	if errors.Is(err, store.ErrExists) {
 		WriteError(w, http.StatusConflict, "exists", "a user with this name exists", "name")
+		return
+	}
+	if errors.Is(err, store.ErrEmailTaken) {
+		WriteError(w, http.StatusConflict, "email_taken", "another user has this email", "email")
 		return
 	}
 	if err != nil {

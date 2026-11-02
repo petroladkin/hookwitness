@@ -256,3 +256,14 @@ func (s *Store) Unlink(ctx context.Context, name, issuer string, self bool) (Ide
 	})
 	return gone, err
 }
+
+// SessionCreatedAt is when a session started (a first password needs a
+// fresh one).
+func (s *Store) SessionCreatedAt(ctx context.Context, id int64) (time.Time, error) {
+	var at int64
+	err := s.db.QueryRowContext(ctx, `SELECT created_at FROM sessions WHERE id = ?`, id).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, ErrNotFound
+	}
+	return fromMillis(at), err
+}
