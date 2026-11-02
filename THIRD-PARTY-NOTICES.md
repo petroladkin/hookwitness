@@ -877,7 +877,7 @@ shall terminate as of the date such litigation is filed.
 
 ## golang.org/x/oauth2
 
-Version v0.35.0, license BSD-3-Clause.
+Version v0.36.0, license BSD-3-Clause.
 
 ### LICENSE
 
