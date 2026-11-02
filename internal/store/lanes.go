@@ -157,21 +157,33 @@ func repeatString(s string, n int) string {
 // pruneCount deletes, oldest first, at most limit rows of a lane beyond its
 // newest count.
 func pruneCount(ctx context.Context, tx *sql.Tx, endpoint int64, l lane, count, limit int) (int, error) {
-	var bound int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM `+l.from()+` ORDER BY id DESC LIMIT 1 OFFSET ?`,
-		register(endpoint), count).Scan(&bound)
-	if errors.Is(err, sql.ErrNoRows) {
+	n, err := laneCount(ctx, tx, endpoint, l)
+	if err != nil {
+		return 0, err
+	}
+	if n <= count {
 		return 0, nil
 	}
-	if err != nil {
-		return 0, fmt.Errorf("prune bound: %w", err)
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT id, received_at FROM `+l.from()+` AND id <= ? ORDER BY id LIMIT ?`,
-		register(endpoint), bound, limit)
+	rows, err := tx.QueryContext(ctx, `SELECT id, received_at FROM `+l.from()+` ORDER BY id LIMIT ?`,
+		register(endpoint), min(n-count, limit))
 	if err != nil {
 		return 0, fmt.Errorf("prune rows: %w", err)
 	}
 	return pruneRows(ctx, tx, endpoint, l, rows)
+}
+
+// laneCount is how many unpinned requests a lane of a register holds,
+// from the counts the triggers of migration 0010 keep.
+func laneCount(ctx context.Context, q queryer, endpoint int64, l lane) (int, error) {
+	where := `reg = ? AND pinned = 0`
+	if l != laneAll {
+		where += ` AND anomaly = ` + strconv.Itoa(int(l))
+	}
+	var n int
+	if err := q.QueryRowContext(ctx, `SELECT ifnull(sum(n), 0) FROM lane_counts WHERE `+where, endpoint).Scan(&n); err != nil {
+		return 0, fmt.Errorf("lane count: %w", err)
+	}
+	return n, nil
 }
 
 // pruneAge deletes at most limit rows of a lane received before cutoff.
@@ -343,11 +355,12 @@ func (s *Store) pruneStep(ctx context.Context, reg int64, now time.Time, d Keep)
 func (s *Store) ToPrune(ctx context.Context, reg int64, p Retention, now time.Time, d Keep) (int, error) {
 	total := 0
 	for _, ln := range effective(p, reg, d).lanes() {
-		var over, old int
-		if err := s.db.QueryRowContext(ctx, `SELECT max(count(*) - ?, 0) FROM `+ln.l.from(),
-			ln.count, register(reg)).Scan(&over); err != nil {
-			return 0, fmt.Errorf("count over the limit: %w", err)
+		var old int
+		n, err := laneCount(ctx, s.db, reg, ln.l)
+		if err != nil {
+			return 0, err
 		}
+		over := max(n-ln.count, 0)
 		if ln.age > 0 {
 			// Rows past the age among the ones the count keeps.
 			if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT received_at FROM `+ln.l.from()+`
@@ -464,8 +477,7 @@ func (s *Store) KeptState(ctx context.Context, reg int64) (Kept, error) {
 	if anomalyAt > 0 {
 		k.AnomalyAt = fromMillis(anomalyAt)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT pinned, anomaly, count(*) FROM requests INDEXED BY requests_by_lane
-		WHERE endpoint_id IS ? GROUP BY pinned, anomaly`, register(reg))
+	rows, err := s.db.QueryContext(ctx, `SELECT pinned, anomaly, n FROM lane_counts WHERE reg = ?`, reg)
 	if err != nil {
 		return k, fmt.Errorf("count lanes: %w", err)
 	}

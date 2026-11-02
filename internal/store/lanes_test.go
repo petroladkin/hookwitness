@@ -522,8 +522,8 @@ func TestLaneQueriesUseIndexes(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t)
 	queries := map[string][]any{
-		`SELECT id FROM ` + laneNormal.from() + ` ORDER BY id DESC LIMIT 1 OFFSET ?`:                                                                                              {int64(1), 10},
-		`SELECT id FROM ` + laneAll.from() + ` ORDER BY id DESC LIMIT 1 OFFSET ?`:                                                                                                 {int64(1), 10},
+		`SELECT id, received_at FROM ` + laneNormal.from() + ` ORDER BY id LIMIT ?`:                                                                                               {int64(1), 64},
+		`SELECT id, received_at FROM ` + laneAll.from() + ` ORDER BY id LIMIT ?`:                                                                                                  {int64(1), 64},
 		`SELECT id, received_at FROM ` + laneAnomaly.from() + ` AND id <= ? ORDER BY id LIMIT ?`:                                                                                  {int64(1), 5, 64},
 		`SELECT id, received_at FROM ` + laneAll.from() + ` AND id <= ? ORDER BY id LIMIT ?`:                                                                                      {int64(1), 5, 64},
 		`SELECT min(id) FROM ` + laneNormal.from():                                                                                                                                {int64(1)},
@@ -643,4 +643,69 @@ func BenchmarkPrunePass(b *testing.B) {
 			}
 		}
 	})
+}
+
+// TestLaneCountsExact: the counts the triggers keep equal a count of the
+// rows after inserts, prunes, class changes, pins, clears and an
+// endpoint's deletion.
+func TestLaneCountsExact(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	a, _ := s.CreateEndpoint(ctx, "/a")
+	b, _ := s.CreateEndpoint(ctx, "/b")
+	check := func(when string) {
+		t.Helper()
+		rows, err := s.db.QueryContext(ctx, `SELECT g.reg, g.pinned, g.anomaly, g.n, ifnull(c.n, -1) FROM
+			(SELECT ifnull(endpoint_id, 0) AS reg, pinned, anomaly, count(*) AS n FROM requests GROUP BY 1, 2, 3) g
+			LEFT JOIN lane_counts c ON c.reg = g.reg AND c.pinned = g.pinned AND c.anomaly = g.anomaly`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var reg, pinned, anomaly, n, c int
+			rows.Scan(&reg, &pinned, &anomaly, &n, &c)
+			if n != c {
+				t.Errorf("%s: register %d pinned %d anomaly %d: %d rows, counted %d", when, reg, pinned, anomaly, n, c)
+			}
+		}
+		var stray int
+		s.db.QueryRowContext(ctx, `SELECT count(*) FROM lane_counts c WHERE n <> 0 AND NOT EXISTS (SELECT 1 FROM requests r
+			WHERE ifnull(r.endpoint_id, 0) = c.reg AND r.pinned = c.pinned AND r.anomaly = c.anomaly)`).Scan(&stray)
+		if stray != 0 {
+			t.Errorf("%s: %d counts without rows", when, stray)
+		}
+	}
+	rng := rand.New(rand.NewPCG(3, 4))
+	keep := Keep{Normal: 20, Anomalies: 5}
+	var ids []int64
+	for i := range 300 {
+		reg := []int64{a.ID, b.ID, Unmatched}[rng.IntN(3)]
+		r := sample(reg, fmt.Sprint(i))
+		status := []int{200, 200, 200, 500}[rng.IntN(4)]
+		r.Outcome, r.Status = outcomeJSON(emulate.ActReply, status), status
+		if err := s.AddRequest(ctx, r, keep, nil); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, r.ID)
+		switch rng.IntN(10) {
+		case 0:
+			s.SetPinned(ctx, ids[rng.IntN(len(ids))], rng.IntN(2) == 0)
+		case 1:
+			s.UpdateOutcome(ctx, ids[rng.IntN(len(ids))], 0, outcomeJSON(emulate.ActTimeout, 0))
+		}
+	}
+	check("after inserts, pins and class changes")
+	s.SetRetention(ctx, a.ID, Retention{Normal: Lane{Count: 3}, Anomalies: Lane{Count: 1}, AnomaliesSet: true})
+	s.PruneNow(ctx, a.ID, time.Now(), keep)
+	check("after a lowered limit")
+	s.ClearRequests(ctx, b.ID)
+	check("after a clear")
+	s.DeleteEndpoint(ctx, a.ID)
+	check("after an endpoint's deletion")
+	var left int
+	s.db.QueryRowContext(ctx, `SELECT count(*) FROM lane_counts WHERE reg = ?`, a.ID).Scan(&left)
+	if left != 0 {
+		t.Errorf("a deleted endpoint left %d counts", left)
+	}
 }

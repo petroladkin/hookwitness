@@ -43,3 +43,36 @@ UPDATE endpoints SET
 UPDATE settings SET value = CAST(ifnull((SELECT r.received_at FROM requests r WHERE r.endpoint_id IS NULL
         AND r.no > 1 AND r.id = (SELECT min(id) FROM requests WHERE endpoint_id IS NULL)), 0) AS TEXT)
     WHERE key IN ('unmatched.pruned_normal_at', 'unmatched.pruned_anomaly_at');
+
+-- How many requests each lane of each register holds (reg 0: Unmatched),
+-- kept by triggers on every insert, delete (clears, prunes, an endpoint's
+-- cascade) and change of class or pin: pruning a lane of a large register
+-- reads a count instead of walking it.
+CREATE TABLE lane_counts (
+    reg     INTEGER NOT NULL,
+    pinned  INTEGER NOT NULL,
+    anomaly INTEGER NOT NULL,
+    n       INTEGER NOT NULL,
+    PRIMARY KEY (reg, pinned, anomaly)
+) STRICT, WITHOUT ROWID;
+INSERT INTO lane_counts (reg, pinned, anomaly, n)
+    SELECT ifnull(endpoint_id, 0), pinned, anomaly, count(*) FROM requests GROUP BY 1, 2, 3;
+
+CREATE TRIGGER lane_count_insert AFTER INSERT ON requests BEGIN
+    INSERT INTO lane_counts (reg, pinned, anomaly, n) VALUES (ifnull(NEW.endpoint_id, 0), NEW.pinned, NEW.anomaly, 1)
+        ON CONFLICT (reg, pinned, anomaly) DO UPDATE SET n = n + 1;
+END;
+CREATE TRIGGER lane_count_delete AFTER DELETE ON requests BEGIN
+    UPDATE lane_counts SET n = n - 1
+        WHERE reg = ifnull(OLD.endpoint_id, 0) AND pinned = OLD.pinned AND anomaly = OLD.anomaly;
+END;
+CREATE TRIGGER lane_count_move AFTER UPDATE OF pinned, anomaly ON requests
+    WHEN OLD.pinned IS NOT NEW.pinned OR OLD.anomaly IS NOT NEW.anomaly BEGIN
+    UPDATE lane_counts SET n = n - 1
+        WHERE reg = ifnull(OLD.endpoint_id, 0) AND pinned = OLD.pinned AND anomaly = OLD.anomaly;
+    INSERT INTO lane_counts (reg, pinned, anomaly, n) VALUES (ifnull(NEW.endpoint_id, 0), NEW.pinned, NEW.anomaly, 1)
+        ON CONFLICT (reg, pinned, anomaly) DO UPDATE SET n = n + 1;
+END;
+CREATE TRIGGER lane_count_endpoint AFTER DELETE ON endpoints BEGIN
+    DELETE FROM lane_counts WHERE reg = OLD.id;
+END;

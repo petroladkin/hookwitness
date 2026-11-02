@@ -124,11 +124,11 @@ func (s *Store) CreateEndpoint(ctx context.Context, path string) (Endpoint, erro
 }
 
 const endpointSummary = `SELECT e.id, e.path, e.created_at,
-	(SELECT COUNT(*) FROM requests r WHERE r.endpoint_id = e.id),
+	(SELECT ifnull(sum(n), 0) FROM lane_counts c WHERE c.reg = e.id),
 	(SELECT MAX(received_at) FROM requests r WHERE r.endpoint_id = e.id),
 	e.config, e.counter, e.enabled, e.retention, e.pruned, e.pruned_normal_at, e.pruned_anomaly_at,
-	(SELECT COUNT(*) FROM requests r INDEXED BY requests_by_lane WHERE r.endpoint_id = e.id AND r.pinned = 1),
-	(SELECT COUNT(*) FROM requests r INDEXED BY requests_by_lane WHERE r.endpoint_id = e.id AND r.pinned = 0 AND r.anomaly = 1)
+	(SELECT ifnull(sum(n), 0) FROM lane_counts c WHERE c.reg = e.id AND c.pinned = 1),
+	(SELECT ifnull(sum(n), 0) FROM lane_counts c WHERE c.reg = e.id AND c.pinned = 0 AND c.anomaly = 1)
 	FROM endpoints e`
 
 func scanEndpoint(sc interface{ Scan(...any) error }) (Endpoint, error) {
