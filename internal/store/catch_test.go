@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func openTemp(t *testing.T) *Store {
+func openTemp(t testing.TB) *Store {
 	t.Helper()
 	s, err := Open(context.Background(), tempDB(t))
 	if err != nil {

@@ -10,7 +10,7 @@ import (
 	"testing/fstest"
 )
 
-func tempDB(t *testing.T) string {
+func tempDB(t testing.TB) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "hw.db")
 }

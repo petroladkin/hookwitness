@@ -530,6 +530,7 @@ func TestLaneQueriesUseIndexes(t *testing.T) {
 		`SELECT pinned, anomaly, count(*) FROM requests INDEXED BY requests_by_lane WHERE endpoint_id IS ? GROUP BY pinned, anomaly`:                                              {int64(1)},
 		`SELECT id, received_at FROM requests INDEXED BY requests_by_time WHERE endpoint_id IS ? AND pinned = 0 AND anomaly = 0 AND received_at < ? ORDER BY received_at LIMIT ?`: {int64(1), 5, 256},
 		`SELECT count(*) FROM requests r WHERE r.endpoint_id = ?`:                                                                                                                 {int64(1)},
+		endpointSummary + ` WHERE e.id = ?`:                                                                                                                                       {int64(1)},
 	}
 	for q, args := range queries {
 		rows, err := s.db.QueryContext(ctx, `EXPLAIN QUERY PLAN `+q, args...)
@@ -556,3 +557,90 @@ func TestLaneQueriesUseIndexes(t *testing.T) {
 }
 
 var _ = sql.ErrNoRows
+
+// bigRegister fills a register with n requests straight into the table (a
+// tenth of them anomalies), the way a long capture leaves it.
+func bigRegister(b testing.TB, s *Store, n int) int64 {
+	b.Helper()
+	ctx := context.Background()
+	ep, err := s.CreateEndpoint(ctx, "/big")
+	if err != nil {
+		b.Fatal(err)
+	}
+	tx, _ := s.db.BeginTx(ctx, nil)
+	st, err := tx.PrepareContext(ctx, `INSERT INTO requests (endpoint_id, no, received_at, method, path, raw_query, proto, remote_addr,
+		headers, body, size, status, outcome, anomaly) VALUES (?, ?, ?, 'POST', '/big', '', 'HTTP/1.1', '', '[]', x'7b7d', 2, ?, ?, ?)`)
+	if err != nil {
+		b.Fatal(err)
+	}
+	base := time.Now().Add(-time.Duration(n) * time.Second)
+	for i := range n {
+		status, anomaly := 200, 0
+		if i%10 == 0 {
+			status, anomaly = 500, 1
+		}
+		if _, err := st.ExecContext(ctx, ep.ID, i+1, millis(base.Add(time.Duration(i)*time.Second)), status,
+			outcomeJSON(emulate.ActReply, status), anomaly); err != nil {
+			b.Fatal(err)
+		}
+	}
+	tx.ExecContext(ctx, `UPDATE endpoints SET last_no = ? WHERE id = ?`, n, ep.ID)
+	if err := tx.Commit(); err != nil {
+		b.Fatal(err)
+	}
+	return ep.ID
+}
+
+// BenchmarkInsertWithPrune: one request caught into a register of 500 000
+// kept requests at its limit, so every insert prunes the oldest.
+//
+//	go test ./internal/store -run '^$' -bench InsertWithPrune -benchtime 200x
+func BenchmarkInsertWithPrune(b *testing.B) {
+	s := openTemp(b)
+	id := bigRegister(b, s, 500_000)
+	keep := Keep{Normal: 450_000, Anomalies: 50_000}
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := range b.N {
+		r := sample(id, fmt.Sprint(i))
+		r.Outcome = outcomeJSON(emulate.ActReply, 200)
+		if err := s.AddRequest(ctx, r, keep, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkPrunePass: the minute's housekeeping over a register of 500 000
+// requests with an age limit that leaves nothing to delete, and one that
+// deletes the oldest hour (3600 rows) step by step.
+func BenchmarkPrunePass(b *testing.B) {
+	s := openTemp(b)
+	id := bigRegister(b, s, 500_000)
+	keep := Keep{Normal: 1_000_000, Anomalies: 1_000_000}
+	ctx := context.Background()
+	if err := s.SetRetention(ctx, id, Retention{Normal: Lane{MaxAge: 3650 * 24 * time.Hour}}); err != nil {
+		b.Fatal(err)
+	}
+	b.Run("nothing-to-do", func(b *testing.B) {
+		for range b.N {
+			if _, err := s.Prune(ctx, time.Now(), keep); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("an-hour-past-its-age", func(b *testing.B) {
+		age := 500_000*time.Second - time.Hour
+		for i := range b.N {
+			// Each round moves the age limit an hour further.
+			p := Retention{Normal: Lane{MaxAge: age - time.Duration(i)*time.Hour}, Anomalies: Lane{MaxAge: age - time.Duration(i)*time.Hour}}
+			p.Normal.MaxAge = p.Normal.MaxAge.Truncate(time.Hour)
+			p.Anomalies.MaxAge = p.Normal.MaxAge
+			if err := s.SetRetention(ctx, id, p); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := s.Prune(ctx, time.Now(), keep); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
