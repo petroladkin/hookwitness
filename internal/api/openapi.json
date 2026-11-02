@@ -3603,6 +3603,10 @@
             "items": {
               "$ref": "#/components/schemas/SetupSecret"
             }
+          },
+          "retention": {
+            "$ref": "#/components/schemas/Retention",
+            "description": "The endpoint's own retention (format 2); absent: the importing server's defaults."
           }
         },
         "required": [
@@ -3617,8 +3621,11 @@
         "properties": {
           "hookwitness": {
             "type": "integer",
-            "const": 1,
-            "description": "The format marker and version. A file of a newer format is refused."
+            "enum": [
+              1,
+              2
+            ],
+            "description": "The format marker and version: 1, or 2 when an endpoint carries its own retention. A file of a newer format is refused; an export writes the lowest version that holds it."
           },
           "endpoints": {
             "type": "array",
@@ -3663,6 +3670,10 @@
                     "type": "string"
                   },
                   "description": "Secrets of the endpoint without a value: set them on the secrets route."
+                },
+                "pruned": {
+                  "type": "integer",
+                  "description": "Requests its retention removed at once (absent: none)."
                 }
               },
               "required": [

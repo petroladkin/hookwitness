@@ -58,7 +58,7 @@ type Handler struct {
 	reserve string       // what endpoint paths may not use (catch.CheckPath)
 	catch   api.CatchURL // where senders reach the catch listener
 	limit   int64        // the body limit, shown when a body was refused
-	keep    int          // retention per register, so the page can drop pruned rows
+	keep    store.Keep   // the default retention per register
 	maxWait time.Duration
 	hosts   map[string]bool
 	keys    *secret.Key
@@ -102,7 +102,7 @@ type Options struct {
 
 // New returns the UI.
 func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Handler {
-	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention.Normal, maxWait: o.MaxWait, keys: o.Keys,
+	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention, maxWait: o.MaxWait, keys: o.Keys,
 		hosts: map[string]bool{}, stop: make(chan struct{}), auth: o.Access, limiter: access.NewLimiter(nil), proxies: o.Proxies}
 	if h.maxWait == 0 {
 		h.maxWait = 5 * time.Minute
@@ -594,7 +594,7 @@ func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64
 		Seq:      seq,
 		Base:     h.regPath(reg),
 		Selected: selectedID(ex),
-		Keep:     h.keep,
+		Keep:     h.keep.Normal,
 		Export:   export,
 		Draft:    draft,
 		Replay:   replay,

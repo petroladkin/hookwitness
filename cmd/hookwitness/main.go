@@ -132,7 +132,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	if cfg.AdminAddr != "" {
 		reserved = ""
 	}
-	if cfg.Import != "" && !importSetup(ctx, st, cfg.Import, setup.Options{Reserved: reserved, MaxWait: cfg.MaxWait}, log) {
+	if cfg.Import != "" && !importSetup(ctx, st, cfg.Import, setup.Options{Reserved: reserved, MaxWait: cfg.MaxWait, Keep: store.Keep{Normal: cfg.Retention, Anomalies: cfg.RetentionAnomalies}}, log) {
 		return 1
 	}
 

@@ -35,7 +35,7 @@ type importItem struct {
 }
 
 func (h *Handler) setupOptions() setup.Options {
-	return setup.Options{Reserved: h.reserve, MaxWait: h.maxWait}
+	return setup.Options{Reserved: h.reserve, MaxWait: h.maxWait, Keep: h.keep}
 }
 
 // exportSetup downloads the setup file of one endpoint, or of all of them
