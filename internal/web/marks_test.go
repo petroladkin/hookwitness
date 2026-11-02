@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -144,5 +145,61 @@ func TestStripRanges(t *testing.T) {
 	}
 	if !strings.Contains(e.do("GET", "/admin/e/unmatched", nil).Body.String(), `data-marks="/admin/e/unmatched/marks"`) {
 		t.Fatal("unmatched strip")
+	}
+}
+
+// With an event id, the register's retry chips, the request page and the
+// strip's groups follow the event, though the body changes on every
+// attempt; without one, a changed body is a new group, as before.
+func TestRetryGroupsFollowTheEvent(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/gh")
+	plain, _ := e.st.CreateEndpoint(context.Background(), "/plain")
+	var byEvent, byBody []*store.Request
+	for i, ev := range []string{"d-1", "d-1", "d-1", "d-2"} {
+		byEvent = append(byEvent, e.add(t, ep.ID, `{"attempt":`+strconv.Itoa(i+1)+`}`, func(r *store.Request) { r.Delivery = &store.Delivery{Event: ev} }))
+		byBody = append(byBody, e.add(t, plain.ID, `{"attempt":`+strconv.Itoa(i+1)+`}`, func(r *store.Request) { r.Delivery = &store.Delivery{ByBody: true} }))
+	}
+	row := func(page string, r *store.Request) string {
+		i := strings.Index(page, `id="req-`+id(r.ID)+`"`)
+		if i < 0 {
+			t.Fatalf("no row of request %d", r.ID)
+		}
+		j := strings.Index(page[i:], "</li>")
+		return page[i : i+j]
+	}
+	page := e.do("GET", "/admin/e/"+id(ep.ID), nil).Body.String()
+	for i, want := range []string{"", "retry 1", "retry 2", ""} {
+		got := row(page, byEvent[i])
+		if want != "" && !strings.Contains(got, `<span class="retry">`+want+`</span>`) || want == "" && strings.Contains(got, `class="retry"`) {
+			t.Errorf("by event, row %d: want %q in %s", i+1, want, got)
+		}
+	}
+	plainPage := e.do("GET", "/admin/e/"+id(plain.ID), nil).Body.String()
+	for _, r := range byBody {
+		if strings.Contains(row(plainPage, r), `class="retry"`) {
+			t.Errorf("by body, request %d has a retry chip though its body is new", r.No)
+		}
+	}
+	detail := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(byEvent[2].ID), nil).Body.String()
+	if !strings.Contains(detail, "attempt <b>3</b> of event <code>d-1</code>") {
+		t.Error("the request page does not say attempt 3 of event d-1")
+	}
+	groups := func(endpoint int64) map[int64]string {
+		g := map[int64]string{}
+		for _, m := range e.marks(t, "/admin/e/"+id(endpoint)+"/marks?span=2m").Marks {
+			var f []any
+			json.Unmarshal(m, &f)
+			g[int64(f[0].(float64))] = f[5].(string)
+		}
+		return g
+	}
+	g := groups(ep.ID)
+	if a, b, c, d := g[byEvent[0].ID], g[byEvent[1].ID], g[byEvent[2].ID], g[byEvent[3].ID]; a == "" || a != b || b != c || c == d {
+		t.Errorf("strip groups by event: %q %q %q %q", a, b, c, d)
+	}
+	g = groups(plain.ID)
+	if a, b := g[byBody[0].ID], g[byBody[1].ID]; a == b {
+		t.Errorf("strip groups by body: two different bodies in one group %q", a)
 	}
 }
