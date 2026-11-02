@@ -576,6 +576,24 @@ if (!only.length || ["replay-dialog", "replay-answer"].some((n) => only.includes
   handler.close();
 }
 
+// docs/recorder.md: /live forwards to /mock, a second endpoint of the same
+// server that answers 201 by itself; one order passes through.
+{
+  const mock = (await api("POST", "/endpoints", { path: "/mock" })).json.id;
+  await behave(mock, { default: { status: 201, headers: [{ name: "Content-Type", value: "application/json" }], body: '{"accepted":true,"id":"ord_42"}' } });
+  const live = (await api("POST", "/endpoints", { path: "/live" })).json.id;
+  await behave(live, { forward: { url: `${HW}/mock` }, rules: [{ when: { kind: "every", n: 3 }, do: "reply", reply: { status: 503 }, forward: true }] });
+  await shot("behaviour-receiver", `${UI}/e/${live}/behaviour?tab=receiver`, { maxHeight: 620 });
+  await send("/live", JSON.stringify({ order: 42, total: "19.90" }), { "User-Agent": "shop-backend/2.3" });
+  await sleep(300);
+  const fwd = (await reqs(live))[0].id;
+  // Wide, the exhibit scrolls on its own: bring its Receiver to the top.
+  // Narrow, the page scrolls: shoot the section itself.
+  await shot("request-receiver", `${UI}/e/${live}/r/${fwd}`, WIDTH < 821 ? { selector: "#receiver", maxHeight: 1600 } : { maxHeight: 800,
+    step: `(() => { const x = document.getElementById("exhibit"), r = document.getElementById("receiver");
+      if (x.scrollHeight > x.clientHeight) x.scrollTop = r.offsetTop - x.offsetTop - 140; else r.scrollIntoView(); })()` });
+}
+
 // docs/troubleshooting.md, docs/deployment.md: the UI opened by a name that
 // is not allowed.
 await shot("host-refused", `http://hooks.example.com:${port}/admin/`, { maxHeight: 80 });

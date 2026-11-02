@@ -36,6 +36,9 @@ by task: what to click and what happens. [Українською](uk/README.md).
     capture: normal requests and anomalies apart, counts and ages, pins.
 15. [Testing a sender's retries, duplicates and order](delivery.md): the
     event id, and verdicts on duplicates, order and retry backoff.
+16. [Recording a live integration](recorder.md): Hookwitness in the middle,
+    passing requests on to the real receiver and keeping both sides; faults
+    on live traffic.
 
 Reference: the [REST API](api.md) (English only), and its OpenAPI 3.1
 description served at `/admin/api/v1/openapi.json`.

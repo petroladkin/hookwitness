@@ -467,6 +467,53 @@ many it has.
  "duration_ms":4,"ttfb_ms":3,"error":null,"body_text":"{\"error\":\"signature mismatch\"}"}
 ```
 
+### Recorder in the middle
+
+An endpoint whose behaviour has a `forward` block passes the requests that
+pass its checks and that no rule takes on to that receiver, byte for byte,
+and answers with the receiver's answer ([Recording a live
+integration](recorder.md)).
+
+```jsonc
+"forward": {
+  "url": "https://receiver.example/webhooks", // http(s), no query, no user name or password
+  "keep_host": false,                          // true: send the received Host (default: the receiver's)
+  "insecure_tls": false,                       // true: accept any certificate
+  "timeout_ms": 30000,                         // default 30 s, at most -max-wait
+  "on_failure": "gateway"                      // or "default": the default reply when the receiver fails
+}
+```
+
+- A rule's `"forward": true` lets the receiver get the requests it takes
+  too, while the sender gets the rule's answer; otherwise they are not
+  forwarded.
+- Once login is on, a `PUT` (or a setup import) that adds, changes or
+  removes `forward` needs an admin: `403 forbidden`, nothing changed. A PUT
+  replaces the whole behaviour, so send the stored `forward` unchanged to
+  edit the rest. `422 invalid` (field `forward`) for a URL with a query or
+  a user name, a timeout out of range, or a target the policy refuses
+  (`-replay-allow`, link-local and cloud-metadata addresses; `none` turns
+  forwarding off).
+- The behaviour's answer carries `warnings` while no enforced authorization
+  check stands (an open relay).
+- The sender gets the receiver's status, headers and body (up to 1 MiB,
+  never decompressed, redirects not followed), framed by the server, with
+  `Content-Security-Policy: sandbox` and `nosniff`; on a failure `502` or
+  `504` (or the default reply with `on_failure` `default`), `503` with
+  `Retry-After` when 64 forwards are running, `508` for a loop.
+
+| Route | Does |
+|---|---|
+| `GET /requests/{id}/forward` | the request's exchange with the receiver: what was sent (`line`, `sent`, `notes`, `host`), the receiver's `status`, `reason`, `headers` (order and case kept) and body (its first 64 KiB), `duration_ms`, `ttfb_ms`, `by_rule`, `error` |
+| `GET /requests/{id}/forward/body` | the receiver's body as it sent it (never decompressed, at most 64 KiB), with its `Content-Type`, always as a download |
+
+Requests carry `forward`, the receiver's side: `target`, `status`,
+`error_kind` (dial, tls, timeout, reset, write, answer, refused, too_large,
+upgrade, busy), `fallback` (the sender got the failure answer),
+`sender_left_ms`, `ms`, `pending`; `not_forwarded` when a rule kept one
+from the receiver. Lists filter by `forward=ok` (the receiver answered
+2xx), `failed` or `none`. An endpoint names its receiver in `forwards_to`.
+
 ### Reports
 
 | Route | Does |
@@ -623,6 +670,25 @@ HANDLER=${URL%/orders/events}/handler   # yours: http://localhost:3000/webhooks/
 curl -s -X POST $API/requests/$REQ/replays -H 'Content-Type: application/json' \
   -d "{\"url\":\"$HANDLER\"}" | jq -c '{status, error}'
 # {"status":200,"error":null}
+```
+
+### Pass a live integration through
+
+Put the endpoint between the sender and its receiver; here a second
+endpoint of the same server stands in for the receiver:
+
+<!-- docs-check: setup: api -->
+```sh
+RECEIVER=$(curl -s -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/receiver"}' | jq -r .url)
+TAG=$(curl -sI $API/endpoints/$ID/behaviour | tr -d '\r' | awk 'tolower($1)=="etag:"{print $2}')
+curl -s -X PUT $API/endpoints/$ID/behaviour -H 'Content-Type: application/json' -H "If-Match: $TAG" \
+  -d "{\"forward\":{\"url\":\"$RECEIVER\"}}" | jq -c '{forward, warnings}'
+# {"forward":{"url":"http://127.0.0.1:8080/receiver"},"warnings":["anyone who reaches…
+curl -s -o /dev/null -w '%{http_code}\n' -d '{"id":1}' $URL
+# 200
+REQ=$(curl -s "$API/endpoints/$ID/requests?limit=1" | jq '.requests[0].id')
+curl -s $API/requests/$REQ/forward | jq -c '{status, line, error}'
+# {"status":200,"line":"POST /receiver HTTP/1.1","error":null}
 ```
 
 ## Testing a sender in Docker

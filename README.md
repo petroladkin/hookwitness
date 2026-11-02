@@ -99,6 +99,9 @@ the first admin, backups.
 - **[Replay](docs/replay.md)**: send a caught request byte for byte to your
   own handler and keep its answer, to tell a verification bug from bytes
   changed on the way.
+- **[Recorder in the middle](docs/recorder.md)**: pass a live integration's
+  requests on to the real receiver and keep both sides, with verdicts and
+  faults injected on live traffic.
 
 ## How it compares
 

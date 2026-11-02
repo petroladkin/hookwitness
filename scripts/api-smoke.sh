@@ -2,7 +2,8 @@
 # API scenario: the Basic-credentials recipe of docs/api.md end to end —
 # create an endpoint, set a password, require it, send JSON events with
 # right and wrong credentials, wait for them and read their verdicts; a
-# sender's retry and duplicate judged by event id. On a server it starts
+# sender's retry and duplicate judged by event id; a request passed on to a
+# receiver (a second endpoint) and both sides kept. On a server it starts
 # itself (--binary, --image) it then turns login on: the first admin, a
 # login, a token, the API with and without it (docs/access.md).
 #
@@ -161,7 +162,43 @@ call GET "/endpoints/$D/requests?event="
 expect 422 "an empty event"
 ok "delivery: 503, retry, duplicate after the 200 failed; event= lists 3 attempts"
 
-# 9. Login (only on a server of our own: it cannot be turned off again).
+# 9. Recorder: /smoke/live forwards to /smoke/mock, a second endpoint of
+# this server standing in for the receiver; the sender gets the receiver's
+# 201, both sides are kept, and a receiver with a query is refused.
+call POST /endpoints '{"path":"/smoke/mock"}'
+expect 201 "create the receiver stand-in"
+M=$(jq -r .id <<<"$body")
+call GET /endpoints/$M/behaviour
+TAG=$(grep -i '^etag:' "$WORK/headers" | tr -d '\r' | cut -d' ' -f2)
+call PUT /endpoints/$M/behaviour '{"default":{"status":201,"body":"{\"accepted\":true}"}}' -H "If-Match: $TAG"
+expect 200 "the stand-in answers 201"
+call POST /endpoints '{"path":"/smoke/live"}'
+expect 201 "create the recording endpoint"
+L=$(jq -r .id <<<"$body"); LURL=$(jq -r .url <<<"$body")
+call GET /endpoints/$L/behaviour
+TAG=$(grep -i '^etag:' "$WORK/headers" | tr -d '\r' | cut -d' ' -f2)
+call PUT /endpoints/$L/behaviour '{"forward":{"url":"'"${INSIDE:-$HW}"'/smoke/mock?token=1"}}' -H "If-Match: $TAG"
+expect 422 "a receiver with a query"
+call PUT /endpoints/$L/behaviour '{"forward":{"url":"'"${INSIDE:-$HW}"'/smoke/mock"}}' -H "If-Match: $TAG"
+expect 200 "set the receiver"
+[ "$(jq -r '.warnings[0]' <<<"$body")" != null ] || fail "no open-relay warning: $body"
+echo "\$ curl -d '{\"order\":42}' $LURL?src=smoke"
+sent=$(curl -sS -o "$WORK/answer" -w '%{http_code}' -d '{"order":42}' "$LURL?src=smoke")
+echo "$sent $(cat "$WORK/answer")"; echo
+[ "$sent" = 201 ] && [ "$(cat "$WORK/answer")" = '{"accepted":true}' ] || fail "the sender got $sent $(cat "$WORK/answer")"
+call GET "/endpoints/$L/requests?forward=ok"
+expect 200 "forwarded and answered 2xx"
+FR=$(jq -r '.requests[0].id' <<<"$body")
+[ "$(jq -c '.requests[0].forward | {status}' <<<"$body")" = '{"status":201}' ] || fail "the receiver's side: $body"
+call GET "/requests/$FR/forward"
+expect 200 "the exchange"
+[ "$(jq -r .line <<<"$body")" = "POST /smoke/mock?src=smoke HTTP/1.1" ] && [ "$(jq -r .body_text <<<"$body")" = '{"accepted":true}' ] ||
+  fail "the exchange: $body"
+call GET "/endpoints/$M/requests?limit=1&include=body"
+[ "$(jq -r '.requests[0].body_text' <<<"$body")" = '{"order":42}' ] || fail "the stand-in did not get the body: $body"
+ok "recorder: the receiver's 201 passed back, the exchange kept, the body and query forwarded, a query in the receiver refused"
+
+# 10. Login (only on a server of our own: it cannot be turned off again).
 if [ -n "$OWN" ]; then
   call POST /users '{"name":"smoke-admin","role":"admin","password":"smoke-admin-password"}'
   expect 201 "the first admin"
