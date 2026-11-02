@@ -1168,6 +1168,10 @@ templ behaviourPage(nav navView, b behaviourView) {
 				case "checks":
 					@toolbar(b, "check-new", "New check") {
 						<p class="note">Required headers refuse a request without them. Authorization and JSON Schema checks record a verdict on every request and refuse only when enforced. Refused requests are not counted.</p>
+						<p class="note event-line">
+							Event id: <b>{ b.Config.EventWords() }</b> ·
+							<a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=event") }>Edit</a>
+						</p>
 					}
 					@checkList(b)
 				case "default":
@@ -1411,6 +1415,9 @@ templ editorDialog(b behaviourView, e *editor) {
 					<input type="hidden" name="op" value="check-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
 					@checkFields(b, e.Check)
+				case "event":
+					<input type="hidden" name="op" value="event"/>
+					@eventFields(e.Event)
 				case "secret":
 					<input type="hidden" name="op" value="secret-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
@@ -1505,8 +1512,57 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 				<option value={ k } selected?={ checkKind(ch) == k }>{ kindTitle(k) }</option>
 			}
 			<option value="schema" selected?={ checkKind(ch) == "schema" }>{ kindTitle("schema") }</option>
+			for _, k := range emulate.DeliveryKinds {
+				<option value={ k } selected?={ checkKind(ch) == k }>{ kindTitle(k) }</option>
+			}
 		</select>
 	</label>
+	<p class="help kinded k-duplicates k-order k-backoff">Judged against the earlier kept requests of the same event (the endpoint's event id: the line above the checks; without one, the same body). Records a verdict, never refuses.</p>
+	<p class="help kinded k-duplicates">A repeat of an event fails when an earlier attempt was answered 2xx: the sender delivered twice what the receiver had already taken. A retry after a failure, a timeout or a drop passes.</p>
+	<div class="kinded k-order">
+		<div class="grid3">
+			<label>
+				Order by
+				<select name="order_from">
+					<option value="body" selected?={ ch.Order == nil || ch.Order.From == "body" }>a value in the body</option>
+					<option value="header" selected?={ ch.Order != nil && ch.Order.From == "header" }>a header</option>
+				</select>
+			</label>
+			<label>Pointer or header <input name="order_key" value={ orderKey(ch) } spellcheck="false" autocomplete="off" placeholder="/created"/></label>
+			<label>
+				As
+				<select name="order_as">
+					<option value="number" selected?={ ch.Order == nil || ch.Order.As == "number" }>a sequence number</option>
+					<option value="time" selected?={ ch.Order != nil && ch.Order.As == "time" }>a time (RFC 3339 or unix seconds)</option>
+				</select>
+			</label>
+		</div>
+		<div class="grid2">
+			<label>
+				Within each value of
+				<select name="group_from">
+					<option value="" selected?={ ch.Group == nil }>nothing: one order for all</option>
+					<option value="body" selected?={ ch.Group != nil && ch.Group.From == "body" }>a value in the body</option>
+					<option value="header" selected?={ ch.Group != nil && ch.Group.From == "header" }>a header</option>
+				</select>
+			</label>
+			<label>Pointer or header <input name="group_key" value={ groupKey(ch) } spellcheck="false" autocomplete="off" placeholder="/data/object/id"/></label>
+		</div>
+		<p class="help">A value lower than another event's earlier one fails; ties pass, and a retry of an earlier event is judged on its first delivery.</p>
+	</div>
+	<div class="kinded k-backoff">
+		<div class="grid3">
+			<label>First gap, s <input type="number" name="first_s" value={ blankF(ch.FirstS) } min="0" step="any" placeholder="5"/></label>
+			<label>Factor <input type="number" name="factor" value={ blankF(ch.Factor) } min="1" step="any" placeholder="2"/></label>
+			<label>Longest gap, s <input type="number" name="max_s" value={ blankF(ch.MaxS) } min="0" step="any" placeholder="none"/></label>
+		</div>
+		<div class="grid2">
+			<label>At most attempts <input type="number" name="max_attempts" value={ blankF(float64(ch.MaxAttempts)) } min="0" placeholder="no limit"/></label>
+			<label>Tolerance, % <input type="number" name="tolerance_pct" value={ blankF(float64(ch.TolerancePct)) } min="0" max="100" placeholder="25"/></label>
+		</div>
+		<label class="check"><input type="checkbox" name="retry_after" checked?={ ch.RetryAfter == nil || *ch.RetryAfter }/> A retry before the previous answer's Retry-After fails (and Retry-After wins when longer)</label>
+		<p class="help">Each gap is measured from the end of the previous attempt (its reply's delay, or a hold) to the next one: first gap × factor for each later attempt, at most the longest gap. Leave the first gap empty to judge only Retry-After.</p>
+	</div>
 	<div class="kinded k-schema">
 		<div class="grid2">
 			<label>
@@ -1590,10 +1646,37 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 	<textarea class="kinded k-hmac" id="check-content" name="content" rows="2" spellcheck="false" placeholder="{{.Body}}">{ ch.Content }</textarea>
 	<label class="check kinded k-stripe k-standard"><input type="checkbox" name="ignore_timestamp" checked?={ ch.IgnoreTimestamp }/> Accept any timestamp (replayed captures)</label>
 	<label class="check kinded k-github k-stripe k-standard k-hmac k-bearer k-basic k-schema"><input type="checkbox" name="enforce" checked?={ ch.Enforce }/> Enforce: refuse a request that does not pass (otherwise it gets the usual reply and only the verdict is recorded)</label>
-	<label class="check"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header, 401, or 400 listing the schema problems)</label>
-	<div class="reply-fields">
+	<label class="check kinded k-header k-github k-stripe k-standard k-hmac k-bearer k-basic k-schema"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header, 401, or 400 listing the schema problems)</label>
+	<div class="reply-fields kinded k-header k-github k-stripe k-standard k-hmac k-bearer k-basic k-schema">
 		@replyFields(b, "check", "error_", errorOrStandard(ch))
 	</div>
+}
+
+// eventFields edits where the sender puts an event's id: a preset or a
+// header or body value of one's own.
+templ eventFields(src emulate.Source) {
+	<p class="help">The id a sender keeps on every retry of an event. Attempts, retry groups and the delivery checks follow it; without one they follow the body, so a sender that changes a field on each attempt starts a new group each time.</p>
+	<label>
+		Event id
+		<select name="preset" autofocus>
+			<option value="" selected?={ src.Key == "" }>none: the same body is the same event</option>
+			for _, p := range emulate.EventPresets {
+				<option value={ p.Name } selected?={ src == p.Source }>{ p.Name }: { p.Source.String() }</option>
+			}
+			<option value="custom" selected?={ src.Key != "" && !isPreset(src) }>my own…</option>
+		</select>
+	</label>
+	<div class="grid2">
+		<label>
+			From
+			<select name="event_from">
+				<option value="header" selected?={ src.From != "body" }>a header</option>
+				<option value="body" selected?={ src.From == "body" }>a value in the body (JSON pointer)</option>
+			</select>
+		</label>
+		<label>Header or pointer <input name="event_key" value={ src.Key } spellcheck="false" autocomplete="off" placeholder="X-Event-Id or /id"/></label>
+	</div>
+	<p class="help">"My own" uses these two fields.</p>
 }
 
 templ secretFields(e *editor) {

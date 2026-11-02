@@ -44,8 +44,9 @@ type editor struct {
 	Var    emulate.Var
 	Secret emulate.Secret // never with a value: secrets are write-only
 	Schema emulate.Schema
-	Draft  *draftView    // the schema was drafted from requests
-	Reply  emulate.Reply // the default reply
+	Draft  *draftView     // the schema was drafted from requests
+	Reply  emulate.Reply  // the default reply
+	Event  emulate.Source // the event id source ({} for none)
 }
 
 // behaviourTabs in the order a request meets them.
@@ -55,7 +56,7 @@ var behaviourTabs = []string{"checks", "rules", "default", "vars", "secrets", "s
 // ...); rules when unknown.
 func tabOf(section string) string {
 	switch {
-	case strings.HasPrefix(section, "check"):
+	case strings.HasPrefix(section, "check"), section == "event":
 		return "checks"
 	case strings.HasPrefix(section, "var"):
 		return "vars"
@@ -74,6 +75,13 @@ func tabOf(section string) string {
 func openEditor(cfg emulate.Config, which string) *editor {
 	if which == "default" {
 		return &editor{Kind: "default", Reply: cfg.Default}
+	}
+	if which == "event" {
+		e := &editor{Kind: "event"}
+		if cfg.Event != nil {
+			e.Event = *cfg.Event
+		}
+		return e
 	}
 	kind, i, _ := strings.Cut(which, "-")
 	e := &editor{Kind: kind, I: i}
@@ -326,6 +334,21 @@ func applyEdit(cfg *emulate.Config, op string, r *http.Request, keys *secret.Key
 		return i, nil
 	}
 	switch op {
+	case "event":
+		switch preset := r.PostFormValue("preset"); preset {
+		case "":
+			cfg.Event = nil
+		case "custom":
+			cfg.Event = &emulate.Source{From: r.PostFormValue("event_from"), Key: strings.TrimSpace(r.PostFormValue("event_key"))}
+		default:
+			for _, p := range emulate.EventPresets {
+				if p.Name == preset {
+					src := p.Source
+					cfg.Event = &src
+				}
+			}
+		}
+		return "checks", nil
 	case "default":
 		reply, err := formReply(r, "")
 		cfg.Default = reply
@@ -467,7 +490,33 @@ func formCheck(r *http.Request) (emulate.Check, error) {
 	ch.Enforce = r.PostFormValue("enforce") == "on"
 	ch.Secret = v("secret")
 	var err error
+	if ch.IsDelivery() {
+		ch.Enforce, ch.Secret = false, ""
+	}
+	num := func(name string) float64 {
+		s := v(name)
+		if s == "" || err != nil {
+			return 0
+		}
+		f, perr := strconv.ParseFloat(s, 64)
+		if perr != nil {
+			err = fmt.Errorf("%s must be a number", strings.ReplaceAll(name, "_", " "))
+		}
+		return f
+	}
 	switch ch.Kind {
+	case emulate.KindOrder:
+		ch.Order = &emulate.OrderSpec{Source: emulate.Source{From: v("order_from"), Key: v("order_key")}, As: v("order_as")}
+		if from := v("group_from"); from != "" {
+			ch.Group = &emulate.Source{From: from, Key: v("group_key")}
+		}
+	case emulate.KindBackoff:
+		ch.FirstS, ch.Factor, ch.MaxS = num("first_s"), num("factor"), num("max_s")
+		ch.MaxAttempts, ch.TolerancePct = int(num("max_attempts")), int(num("tolerance_pct"))
+		if r.PostFormValue("retry_after") != "on" {
+			no := false
+			ch.RetryAfter = &no
+		}
 	case emulate.KindHMAC:
 		ch.Header, ch.Algo, ch.Encoding = v("header"), v("algo"), v("encoding")
 		ch.Prefix, ch.Content = r.PostFormValue("prefix"), r.PostFormValue("content")
@@ -677,6 +726,8 @@ func editorTitle(e *editor) string {
 	switch e.Kind {
 	case "default":
 		return "Default reply"
+	case "event":
+		return "Event id"
 	case "var":
 		if e.I == "new" {
 			return "New variable"
@@ -959,4 +1010,35 @@ func replyBodyText(r emulate.Reply) string {
 // rawSize is how many bytes a base64 text holds.
 func rawSize(b64 string) int64 {
 	return int64(base64.StdEncoding.DecodedLen(len(b64)) - strings.Count(b64, "="))
+}
+
+func orderKey(ch emulate.Check) string {
+	if ch.Order == nil {
+		return ""
+	}
+	return ch.Order.Key
+}
+
+func groupKey(ch emulate.Check) string {
+	if ch.Group == nil {
+		return ""
+	}
+	return ch.Group.Key
+}
+
+// blankF writes a number, or nothing for zero (the default shows instead).
+func blankF(f float64) string {
+	if f == 0 {
+		return ""
+	}
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+func isPreset(src emulate.Source) bool {
+	for _, p := range emulate.EventPresets {
+		if p.Source == src {
+			return true
+		}
+	}
+	return false
 }

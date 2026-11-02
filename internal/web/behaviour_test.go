@@ -505,3 +505,44 @@ func TestCheckFormKeepsTheFirstError(t *testing.T) {
 		t.Fatal("a check with a bad tolerance was saved")
 	}
 }
+
+// TestDeliveryEditors: the event id from a preset or one's own, and the
+// delivery checks from the check editor; the Checks tab names the source.
+func TestDeliveryEditors(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/gh")
+	page := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=checks", nil).Body.String()
+	if !strings.Contains(page, "Event id: <b>none: attempts are counted per body</b>") {
+		t.Fatalf("no event line")
+	}
+	dlg := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=checks&edit=event", nil).Body.String()
+	if !strings.Contains(dlg, `<h2 id="dialog-title">Event id</h2>`) || !strings.Contains(dlg, "GitHub: header X-GitHub-Delivery") {
+		t.Fatalf("event dialog")
+	}
+	e.edit(ep.ID, url.Values{"op": {"event"}, "preset": {"GitHub"}})
+	cfg := e.config(t, ep.ID)
+	if cfg.Event == nil || cfg.Event.Key != "X-GitHub-Delivery" {
+		t.Fatalf("preset: %+v", cfg.Event)
+	}
+	e.edit(ep.ID, url.Values{"op": {"event"}, "preset": {"custom"}, "event_from": {"body"}, "event_key": {"/event_id"}})
+	if cfg := e.config(t, ep.ID); cfg.Event == nil || cfg.Event.From != "body" || cfg.Event.Key != "/event_id" {
+		t.Fatalf("custom: %+v", cfg.Event)
+	}
+	if rec := e.edit(ep.ID, url.Values{"op": {"event"}, "preset": {"custom"}, "event_from": {"body"}, "event_key": {"event_id"}}); !strings.Contains(errorOf(rec.Body.String()), "JSON pointer") {
+		t.Fatalf("a bad pointer was saved")
+	}
+	e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"backoff"}, "first_s": {"5"}, "max_s": {"3600"}, "max_attempts": {"8"}, "enforce": {"on"}})
+	e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"order"}, "order_from": {"body"}, "order_key": {"/seq"}, "order_as": {"number"}})
+	cfg = e.config(t, ep.ID)
+	if len(cfg.Checks) != 2 || cfg.Checks[0].FirstS != 5 || cfg.Checks[0].Enforce || cfg.Checks[0].RetryAfter == nil || *cfg.Checks[0].RetryAfter ||
+		cfg.Checks[1].Order == nil || cfg.Checks[1].Order.Key != "/seq" {
+		t.Fatalf("checks %+v", cfg.Checks)
+	}
+	if page := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=checks", nil).Body.String(); !strings.Contains(page, "5 s × 2, at most 3600 s, 8 attempts") {
+		t.Fatal("no backoff summary")
+	}
+	e.edit(ep.ID, url.Values{"op": {"event"}, "preset": {""}})
+	if e.config(t, ep.ID).Event != nil {
+		t.Fatal("none kept the source")
+	}
+}
