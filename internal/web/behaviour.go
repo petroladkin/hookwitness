@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -25,14 +26,17 @@ type behaviourView struct {
 	Path    string
 	Base    string // the endpoint's register URL
 	Counter int64
-	Config  emulate.Config // as stored
-	MaxWait time.Duration
-	Version string // of the stored configuration; every form sends it back
-	Tab     string // checks, rules, default or vars
-	Saved   string // the section the last edit saved ("rule-2", "counter", ...)
-	Error   string // the last edit was refused: why
-	NoDraft string // a schema draft was asked for and none could be made: why
-	Editor  *editor
+	// StartedAt is the rules' clock start, zero before it; Now is when the
+	// page was made, for "3 min ago".
+	StartedAt, Now time.Time
+	Config         emulate.Config // as stored
+	MaxWait        time.Duration
+	Version        string // of the stored configuration; every form sends it back
+	Tab            string // checks, rules, default or vars
+	Saved          string // the section the last edit saved ("rule-2", "counter", ...)
+	Error          string // the last edit was refused: why
+	NoDraft        string // a schema draft was asked for and none could be made: why
+	Editor         *editor
 }
 
 // editor is the dialog that creates or edits one item.
@@ -193,6 +197,9 @@ func (h *Handler) behaviourPage(w http.ResponseWriter, r *http.Request) {
 			if name := q.Get("schema"); name != "" {
 				e.Check = emulate.Check{Kind: emulate.KindSchema, Schema: name}
 			}
+			if q.Get("kind") == emulate.KindBackoff {
+				e.Check = emulate.Check{Kind: emulate.KindBackoff}
+			}
 		}
 	}
 	v.Tab = q.Get("tab")
@@ -219,7 +226,7 @@ func (h *Handler) showBehaviour(w http.ResponseWriter, r *http.Request, status i
 
 func (h *Handler) behaviourView(ep store.Endpoint, cfg emulate.Config) behaviourView {
 	return behaviourView{
-		ID: ep.ID, Path: ep.Path, Base: h.regPath(ep.ID), Counter: ep.Counter,
+		ID: ep.ID, Path: ep.Path, Base: h.regPath(ep.ID), Counter: ep.Counter, StartedAt: ep.StartedAt, Now: time.Now(),
 		Config: cfg, MaxWait: h.maxWait, Version: configVersion(ep.Config),
 	}
 }
@@ -672,6 +679,18 @@ func formRule(r *http.Request) (emulate.Rule, error) {
 		Do:   r.PostFormValue("do"),
 	}
 	var errs []string
+	// seconds reads a number field; blank is 0 where allowed.
+	seconds := func(name, what string, blankOK bool) float64 {
+		s := strings.TrimSpace(r.PostFormValue(name))
+		if s == "" && blankOK {
+			return 0
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			errs = append(errs, what+" must be a number")
+		}
+		return f
+	}
 	switch rule.When.Kind {
 	case emulate.WhenRandom:
 		p, err := strconv.ParseFloat(strings.TrimSpace(r.PostFormValue("percent")), 64)
@@ -679,6 +698,21 @@ func formRule(r *http.Request) (emulate.Rule, error) {
 			errs = append(errs, "the percentage must be a number")
 		}
 		rule.When.Percent = p
+	case emulate.WhenWindow:
+		rule.When.FromS = seconds("from_s", "From", true)
+		rule.When.ToS = seconds("to_s", "Until", true)
+	case emulate.WhenFlap:
+		rule.When.Down = seconds("down", "Down", false)
+		rule.When.Up = seconds("up", "Up", false)
+		rule.When.Unit = r.PostFormValue("unit")
+	case emulate.WhenRate:
+		n, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue("n")), 10, 64)
+		if err != nil {
+			errs = append(errs, "the count N must be a whole number")
+		}
+		rule.When.N = n
+		rule.When.PerS = seconds("per_s", "Per", false)
+		rule.When.BlockS = seconds("block_s", "Block", false)
 	default:
 		n, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue("n")), 10, 64)
 		if err != nil {
@@ -878,7 +912,7 @@ func tabCurrent(on bool) string {
 func savedText(section string) string {
 	switch {
 	case section == "counter":
-		return "Counter reset: the next request is number 1."
+		return "Counter and clock reset: the next request is number 1, at 0 s."
 	case section == "default":
 		return "Default reply saved. It applies to the next request."
 	case section == "rules", section == "checks", section == "vars":
@@ -1036,6 +1070,53 @@ func groupKey(ch emulate.Check) string {
 		return ""
 	}
 	return ch.Group.Key
+}
+
+// asksToWait reports a reply that sends Retry-After on an endpoint with no
+// backoff check to judge whether senders wait for it.
+func asksToWait(c emulate.Config) bool {
+	for _, ch := range c.Checks {
+		if ch.Kind == emulate.KindBackoff {
+			return false
+		}
+	}
+	replies := []emulate.Reply{c.Default}
+	for _, r := range c.Rules {
+		if r.Do == emulate.ActReply {
+			replies = append(replies, r.Reply)
+		}
+	}
+	for _, r := range replies {
+		for _, h := range r.Headers {
+			if strings.EqualFold(h.Name, "Retry-After") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// clockText says when the rules' clock started: "clock started 14:02:11 UTC
+// (3 min ago)", or that the next request starts it.
+func clockText(started, now time.Time) string {
+	if started.IsZero() {
+		return "the clock starts at the next request"
+	}
+	d := now.Sub(started)
+	var ago string
+	switch {
+	case d < 5*time.Second:
+		ago = "just now"
+	case d < time.Minute:
+		ago = strconv.Itoa(int(d.Seconds())) + " s ago"
+	case d < time.Hour:
+		ago = strconv.Itoa(int(d.Minutes())) + " min ago"
+	case d < 48*time.Hour:
+		ago = strconv.Itoa(int(d.Hours())) + " h ago"
+	default:
+		ago = strconv.Itoa(int(d.Hours()/24)) + " days ago"
+	}
+	return "clock started " + started.UTC().Format("15:04:05") + " UTC (" + ago + ")"
 }
 
 // blankF writes a number, or nothing for zero (the default shows instead).

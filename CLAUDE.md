@@ -20,8 +20,12 @@ live (SSE + HTMX) with the recorder strip (2 min, 10 min, 1 h or 6 h, every
 kept request of the range from a UI-only marks route, the time before the
 oldest kept request hatched "not kept") and the request detail. Each
 endpoint's behaviour page scripts its answers: required-header checks, ordered
-rules (every Nth, first N, random p%) with reply / timeout / drop, a default
-reply, template variables; a reply body is a template or exact bytes
+rules (every Nth, first N, random p%; by the endpoint's clock, started by
+the first request after a reset: a window, a flap in seconds or requests, a
+rate limit with a block; the first attempts of each event) with reply /
+timeout / drop, a default reply, template variables (`RetryAfter`,
+`Elapsed`, `Attempt` among them); the Rules tab shows the counter and the
+clock's start, and its reset clears both; a reply body is a template or exact bytes
 (`body_base64`); every request records its outcome (a reply body that is not
 UTF-8 as base64). Authorization
 checks (GitHub, Stripe, Standard Webhooks/Svix, generic HMAC, bearer, basic)
@@ -128,7 +132,10 @@ that makes it false.
   database file is created 0600, an existing one keeps its mode.
   Users, sessions and tokens (`access.go`; the last admin guarded inside the
   write transaction).
-  Endpoints and requests (`catch.go`); imports (`import.go`: all or none); `endpoint_id` NULL is the Unmatched
+  Endpoints and requests (`catch.go`; the rules' counter and their state,
+  `endpoints.state`, read and written in the transaction that stores a
+  request, with its attempt of its event, so decisions are exact under
+  concurrency); imports (`import.go`: all or none); `endpoint_id` NULL is the Unmatched
   register; request ids are never reused (they are the SSE event ids);
   every outcome or verdict change takes the next value of one change
   sequence (`requests.change_seq`, in commit order), from which the live
@@ -152,7 +159,9 @@ that makes it false.
 - `internal/emulate` — pure decision logic for an endpoint's answer: config
   (JSON in `endpoints.config`), validation, required-header and
   authorization checks (`checks.go`: kinds, secrets list, `Verify`), rule
-  conditions, text/template rendering (`guard.go`: the string builtins
+  conditions (`clock.go`: by time and state, `Decide` over the counter, the
+  arrival, the stored state and the attempt; a rate rule's state keyed by
+  its position and condition), text/template rendering (`guard.go`: the string builtins
   replaced with bounded ones, a byte budget per render, a render past its
   deadline stopped), the outcome record (JSON in
   `requests.outcome`). Verdicts go to `requests.verdict` / `verdicts`.

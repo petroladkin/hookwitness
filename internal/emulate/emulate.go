@@ -54,8 +54,18 @@ const (
 // Condition says which requests a rule takes.
 type Condition struct {
 	Kind    string  `json:"kind"`
-	N       int64   `json:"n,omitempty"`
+	N       int64   `json:"n,omitempty"` // every, first; rate's requests; attempts
 	Percent float64 `json:"percent,omitempty"`
+	// window (clock.go): seconds since the start; ToS 0: for ever.
+	FromS float64 `json:"from_s,omitempty"`
+	ToS   float64 `json:"to_s,omitempty"`
+	// flap: Down then Up, repeating, in Unit "s" or "requests".
+	Down float64 `json:"down,omitempty"`
+	Up   float64 `json:"up,omitempty"`
+	Unit string  `json:"unit,omitempty"`
+	// rate: more than N within PerS seconds, then for BlockS seconds.
+	PerS   float64 `json:"per_s,omitempty"`
+	BlockS float64 `json:"block_s,omitempty"`
 }
 
 // Rule is a condition and what to do when it holds.
@@ -264,6 +274,10 @@ func (r Rule) validate(maxWait time.Duration) error {
 		if r.When.Percent <= 0 || r.When.Percent > 100 {
 			return errors.New("the percentage must be above 0 and at most 100")
 		}
+	case WhenWindow, WhenFlap, WhenRate, WhenAttempts:
+		if err := validateClock(r.When); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unknown condition %q", r.When.Kind)
 	}
@@ -317,6 +331,8 @@ func (c Condition) Label() string {
 		return "first " + strconv.FormatInt(c.N, 10)
 	case WhenRandom:
 		return strconv.FormatFloat(c.Percent, 'f', -1, 64) + "%"
+	case WhenWindow, WhenFlap, WhenRate, WhenAttempts:
+		return clockLabel(c)
 	}
 	return c.Kind
 }
@@ -439,17 +455,20 @@ type Choice struct {
 	Label string // the rule's condition, empty for the default
 	Do    string
 	Reply Reply // for ActReply
+	// By the clock (Decide): the time since the start; whole seconds until
+	// the matched condition stops holding (0: it does not end by time); a
+	// rate rule's block end (unix ms).
+	Elapsed    time.Duration
+	RetryAfter int
+	BlockUntil int64
 }
 
 // Choose picks the first rule whose condition holds for the request
-// numbered n, else the default reply.
+// numbered n, else the default reply, for conditions that need no clock
+// (Decide reads the clock and the state).
 func (c Config) Choose(n int64) Choice {
-	for i, r := range c.Rules {
-		if r.When.holds(n) {
-			return Choice{Rule: i + 1, Label: r.When.Label(), Do: r.Do, Reply: r.Reply}
-		}
-	}
-	return Choice{Do: ActReply, Reply: c.Default}
+	ch, _ := c.Decide(ChooseIn{Counter: n, At: time.Now()})
+	return ch
 }
 
 // Refusal is the reply to a request that failed a check.

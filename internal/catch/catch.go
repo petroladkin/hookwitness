@@ -236,18 +236,20 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy, off bool) *plan
 	// The template data copies the body: made here, before the store's
 	// transaction, so the copy is not made while the store is locked.
 	pl.data = emulate.NewData(er, cfg.Vars, 0)
-	pl.decide = func(n int64) (int, string) {
-		ch := cfg.Choose(n)
-		pl.data.N = n
-		pl.out = emulate.Outcome{Source: emulate.FromDefault, Action: ch.Do, Counter: n}
+	pl.decide = func(in store.DecideIn) (int, string, string) {
+		ch, state := cfg.Decide(emulate.ChooseIn{Counter: in.Counter, At: in.At, State: in.State, Attempt: in.Attempt})
+		pl.data.N, pl.data.Attempt, pl.data.RetryAfter = in.Counter, in.Attempt, ch.RetryAfter
+		pl.data.Elapsed = float64(ch.Elapsed.Milliseconds()) / 1000
+		pl.out = emulate.Outcome{Source: emulate.FromDefault, Action: ch.Do, Counter: in.Counter}
 		if ch.Rule > 0 {
 			pl.out.Source, pl.out.Rule, pl.out.Label = emulate.FromRule, ch.Rule, ch.Label
+			ch.Note(&pl.out, cfg)
 		}
 		if ch.Do == emulate.ActReply {
 			pl.reply, pl.render = ch.Reply, true
 			pl.out.Status = ch.Reply.Status
 		}
-		return pl.out.Status, pl.out.String()
+		return pl.out.Status, pl.out.String(), state
 	}
 	return pl
 }

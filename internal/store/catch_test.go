@@ -401,7 +401,10 @@ func TestConfigAndCounter(t *testing.T) {
 	}
 
 	var seen []int64
-	decide := func(n int64) (int, string) { seen = append(seen, n); return 500, fmt.Sprintf(`{"counter":%d}`, n) }
+	decide := func(in DecideIn) (int, string, string) {
+		seen = append(seen, in.Counter)
+		return 500, fmt.Sprintf(`{"counter":%d}`, in.Counter), ""
+	}
 	for range 3 {
 		if err := s.AddRequest(ctx, sample(ep.ID, "x"), Keep{Normal: 1000}, decide); err != nil {
 			t.Fatal(err)
@@ -452,11 +455,11 @@ func TestDecideIsExactUnderConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 99 {
 		wg.Go(func() {
-			err := s.AddRequest(ctx, sample(ep.ID, "x"), Keep{Normal: 1000}, func(n int64) (int, string) {
-				if n%3 == 0 {
-					return 500, "rule"
+			err := s.AddRequest(ctx, sample(ep.ID, "x"), Keep{Normal: 1000}, func(in DecideIn) (int, string, string) {
+				if in.Counter%3 == 0 {
+					return 500, "rule", ""
 				}
-				return 200, "default"
+				return 200, "default", ""
 			})
 
 			if err != nil {

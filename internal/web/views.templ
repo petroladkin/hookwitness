@@ -1199,8 +1199,8 @@ templ behaviourPage(nav navView, b behaviourView) {
 					@toolbar(b, "rule-new", "New rule") {
 						<form class="counter" id="counter" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
 							<input type="hidden" name="op" value="counter-reset"/>
-							<span class="note"><b class="big">{ i64(b.Counter) }</b> counted since the reset</span>
-							<button class="btn quiet" type="submit">Reset counter</button>
+							<span class="note"><b class="big">{ i64(b.Counter) }</b> counted since the reset · { clockText(b.StartedAt, b.Now) }</span>
+							<button class="btn quiet" type="submit">Reset counter and clock</button>
 						</form>
 					}
 					@ruleList(b)
@@ -1262,6 +1262,9 @@ templ ruleList(b behaviourView) {
 			}
 		</ol>
 		<p class="help">The first rule whose condition holds decides; the rest are skipped.</p>
+	}
+	if asksToWait(b.Config) {
+		<p class="help">A reply here sends <code>Retry-After</code>. <a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=check-new&kind=backoff") }>Add a check that the sender waits</a>: a retry that comes earlier fails it.</p>
 	}
 }
 
@@ -1485,11 +1488,34 @@ templ ruleFields(b behaviourView, rule emulate.Rule) {
 				<option value="every" selected?={ rule.When.Kind == "every" }>every Nth request</option>
 				<option value="first" selected?={ rule.When.Kind == "first" }>the first N requests</option>
 				<option value="random" selected?={ rule.When.Kind == "random" }>at random, p%</option>
+				<option value="window" selected?={ rule.When.Kind == "window" }>within a time after the start</option>
+				<option value="flap" selected?={ rule.When.Kind == "flap" }>flapping: down, then up, again</option>
+				<option value="rate" selected?={ rule.When.Kind == "rate" }>over a rate, then blocked</option>
+				<option value="attempts" selected?={ rule.When.Kind == "attempts" }>the first N attempts of each event</option>
 			</select>
 		</label>
-		<label class="for-n">N <input type="number" name="n" value={ blank(rule.When.N) } min="1"/></label>
-		<label class="for-p">p, % <input type="number" name="percent" value={ percent(rule.When.Percent) } min="0" max="100" step="any"/></label>
+		<label class="whened w-every w-first w-rate w-attempts">N <input type="number" name="n" value={ blank(rule.When.N) } min="1"/></label>
+		<label class="whened w-random">p, % <input type="number" name="percent" value={ percent(rule.When.Percent) } min="0" max="100" step="any"/></label>
+		<label class="whened w-window">From, s <input type="number" name="from_s" value={ blankF(rule.When.FromS) } min="0" step="any" placeholder="0"/></label>
+		<label class="whened w-window">Until, s <input type="number" name="to_s" value={ blankF(rule.When.ToS) } min="0" step="any" placeholder="for ever"/></label>
+		<label class="whened w-flap">Down <input type="number" name="down" value={ blankF(rule.When.Down) } min="0" step="any"/></label>
+		<label class="whened w-flap">Up <input type="number" name="up" value={ blankF(rule.When.Up) } min="0" step="any"/></label>
+		<label class="whened w-flap">
+			Counted in
+			<select name="unit">
+				<option value="s" selected?={ rule.When.Unit != "requests" }>seconds</option>
+				<option value="requests" selected?={ rule.When.Unit == "requests" }>requests</option>
+			</select>
+		</label>
+		<label class="whened w-rate">Per, s <input type="number" name="per_s" value={ blankF(rule.When.PerS) } min="0" step="any"/></label>
+		<label class="whened w-rate">Block, s <input type="number" name="block_s" value={ blankF(rule.When.BlockS) } min="0" step="any"/></label>
 	</div>
+	<p class="help whened w-window w-flap w-rate">The clock starts at the first request the rules see after a reset (or after the endpoint is made); "Reset counter and clock" starts it again. Times up to 604800 s, a week.</p>
+	<p class="help whened w-window">It holds between From and Until seconds after the start. With Until blank it never ends, as a resource that is gone after a while.</p>
+	<p class="help whened w-flap">Each cycle starts with its down part, when this rule takes the requests, then the up part, when they go on to the next rules.</p>
+	<p class="help whened w-rate">More than N requests within Per seconds trip it; it then takes every request during the next Block seconds, and the count starts again. It counts every request the rules see, also those an earlier rule takes.</p>
+	<p class="help whened w-attempts">Attempts of the same event: its id where the endpoint's event id says (the Checks tab), else the same body. A request without the id is a first attempt.</p>
+	<p class="help whened w-window w-flap w-rate w-attempts">A reply can say <code>{ "{{.RetryAfter}}" }</code> (seconds until this condition ends, e.g. in a <code>Retry-After</code> header), <code>{ "{{.Elapsed}}" }</code> (seconds since the start) and <code>{ "{{.Attempt}}" }</code>.</p>
 	<label>
 		Do
 		<select name="do">

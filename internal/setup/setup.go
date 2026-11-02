@@ -23,7 +23,8 @@ import (
 // Format is the newest version of the file this build reads; a file of a
 // newer one is refused. Export writes the lowest version that holds the
 // file, so a file of endpoints that use nothing newer still reads in older
-// versions: 2 adds an endpoint's retention.
+// versions: 2 adds an endpoint's retention, its event source, delivery
+// checks and rules by time and state.
 const Format = 2
 
 // MaxSize bounds a setup file: schemas are up to 1 MiB each.
@@ -90,6 +91,12 @@ func Export(eps ...Source) File {
 		}
 		for _, ch := range c.Checks {
 			if ch.IsDelivery() {
+				f.Hookwitness = 2
+			}
+		}
+		// So are the conditions by time and state.
+		for _, r := range c.Rules {
+			if r.When.Clocked() {
 				f.Hookwitness = 2
 			}
 		}

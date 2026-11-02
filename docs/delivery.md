@@ -83,8 +83,11 @@ fails.
 
 A retry that comes before the `Retry-After` the previous answer carried
 fails, whatever the schedule, and a `Retry-After` longer than the schedule's
-gap is the gap to keep. With no first gap the check judges `Retry-After`
-only. Rules that answer `429` or `503` with `Retry-After` are in
+gap is the gap to keep. A number of seconds is kept exactly: a retry 1 s
+after `Retry-After: 2` fails. An HTTP date has whole seconds, so a retry up
+to a second before it still passes. With no first gap the check judges
+`Retry-After` only. Rules that answer `429` or `503` with `Retry-After`, such
+as a [rate limit](replies.md#rate-limited-with-retry-after), are in
 [Scripted replies](replies.md).
 
 ## With the API and MCP

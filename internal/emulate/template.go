@@ -93,17 +93,23 @@ func first(a, b string) string {
 // Data is what a template sees, e.g.
 //
 //	{{.Header "X-Request-Id"}}  {{.Query "challenge"}}  {{.JSON "event.id"}}
-//	{{.Var.TOKEN}}  {{.N}}  {{.Method}}  {{.Path}}
+//	{{.Var.TOKEN}}  {{.N}}  {{.Method}}  {{.Path}}  {{.RetryAfter}}
 type Data struct {
 	Method string
 	Path   string
 	Body   string
 	Var    map[string]string
 	N      int64 // the request's number since the counter was reset; 0 when refused
-	req    Request
-	query  url.Values
-	json   any
-	parsed sync.Once // a render cut off by its deadline may still be running
+	// RetryAfter is whole seconds (at least 1) until the matched rule's
+	// condition stops holding (a window with an end, a flap's down part in
+	// seconds, a rate block), else 0.
+	RetryAfter int
+	Elapsed    float64 // seconds since the endpoint's clock started
+	Attempt    int     // the request's attempt of its event (or body); 1 without one
+	req        Request
+	query      url.Values
+	json       any
+	parsed     sync.Once // a render cut off by its deadline may still be running
 }
 
 // NewData prepares the template data of a request.

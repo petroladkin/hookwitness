@@ -320,7 +320,15 @@ func TestResetAndDelete(t *testing.T) {
 	if res, text := e.call(t, context.Background(), "reset_endpoint", map[string]any{"endpoint": "/r"}); !res.IsError || !strings.Contains(text, "say what to reset") {
 		t.Fatalf("nothing to reset: %s", text)
 	}
-	e.ok(t, "reset_endpoint", map[string]any{"endpoint": "/r", "requests": true, "counter": true})
+	if out, text := e.ok(t, "get_endpoint", map[string]any{"endpoint": "/r"}); out["started_at"] == nil || !strings.Contains(text, "the rules counted 1 since their clock started at") {
+		t.Fatalf("get_endpoint before the reset: %s", text)
+	}
+	if _, text := e.ok(t, "reset_endpoint", map[string]any{"endpoint": "/r", "requests": true, "counter": true}); !strings.Contains(text, "counter and clock reset") {
+		t.Fatalf("reset: %s", text)
+	}
+	if out, text := e.ok(t, "get_endpoint", map[string]any{"endpoint": "/r"}); out["started_at"] != nil || strings.Contains(text, "clock started") {
+		t.Fatalf("get_endpoint after the reset: %s", text)
+	}
 	if out, _ := e.ok(t, "list_requests", map[string]any{"endpoint": "/r"}); len(out["requests"].([]any)) != 0 {
 		t.Fatal("requests not cleared")
 	}
@@ -404,5 +412,24 @@ func TestDescribeNotes(t *testing.T) {
 			"note": "same signature as #1: a replay, or a redelivery of the same signed request"}}}
 	if got := describe(r); got != "#2 POST /gh answered 200, verdict pass; same signature as #1" {
 		t.Fatalf("%q", got)
+	}
+}
+
+// configure_endpoint takes rules by time and state, and refuses an
+// impossible one with the API's message.
+func TestClockRulesTool(t *testing.T) {
+	e := newEnv(t)
+	e.ok(t, "create_endpoint", map[string]any{"path": "/limited"})
+	e.ok(t, "configure_endpoint", map[string]any{"endpoint": "/limited", "rules": []any{
+		map[string]any{"when": map[string]any{"kind": "rate", "n": 1, "per_s": 60, "block_s": 60}, "do": "reply",
+			"reply": map[string]any{"status": 429, "headers": []any{map[string]any{"name": "Retry-After", "value": "{{.RetryAfter}}"}}}},
+	}})
+	if a, b := e.deliver("/limited", "{}"), e.deliver("/limited", "{}"); a != 200 || b != 429 {
+		t.Fatalf("over 1 in 60 s: %d then %d", a, b)
+	}
+	res, text := e.call(t, context.Background(), "configure_endpoint", map[string]any{"endpoint": "/limited", "rules": []any{
+		map[string]any{"when": map[string]any{"kind": "window", "from_s": 5, "to_s": 5}, "do": "drop"}}})
+	if !res.IsError || !strings.Contains(text, "to_s must be above from_s") {
+		t.Fatalf("an empty window: %s", text)
 	}
 }

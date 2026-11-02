@@ -201,6 +201,9 @@ type Facts struct {
 func (c Config) DeliveryFacts(r Request) *Facts {
 	var order *Check
 	any := c.Event != nil
+	for _, r := range c.Rules {
+		any = any || r.When.Kind == WhenAttempts // counts attempts of each event
+	}
 	for i, ch := range c.Checks {
 		if ch.IsDelivery() {
 			any = true
@@ -365,11 +368,11 @@ func judge(ch Check, f Facts, rel Relation, at time.Time) (auth.Result, string) 
 			return auth.Fail, fmt.Sprintf("attempt %d: more than %d attempts", k, ch.MaxAttempts)
 		}
 		gap := at.Sub(rel.Prev.end())
-		var ra time.Duration
+		var ra, grace time.Duration
 		if ch.honoursRetryAfter() {
-			ra = retryAfter(rel.Prev.Outcome, rel.Prev.end())
+			ra, grace = retryAfter(rel.Prev.Outcome, rel.Prev.end())
 		}
-		if ra > 0 && gap < ra-time.Second {
+		if ra > 0 && gap < ra-grace {
 			return auth.Fail, fmt.Sprintf("attempt %d after %s; #%d asked Retry-After: %s", k, secs(gap), rel.Prev.No, secs(ra))
 		}
 		if ch.FirstS == 0 {
@@ -416,20 +419,24 @@ func answered(o Outcome) string {
 
 // retryAfter is the delay a reply's Retry-After asked for, from when the
 // reply ended: seconds, or an HTTP date.
-func retryAfter(o Outcome, end time.Time) time.Duration {
+//
+// A number of seconds is kept exactly: a retry before it is early. An HTTP
+// date has whole seconds, so the moment it names may be up to a second
+// before the one meant: grace is that second.
+func retryAfter(o Outcome, end time.Time) (d, grace time.Duration) {
 	for _, h := range o.Headers {
 		if !strings.EqualFold(h.Name, "Retry-After") {
 			continue
 		}
 		v := strings.TrimSpace(h.Value)
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return time.Duration(n) * time.Second
+			return time.Duration(n) * time.Second, 0
 		}
 		if t, err := http.ParseTime(v); err == nil {
-			return max(t.Sub(end), 0)
+			return max(t.Sub(end), 0), time.Second
 		}
 	}
-	return 0
+	return 0, 0
 }
 
 func secs(d time.Duration) string {

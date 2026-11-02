@@ -4,7 +4,7 @@
     "title": "Hookwitness API",
     "version": "1",
     "summary": "Catch webhooks, script the answers, read the verdicts.",
-    "description": "JSON under <admin prefix>/api/v1 (/admin/api/v1 by default), with the UI's access rules: it answers on IP addresses, localhost and -admin-hosts names (a request with a valid token on any name); writes must be application/json. Once a user exists (or a machine token is configured) every route needs credentials: a personal token as Authorization: Bearer hkw_…, or the web UI's login cookie. Without users the API is open. Every error has one shape (Error). See docs/api.md for recipes.",
+    "description": "JSON under <admin prefix>/api/v1 (/admin/api/v1 by default), with the UI's access rules: it answers on IP addresses, localhost and -admin-hosts names (a request with a valid token on any name); writes must be application/json. Once a user exists (or a machine token is configured) every route needs credentials: a personal token as Authorization: Bearer hkw_\u2026, or the web UI's login cookie. Without users the API is open. Every error has one shape (Error). See docs/api.md for recipes.",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -585,8 +585,8 @@
       ],
       "post": {
         "operationId": "resetCounter",
-        "summary": "Reset the rules' counter",
-        "description": "Send {} as application/json.",
+        "summary": "Reset the rules' counter and clock",
+        "description": "The rules count from zero again, their clock starts again at the next request, and rate limits are cleared. Send {} as application/json.",
         "requestBody": {
           "required": false,
           "content": {
@@ -2484,6 +2484,17 @@
             "type": "integer",
             "description": "Requests that passed its checks since the counter was reset; the rules count these."
           },
+          "started_at": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the rules' clock started: the first request that reached the rules after the last reset; null before it. Rules by time count from here."
+          },
           "enabled": {
             "type": "boolean",
             "description": "On: it catches. Off: it keeps its path, behaviour, secrets, requests and counter, and requests to its path are answered 404 and kept in the Unmatched register."
@@ -2526,6 +2537,7 @@
           "url",
           "requests",
           "counter",
+          "started_at",
           "enabled",
           "created_at",
           "retention",
@@ -2591,22 +2603,62 @@
       },
       "Condition": {
         "type": "object",
+        "description": "When a rule takes a request. By count: every, first, random. By the endpoint's clock, which starts at the first request that reaches the rules after a reset: window, flap (by time or by count), rate. By the request's attempt of its event (the event source's id, else the same body): attempts. Times are seconds, at most 604800 (a week).",
         "properties": {
           "kind": {
             "type": "string",
             "enum": [
               "every",
               "first",
-              "random"
+              "random",
+              "window",
+              "flap",
+              "rate",
+              "attempts"
             ]
           },
           "n": {
             "type": "integer",
-            "description": "every N, first N."
+            "minimum": 1,
+            "description": "every N, first N; rate: the requests allowed within per_s (1-1000); attempts: the first N attempts of each event (1-1000)."
           },
           "percent": {
             "type": "number",
             "description": "random: 0 < percent <= 100."
+          },
+          "from_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "window: from this many seconds after the start (default 0)."
+          },
+          "to_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "window: until this many seconds after the start, not included; absent: for ever. Above from_s."
+          },
+          "down": {
+            "type": "number",
+            "description": "flap: the down part, first in each cycle: seconds, or whole requests."
+          },
+          "up": {
+            "type": "number",
+            "description": "flap: the up part that follows it."
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "s",
+              "requests"
+            ],
+            "description": "flap: the cycle runs by time since the start, or by the counter."
+          },
+          "per_s": {
+            "type": "number",
+            "description": "rate: more than n requests within this many seconds trip it."
+          },
+          "block_s": {
+            "type": "number",
+            "description": "rate: it then holds for this many seconds from the request that tripped it; afterwards the count starts again."
           }
         },
         "required": [
@@ -3357,7 +3409,7 @@
               "object",
               "null"
             ],
-            "description": "What was done: source (default, rule, check, limit, busy, unmatched — no endpoint at the path, off — the path is an endpoint's that is off), action (reply, timeout, drop, refused, error, abandoned — the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB; withheld says what of the configured reply HTTP did not send — a body and some headers with 204 or 304, a body to HEAD), delay_ms, waited_ms, counter."
+            "description": "What was done: source (default, rule, check, limit, busy, unmatched \u2014 no endpoint at the path, off \u2014 the path is an endpoint's that is off), action (reply, timeout, drop, refused, error, abandoned \u2014 the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB; withheld says what of the configured reply HTTP did not send \u2014 a body and some headers with 204 or 304, a body to HEAD), delay_ms, waited_ms, counter; for a rule by time or state, elapsed_ms (since the clock started) and, for a rate rule, block_until."
           },
           "verdicts": {
             "type": "array",
@@ -3469,7 +3521,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "Suggested: the schema the shared discriminator value maps to, else one from that value (order.paid → OrderPaid), else from the endpoint's path."
+            "description": "Suggested: the schema the shared discriminator value maps to, else one from that value (order.paid \u2192 OrderPaid), else from the endpoint's path."
           },
           "text": {
             "type": "string",
@@ -3588,7 +3640,7 @@
           },
           "shown": {
             "type": "string",
-            "description": "How it is shown: hkw_<id>_…"
+            "description": "How it is shown: hkw_<id>_\u2026"
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"

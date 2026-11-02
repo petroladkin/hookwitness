@@ -45,30 +45,26 @@ type OrderMark struct {
 
 // relate finds request id's relation, records its event row and stores the
 // verdicts Relate gives.
-func relate(ctx context.Context, tx *sql.Tx, endpoint, id int64, bodySHA []byte, d *Delivery) error {
+func relate(ctx context.Context, tx *sql.Tx, endpoint, id int64, bodySHA []byte, d *Delivery, attempt int) error {
 	if d == nil || endpoint == Unmatched {
 		return nil
 	}
-	var rel Relation
+	rel := Relation{Attempt: attempt}
+	if attempt < 0 {
+		var err error
+		if rel.Attempt, err = countAttempt(ctx, tx, endpoint, id, bodySHA, d); err != nil {
+			return err
+		}
+	}
 	var prev *sql.Row
 	switch {
 	case d.Missing:
 	case d.ByBody:
 		if len(bodySHA) > 0 {
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM requests WHERE endpoint_id = ? AND body_sha256 = ? AND id < ?`,
-				endpoint, bodySHA, id).Scan(&rel.Attempt); err != nil {
-				return fmt.Errorf("attempts: %w", err)
-			}
 			prev = tx.QueryRowContext(ctx, `SELECT id, no, received_at, status, outcome FROM requests
 				WHERE endpoint_id = ? AND body_sha256 = ? AND id < ? ORDER BY id DESC LIMIT 1`, endpoint, bodySHA, id)
 		}
-		rel.Attempt++
 	default:
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM event_seen WHERE endpoint_id = ? AND event = ? AND request_id < ?`,
-			endpoint, d.Event, id).Scan(&rel.Attempt); err != nil {
-			return fmt.Errorf("attempts: %w", err)
-		}
-		rel.Attempt++
 		prev = tx.QueryRowContext(ctx, `SELECT r.id, r.no, r.received_at, r.status, r.outcome FROM event_seen e JOIN requests r ON r.id = e.request_id
 			WHERE e.endpoint_id = ? AND e.event = ? AND e.request_id < ? ORDER BY e.request_id DESC LIMIT 1`, endpoint, d.Event, id)
 	}
@@ -122,6 +118,30 @@ func relate(ctx context.Context, tx *sql.Tx, endpoint, id int64, bodySHA []byte,
 		return fmt.Errorf("delivery verdicts: %w", err)
 	}
 	return nil
+}
+
+// countAttempt is a request's attempt among the kept requests before id of
+// its event (or its body, without an event source): 1-based; 0 when its
+// event id is missing.
+func countAttempt(ctx context.Context, tx *sql.Tx, endpoint, id int64, bodySHA []byte, d *Delivery) (int, error) {
+	var n int
+	var err error
+	switch {
+	case d.Missing:
+		return 0, nil
+	case d.ByBody:
+		if len(bodySHA) > 0 {
+			err = tx.QueryRowContext(ctx, `SELECT count(*) FROM requests WHERE endpoint_id = ? AND body_sha256 = ? AND id < ?`,
+				endpoint, bodySHA, id).Scan(&n)
+		}
+	default:
+		err = tx.QueryRowContext(ctx, `SELECT count(*) FROM event_seen WHERE endpoint_id = ? AND event = ? AND request_id < ?`,
+			endpoint, d.Event, id).Scan(&n)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("attempts: %w", err)
+	}
+	return n + 1, nil
 }
 
 // RetryGroup is what a request's retries are grouped by: its event when one

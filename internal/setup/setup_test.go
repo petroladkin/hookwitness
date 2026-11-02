@@ -228,6 +228,42 @@ func TestDeliveryInSetup(t *testing.T) {
 	}
 }
 
+// TestClockRulesInSetup: rules by time and state travel in format 2 and
+// come back the same; the clock and the rules' state are not part of a
+// setup file.
+func TestClockRulesInSetup(t *testing.T) {
+	rules := []emulate.Rule{
+		{When: emulate.Condition{Kind: emulate.WhenWindow, ToS: 1.5}, Do: emulate.ActDrop},
+		{When: emulate.Condition{Kind: emulate.WhenFlap, Down: 1, Up: 2, Unit: "requests"}, Do: emulate.ActTimeout},
+		{When: emulate.Condition{Kind: emulate.WhenRate, N: 5, PerS: 10, BlockS: 30}, Do: emulate.ActReply,
+			Reply: emulate.Reply{Status: 429, Headers: []emulate.Header{{Name: "Retry-After", Value: "{{.RetryAfter}}"}}}},
+		{When: emulate.Condition{Kind: emulate.WhenAttempts, N: 2}, Do: emulate.ActReply, Reply: emulate.Reply{Status: 503}},
+	}
+	for i, r := range rules {
+		cfg := emulate.Config{Default: emulate.Reply{Status: 200}, Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenEvery, N: 2}, Do: emulate.ActDrop}, r}}
+		f := Export(Source{Path: "/clock", Config: cfg})
+		b := f.JSON()
+		if f.Hookwitness != 2 || strings.Contains(string(b), "start") || strings.Contains(string(b), "state") {
+			t.Fatalf("rule %d: format %d:\n%s", i, f.Hookwitness, b)
+		}
+		parsed, err := Parse(b, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := parsed.Endpoints[0].Config(nil); got.String() != cfg.String() {
+			t.Fatalf("rule %d round trip:\n%s\nwant\n%s", i, got.String(), cfg.String())
+		}
+	}
+	if f := Export(Source{Path: "/count", Config: emulate.Config{Default: emulate.Reply{Status: 200},
+		Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenFirst, N: 2}, Do: emulate.ActDrop}}}}); f.Hookwitness != 1 {
+		t.Fatalf("rules by count only: format %d", f.Hookwitness)
+	}
+	bad := `{"hookwitness":2,"endpoints":[{"path":"/w","default":{"status":200},"rules":[{"when":{"kind":"window","from_s":5,"to_s":5},"do":"drop"}],"checks":[],"vars":[],"schemas":[],"secrets":[]}]}`
+	if _, err := Parse([]byte(bad), opts); err == nil || !strings.Contains(err.Error(), "to_s must be above from_s") {
+		t.Fatalf("an empty window: %v", err)
+	}
+}
+
 // An export that uses nothing newer than 0.2 is what 0.2.0 wrote, byte for
 // byte, so 0.2 reads it: testdata/release-0.2/export.json was written by the
 // v0.2.0 code from config.json, an endpoint with every part 0.2 knew.

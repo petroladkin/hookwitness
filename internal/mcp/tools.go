@@ -129,12 +129,16 @@ func (s *tools) register(srv *sdk.Server) {
 		Description: "List the endpoints with their catch URLs and how many requests each keeps."},
 		s.listEndpoints)
 	sdk.AddTool(srv, &sdk.Tool{Name: "get_endpoint", Annotations: readOnly,
-		Description: "One endpoint and its behaviour: checks, rules, the default reply, variables, schemas, and its secrets (names, kinds and fingerprints; values are never shown)."},
+		Description: "One endpoint and its behaviour: checks, rules, the default reply, variables, schemas, and its secrets (names, kinds and fingerprints; values are never shown); " +
+			"counter and started_at: the requests the rules counted and when their clock started, since the last reset."},
 		s.getEndpoint)
 	sdk.AddTool(srv, &sdk.Tool{Name: "configure_endpoint", Annotations: idempotent,
 		Description: "Set parts of an endpoint's behaviour; the parts given replace those parts, the others stay. " +
 			"default: the reply {status, headers:[{name,value}], body (a Go template) or body_base64 (exact bytes), delay_ms, jitter_ms}. " +
-			"rules: in order, the first whose condition holds decides: {when:{kind: every|first|random, n | percent}, do: reply|timeout|drop, reply}. " +
+			"rules: in order, the first whose condition holds decides: {when: condition, do: reply|timeout|drop, reply}; conditions: {kind: every|first, n}, {kind: random, percent}, " +
+			"and by the clock, which starts at the first request after a reset: {kind: window, from_s, to_s (none: for ever)}, {kind: flap, down, up, unit: s|requests} (down first, repeating), " +
+			"{kind: rate, n, per_s, block_s} (more than n within per_s seconds: then for block_s), {kind: attempts, n} (the first n attempts of each event). " +
+			"Reply templates may say {{.RetryAfter}} (seconds until the matched condition ends), {{.Elapsed}} (seconds since the start), {{.Attempt}}. " +
 			"checks: run first: a required header {header, match: present|equals|regex, value}, an authorization check " +
 			"{kind: github|stripe|standard|hmac|bearer|basic, secret, user (basic), enforce}, a JSON Schema check {kind: schema, schema | schemas | select}, " +
 			"or a delivery check, judged against the earlier requests: {kind: duplicates} (a repeat of an event after a 2xx answer fails), " +
@@ -165,7 +169,7 @@ func (s *tools) register(srv *sdk.Server) {
 			"Returns pass with the matching requests, or fail with what arrived instead and the reasons of their verdicts."},
 		s.expect)
 	sdk.AddTool(srv, &sdk.Tool{Name: "reset_endpoint", Annotations: destructive,
-		Description: "Reset an endpoint: counter starts the rules' count again (\"the first 2\" counts anew); requests deletes its kept requests."},
+		Description: "Reset an endpoint: counter starts the rules' count and clock again (\"the first 2\" counts anew, \"first 30 s\" starts at the next request) and clears rate limits; requests deletes its kept requests."},
 		s.resetEndpoint)
 	sdk.AddTool(srv, &sdk.Tool{Name: "recheck", Annotations: idempotent,
 		Description: "Verify an endpoint's kept requests again with its current checks, secrets and schemas, e.g. after fixing a secret. Only verdicts change."},
@@ -259,6 +263,9 @@ func (s *tools) getEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in Endp
 	summary := fmt.Sprintf("%v (endpoint %v): %v request(s) kept", ep["path"], num(ep["id"]), num(ep["requests"]))
 	if ep["enabled"] == false {
 		summary += "; off: requests to it go to Unmatched"
+	}
+	if at, ok := ep["started_at"].(string); ok {
+		summary += fmt.Sprintf("; the rules counted %v since their clock started at %s", num(ep["counter"]), at)
 	}
 	return result(summary, ep)
 }
@@ -495,7 +502,7 @@ func (s *tools) setSecret(ctx context.Context, _ *sdk.CallToolRequest, in Secret
 
 type ResetIn struct {
 	Endpoint string `json:"endpoint" jsonschema:"the endpoint: its id or its exact path"`
-	Counter  bool   `json:"counter,omitempty" jsonschema:"start the rules' count again"`
+	Counter  bool   `json:"counter,omitempty" jsonschema:"start the rules' count and clock again"`
 	Requests bool   `json:"requests,omitempty" jsonschema:"delete the kept requests"`
 }
 
@@ -512,7 +519,7 @@ func (s *tools) resetEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in Re
 		if _, err := s.c.call(ctx, http.MethodPost, p+"/reset-counter", nil, nil); err != nil {
 			return nil, nil, err
 		}
-		done = append(done, "counter reset")
+		done = append(done, "counter and clock reset")
 	}
 	if in.Requests {
 		if _, err := s.c.call(ctx, http.MethodDelete, p+"/requests", nil, nil); err != nil {

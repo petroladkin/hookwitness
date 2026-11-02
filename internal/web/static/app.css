@@ -259,8 +259,13 @@ details.raw summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing:
 .card input[aria-invalid="true"]{border-bottom-color:var(--alarm)}
 .grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:10px}
 /* Show only the fields the chosen options use. */
-.card:has(select[name=when] option[value=random]:checked) .for-n,
-.card:has(select[name=when] option:not([value=random]):checked) .for-p{display:none}
+.card:has(select[name=when] option[value=every]:checked) .whened:not(.w-every),
+.card:has(select[name=when] option[value=first]:checked) .whened:not(.w-first),
+.card:has(select[name=when] option[value=random]:checked) .whened:not(.w-random),
+.card:has(select[name=when] option[value=window]:checked) .whened:not(.w-window),
+.card:has(select[name=when] option[value=flap]:checked) .whened:not(.w-flap),
+.card:has(select[name=when] option[value=rate]:checked) .whened:not(.w-rate),
+.card:has(select[name=when] option[value=attempts]:checked) .whened:not(.w-attempts){display:none}
 .grid3.when{grid-template-columns:repeat(2,minmax(0,1fr))}
 .card:has(select[name=do] option:not([value=reply]):checked) .reply-fields,
 .card:has(input[name=own_error]:not(:checked)) .reply-fields{display:none}
