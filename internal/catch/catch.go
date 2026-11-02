@@ -352,7 +352,7 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 			Headers: []emulate.Header{{Name: "Content-Type", Value: "text/plain; charset=utf-8"}},
 			Body:    []byte("Hookwitness could not render this endpoint's reply: " + err.Error() + "\n")}
 	}
-	rendered = rendered.Protect(access.CookieName)
+	rendered = rendered.Protect(access.CookieName, access.FlowCookieName)
 	sent, withheld := rendered.AsSent(r.Method) // what net/http will send of it
 	pl.out.SetReply(sent)
 	pl.out.Withheld = withheld
@@ -604,8 +604,8 @@ func storeHeaders(r *http.Request, hs []wire.Header, ok bool) []store.Header {
 	return out
 }
 
-// SessionRedacted replaces the value of the admin's login cookie in a
-// recorded Cookie header.
+// SessionRedacted replaces the value of the admin's login cookie (or of a
+// provider sign-in's flow cookie) in a recorded Cookie header.
 const SessionRedacted = "[hookwitness session]"
 
 // RedactSession replaces the value of a hookwitness_session cookie in a
@@ -613,13 +613,13 @@ const SessionRedacted = "[hookwitness session]"
 // admin on another port of the same host sends it to catch paths too; it
 // must never be kept with the evidence. Everything else stays as sent.
 func RedactSession(v string) string {
-	if !strings.Contains(v, access.CookieName) {
+	if !strings.Contains(v, access.CookieName) && !strings.Contains(v, access.FlowCookieName) {
 		return v
 	}
 	parts := strings.Split(v, ";")
 	for i, p := range parts {
 		name, _, found := strings.Cut(p, "=")
-		if found && strings.TrimSpace(name) == access.CookieName {
+		if n := strings.TrimSpace(name); found && (n == access.CookieName || n == access.FlowCookieName) {
 			parts[i] = name + "=" + SessionRedacted
 		}
 	}

@@ -548,3 +548,32 @@ func TestReadSecretFile(t *testing.T) {
 		t.Errorf("missing: %v", err)
 	}
 }
+
+// A user without a password cannot log in with one, and the login checks
+// the dummy record as for an unknown name: the time taken tells nothing.
+func TestLoginWithoutAPassword(t *testing.T) {
+	ctx := context.Background()
+	a, st, _ := newAuth(t, "")
+	st.AddUserWithEmail(ctx, "pat", store.RoleUser, "", "pat@example.com")
+	st.AddUser(ctx, "ann", store.RoleAdmin, a.HashPassword("correct horse battery"))
+	var checked []string
+	a.matchHook = func(record string) { checked = append(checked, record) }
+	for _, try := range []struct{ name, pw string }{{"pat", ""}, {"pat", "anything at all"}, {"nobody", "anything at all"}} {
+		if _, err := a.Login(ctx, try.name, try.pw); !errors.Is(err, ErrWrongLogin) {
+			t.Fatalf("%s: %v", try.name, err)
+		}
+	}
+	if len(checked) != 3 || checked[0] != a.dummy || checked[1] != a.dummy || checked[2] != a.dummy {
+		t.Fatalf("records checked: %d, all the dummy: %v", len(checked), checked[0] == a.dummy)
+	}
+	if u, err := a.Login(ctx, "ann", "correct horse battery"); err != nil || u.Name != "ann" {
+		t.Fatalf("a password login: %v", err)
+	}
+	if c := FlowCookie("flow", "/admin", true); c.Name != "hookwitness_oidc" || c.Path != "/admin/oidc/" || !c.HttpOnly || !c.Secure ||
+		c.SameSite != http.SameSiteLaxMode || c.MaxAge != 600 {
+		t.Fatalf("flow cookie %+v", c)
+	}
+	if c := FlowCookie("", "", false); c.MaxAge != -1 || c.Path != "/oidc/" {
+		t.Fatalf("clearing %+v", c)
+	}
+}

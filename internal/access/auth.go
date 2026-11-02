@@ -35,6 +35,8 @@ type Authenticator struct {
 	// nothing; made on first use (a hash costs a few milliseconds).
 	dummy     string
 	dummyOnce sync.Once
+	// matchHook, when set (tests), sees the record each login checks.
+	matchHook func(record string)
 	// changed are told when a credential is revoked or changes here.
 	changedMu sync.Mutex
 	changed   []func()
@@ -88,25 +90,39 @@ func (a *Authenticator) HashPassword(pw string) string { return a.keys.HashToken
 
 // Login checks a name and password: the user, or ErrWrongLogin (one error
 // for both), or ErrBusy. An unknown name costs a hash too.
+//
+// A user without a password (provider sign-in only) is checked against a
+// dummy record too, so the time taken does not tell "no password" from a
+// wrong one.
 func (a *Authenticator) Login(ctx context.Context, name, pw string) (store.User, error) {
 	n := strings.ToLower(strings.TrimSpace(name))
 	u, err := a.store.UserByName(ctx, n)
 	record := u.Password
 	switch {
-	case errors.Is(err, store.ErrNotFound):
+	case err == nil && u.HasPassword():
+	case err == nil || errors.Is(err, store.ErrNotFound):
 		a.dummyOnce.Do(func() { a.dummy = a.keys.HashToken("not a password of anyone") })
 		record = a.dummy
-	case err != nil:
+	default:
 		return store.User{}, err
 	}
-	ok, err := a.keys.MatchToken(record, pw)
+	ok, err := a.match(record, pw)
 	if err != nil {
 		return store.User{}, err
 	}
-	if !ok || u.ID == 0 {
+	if !ok || u.ID == 0 || !u.HasPassword() {
 		return store.User{}, ErrWrongLogin
 	}
 	return u, nil
+}
+
+// match checks a password against a record (a seam: tests see which record
+// a login checked).
+func (a *Authenticator) match(record, pw string) (bool, error) {
+	if a.matchHook != nil {
+		a.matchHook(record)
+	}
+	return a.keys.MatchToken(record, pw)
 }
 
 // StartSession records a login for u and returns the cookie's id.

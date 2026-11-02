@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -179,13 +180,14 @@ func (d *Data) JSON(path string) string {
 // therefore always adds "Content-Security-Policy: sandbox" (an endpoint's
 // own policy is sent too: several policies only narrow each other), adds
 // "X-Content-Type-Options: nosniff" unless the endpoint sets it, and drops
-// any Set-Cookie that a browser could read as sessionCookie, the admin's
-// login cookie: by its name, or a cookie without a name whose value holds
-// "sessionCookie=" (browsers send a nameless cookie back as its value).
-func (r Rendered) Protect(sessionCookie string) Rendered {
+// any Set-Cookie that a browser could read as one of adminCookies, the
+// admin's cookies (its login, a provider sign-in's): by its name, or a
+// cookie without a name whose value holds "<name>=" (browsers send a
+// nameless cookie back as its value).
+func (r Rendered) Protect(adminCookies ...string) Rendered {
 	hs := make([]Header, 0, len(r.Headers)+2)
 	for _, h := range r.Headers {
-		if strings.EqualFold(h.Name, "Set-Cookie") && setsCookie(h.Value, sessionCookie) {
+		if strings.EqualFold(h.Name, "Set-Cookie") && slices.ContainsFunc(adminCookies, func(c string) bool { return setsCookie(h.Value, c) }) {
 			continue
 		}
 		hs = append(hs, h)
