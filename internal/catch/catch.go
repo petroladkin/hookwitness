@@ -45,6 +45,9 @@ type Handler struct {
 	// after starts a wait's timer; tests replace it to see the durations
 	// asked for without waiting. Nil means a real timer.
 	after func(time.Duration) <-chan time.Time
+	// now reads the clock a request is received by; tests replace it to
+	// give arrivals exact times. Nil means the real clock.
+	now func() time.Time
 
 	heldMu sync.Mutex
 	held   int64 // bytes of bodies held now, against MaxInFlight
@@ -88,6 +91,9 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	h.inflight.Add(1)
 	defer h.inflight.Done()
 	received := time.Now().UTC()
+	if h.now != nil {
+		received = h.now().UTC()
+	}
 	p := RawPath(r)
 	// net/http cancels the request context when the sender closes its side,
 	// which fire-and-forget senders do right after the request; a request

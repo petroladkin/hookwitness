@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -194,5 +195,54 @@ func TestRecheckRegroups(t *testing.T) {
 	}
 	if v := verdictOf(t, st, a[0].ID, 1); v.Result != auth.Fail { // e1's third, after 200s
 		t.Errorf("newest e1 after a re-check: %s %q", v.Result, v.Reason)
+	}
+}
+
+// Through the handler: a GitHub-style sender is answered 503 by a rule, then
+// 429 with Retry-After: 10, retries 3 s later (too early) and 10 s after
+// that, and then delivers the event again after its 200 (a duplicate).
+func TestDeliveryThroughTheHandler(t *testing.T) {
+	h, st, _ := setup(t, 1<<20)
+	cfg := emulate.Config{Default: emulate.Reply{Status: 200}, Event: &emulate.Source{From: emulate.FromHeader, Key: "X-GitHub-Delivery"},
+		Rules: []emulate.Rule{
+			{When: emulate.Condition{Kind: emulate.WhenFirst, N: 1}, Do: emulate.ActReply, Reply: emulate.Reply{Status: 503}},
+			{When: emulate.Condition{Kind: emulate.WhenFirst, N: 3}, Do: emulate.ActReply,
+				Reply: emulate.Reply{Status: 429, Headers: []emulate.Header{{Name: "Retry-After", Value: "10"}}}},
+		},
+		Checks: []emulate.Check{{Kind: emulate.KindDuplicates}, {Kind: emulate.KindBackoff, FirstS: 1, Factor: 2}}}
+	ep := configure(t, st, "/github/push", cfg)
+	var clock time.Time
+	h.now = func() time.Time { return clock }
+	deliver := func(at float64) *store.Request {
+		clock = t0.Add(time.Duration(at * float64(time.Second)))
+		r := httptest.NewRequest("POST", "/github/push", strings.NewReader(`{"ref":"main"}`))
+		r.Header.Set("X-GitHub-Delivery", "d-1")
+		h.Catch(httptest.NewRecorder(), r, nil, false)
+		got, _ := st.Requests(context.Background(), ep, 0, 1)
+		return &got[0]
+	}
+	type want struct {
+		status          int
+		dup, backoff    auth.Result
+		dupWhy, backWhy string
+	}
+	for i, c := range []struct {
+		at float64
+		w  want
+	}{
+		{0, want{503, auth.Pass, auth.NotChecked, "first delivery of d-1", "first attempt"}},
+		{1, want{429, auth.Pass, auth.Pass, "#1 was answered 503", "attempt 2 after 1 s, expected 1 s"}},
+		{4, want{429, auth.Pass, auth.Fail, "#2 was answered 429", "attempt 3 after 3 s; #2 asked Retry-After: 10 s"}},
+		{14, want{200, auth.Pass, auth.Pass, "#3 was answered 429", "expected 10 s"}},
+		{22, want{200, auth.Fail, auth.Pass, "duplicate of #4, which was answered 200", "attempt 5 after 8 s, expected 8 s"}},
+	} {
+		r := deliver(c.at)
+		dup, back := verdictOf(t, st, r.ID, 1), verdictOf(t, st, r.ID, 2)
+		if r.Status != c.w.status || r.Attempt != i+1 ||
+			dup.Result != c.w.dup || !strings.Contains(dup.Reason, c.w.dupWhy) ||
+			back.Result != c.w.backoff || !strings.Contains(back.Reason, c.w.backWhy) {
+			t.Errorf("attempt %d: status %d attempt %d, duplicates %s %q, backoff %s %q; want %+v",
+				i+1, r.Status, r.Attempt, dup.Result, dup.Reason, back.Result, back.Reason, c.w)
+		}
 	}
 }
