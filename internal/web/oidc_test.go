@@ -421,3 +421,17 @@ func TestOIDCKeepsNothingSecret(t *testing.T) {
 		}
 	}
 }
+
+// Browsers hold a form's redirect to form-action: the pages allow the
+// providers' origins (and the admin's) there, nothing else changes.
+func TestOIDCFormAction(t *testing.T) {
+	e := newOIDCEnv(t, "/admin")
+	res, _ := browser().Get(e.srv.URL + "/admin/login")
+	got := res.Header.Get("Content-Security-Policy")
+	if !strings.Contains(got, "form-action 'self' "+e.srv.URL+" "+e.idp.URL+";") || !strings.Contains(got, "default-src 'none'") {
+		t.Fatalf("CSP %q", got)
+	}
+	if strings.Replace(got, " "+e.srv.URL+" "+e.idp.URL, "", 1) != csp {
+		t.Fatalf("more than form-action changed: %q", got)
+	}
+}

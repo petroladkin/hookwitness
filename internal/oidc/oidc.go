@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -101,6 +102,23 @@ func (p *Provider) SetHTTPClient(c *http.Client) { p.client = c }
 func (p *Provider) Discover(ctx context.Context) error {
 	_, err := p.discovered(ctx)
 	return err
+}
+
+// AuthOrigin is the origin of the provider's authorization endpoint, where
+// a sign-in sends the browser: from the discovery document when fetched,
+// else the issuer's (the same at the named providers).
+func (p *Provider) AuthOrigin() string {
+	p.mu.Lock()
+	raw := p.Issuer
+	if p.disc != nil {
+		raw = p.disc.oauth.Endpoint.AuthURL
+	}
+	p.mu.Unlock()
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // AllowsDomain reports whether a new identity with this email may become a

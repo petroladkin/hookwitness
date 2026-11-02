@@ -18,6 +18,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -225,6 +226,27 @@ func (h *Handler) StopStreams() {
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; " +
 	"connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 
+// csp is the page's policy. With providers, a sign-in's form is answered
+// with a redirect to the provider (or to the admin's own origin), and
+// browsers hold redirects after a form to form-action too: those origins
+// are added to it, nothing else.
+func (h *Handler) csp() string {
+	if len(h.oidc) == 0 {
+		return csp
+	}
+	targets := []string{"'self'"}
+	add := func(o string) {
+		if o != "" && !slices.Contains(targets, o) {
+			targets = append(targets, o)
+		}
+	}
+	add(h.adminOrigin)
+	for _, p := range h.oidc {
+		add(p.AuthOrigin())
+	}
+	return strings.Replace(csp, "form-action 'self'", "form-action "+strings.Join(targets, " "), 1)
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isMCP := r.URL.Path == h.prefix+"/mcp"
 	isAPI := isMCP || api.Is(h.prefix, r.URL.Path)
@@ -250,7 +272,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(access.With(r.Context(), id))
 	}
 	hd := w.Header()
-	hd.Set("Content-Security-Policy", csp)
+	hd.Set("Content-Security-Policy", h.csp())
 	hd.Set("X-Content-Type-Options", "nosniff")
 	hd.Set("Referrer-Policy", "same-origin")
 	if isAPI {
