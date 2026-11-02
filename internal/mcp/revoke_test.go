@@ -97,11 +97,11 @@ func (ts *tokenServer) connect(t *testing.T, name string) (*sdk.ClientSession, s
 }
 
 // A token revoked by another process (the user command; nothing is
-// announced): a running wait ends at its next round with an error, and the
-// periodic check closes the token's session.
-func TestRevokedTokenEndsWaitsAndSessions(t *testing.T) {
+// announced): a running wait ends at its next round with an error. (The
+// periodic check is an hour away here, so the error is the round's.)
+func TestRevokedTokenEndsWaits(t *testing.T) {
 	oldWait, oldCheck := apiWait, credentialCheck
-	apiWait, credentialCheck = 100*time.Millisecond, 150*time.Millisecond
+	apiWait, credentialCheck = 100*time.Millisecond, time.Hour
 	t.Cleanup(func() { apiWait, credentialCheck = oldWait, oldCheck })
 	ts := newTokenServer(t)
 	cs, public := ts.connect(t, "agent")
@@ -133,7 +133,29 @@ func TestRevokedTokenEndsWaitsAndSessions(t *testing.T) {
 	case <-time.After(10 * time.Second): // the alternative is the 120 s it was asked to wait
 		t.Fatal("expect still waits after its token was revoked")
 	}
-	waitFor(t, "the revoked token's session closed", func() bool { return ts.h.Sessions() == 0 })
+}
+
+// The same, and the periodic check closes the revoked token's session;
+// another token's stays.
+func TestPeriodicCheckClosesSessions(t *testing.T) {
+	old := credentialCheck
+	credentialCheck = 50 * time.Millisecond
+	t.Cleanup(func() { credentialCheck = old })
+	ts := newTokenServer(t)
+	_, revoked := ts.connect(t, "revoked")
+	kept, _ := ts.connect(t, "kept")
+	waitFor(t, "two sessions", func() bool { return ts.h.Sessions() == 2 })
+	time.Sleep(200 * time.Millisecond) // checks pass with both standing
+	if ts.h.Sessions() != 2 {
+		t.Fatalf("a check closed a standing session: %d", ts.h.Sessions())
+	}
+	if _, err := ts.st.RevokeToken(context.Background(), revoked, 0); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the revoked token's session closed", func() bool { return ts.h.Sessions() == 1 })
+	if _, err := kept.ListTools(context.Background(), nil); err != nil {
+		t.Fatalf("the other token's session: %v", err)
+	}
 }
 
 // A token revoked in this process (Changed): its session closes at once,

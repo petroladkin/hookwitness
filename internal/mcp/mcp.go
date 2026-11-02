@@ -102,7 +102,7 @@ func Handler(api http.Handler, base, version string, log *slog.Logger, stop <-ch
 	s := &Streamable{sessions: map[*sdk.ServerSession]*access.Identity{}, log: log, limit: maxSessions, auth: auth, done: make(chan struct{})}
 	if auth != nil {
 		auth.OnChange(s.Recheck)
-		go s.sweep(stop)
+		go s.sweep(stop, credentialCheck)
 	}
 	s.sdk = sdk.NewStreamableHTTPHandler(func(r *http.Request) *sdk.Server {
 		srv := NewServer(api, base, r.Host, version, stop, auth)
@@ -285,9 +285,9 @@ func (s *Streamable) Recheck() {
 	}
 }
 
-// sweep rechecks the sessions every credentialCheck until the server stops.
-func (s *Streamable) sweep(stop <-chan struct{}) {
-	t := time.NewTicker(credentialCheck)
+// sweep rechecks the sessions every period until the server stops.
+func (s *Streamable) sweep(stop <-chan struct{}, every time.Duration) {
+	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
 		select {
