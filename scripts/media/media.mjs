@@ -242,6 +242,16 @@ await behave(retry, {
   rules: [{ when: { kind: "first", n: 2 }, do: "reply", reply: { status: 503, headers: [{ name: "Retry-After", value: "2" }] } }],
 });
 await shot("behaviour-rule-edit", `${UI}/e/${retry}/behaviour?tab=rules&edit=rule-0`, { selector: dialog });
+// Rules by time: /deploy/hook is down for its first 2 s; /api/limited allows
+// 2 requests in 10 s, and the third trips its 2 s block.
+const raHeader = [{ name: "Retry-After", value: "{{.RetryAfter}}" }];
+const deploy = (await api("POST", "/endpoints", { path: "/deploy/hook" })).json.id;
+await behave(deploy, { rules: [{ when: { kind: "window", to_s: 2 }, do: "reply", reply: { status: 503, headers: raHeader } }] });
+await shot("behaviour-rule-window", `${UI}/e/${deploy}/behaviour?tab=rules&edit=rule-0`, { selector: dialog, maxHeight: 1100 });
+const limited = (await api("POST", "/endpoints", { path: "/api/limited" })).json.id;
+await behave(limited, { rules: [{ when: { kind: "rate", n: 2, per_s: 10, block_s: 2 }, do: "reply", reply: { status: 429, headers: raHeader } }] });
+for (let i = 0; i < 3; i++) await send("/api/limited", "{}", { "User-Agent": "curl/8.7.1" });
+await shot("behaviour-rules-clock", `${UI}/e/${limited}/behaviour?tab=rules`);
 const slack = (await api("POST", "/endpoints", { path: "/slack/events" })).json.id;
 await behave(slack, {
   default: { status: 200, headers: [{ name: "Content-Type", value: "application/json" }], body: '{"challenge":"{{.JSON "challenge"}}"}' },

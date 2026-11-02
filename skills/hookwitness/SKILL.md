@@ -122,6 +122,12 @@ what arrived.
 Fault scripting (same PUT, add `rules`): `{"when":{"kind":"first","n":2},"do":"reply","reply":{"status":503}}`
 fails the first two deliveries (retries); `"do":"timeout"` hangs; `"do":"drop"`
 resets the connection; `{"kind":"every","n":3}`, `{"kind":"random","percent":10}`.
+By time since the first request after a reset (`POST $API/endpoints/<id>/reset-counter`
+starts the clock again): `{"kind":"window","to_s":30}` (down for 30 s; `from_s`
+without `to_s`: gone from then on), `{"kind":"flap","down":10,"up":20,"unit":"s"}`,
+`{"kind":"rate","n":5,"per_s":10,"block_s":30}` (429 with header
+`Retry-After: {{.RetryAfter}}`), and `{"kind":"attempts","n":1}` (each event's first
+attempt fails). A backoff check then judges whether the sender waited.
 
 ## 4. Trigger the sender, then wait for what arrived
 

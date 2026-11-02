@@ -108,7 +108,7 @@ into the Unmatched register with a `404`.
 ```console
 $ curl -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/orders/events"}'
 201
-{"id":1,"path":"/orders/events","url":"http://localhost:8080/orders/events","requests":0,"counter":0,"enabled":true,"created_at":"2026-10-12T17:28:06.808Z",
+{"id":1,"path":"/orders/events","url":"http://localhost:8080/orders/events","requests":0,"counter":0,"started_at":null,"enabled":true,"created_at":"2026-10-12T17:28:06.808Z",
  "retention":null,"retention_effective":{"normal":{"count":1000,"max_age":null},"anomalies":{"count":1000,"max_age":null}},
  "kept":{"normal":0,"anomalies":0,"pinned":0},"pruned":{"count":0,"normal_until":null,"anomalies_until":null}}
 ```
@@ -117,7 +117,9 @@ $ curl -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/
   API by (rewrite the host when the sender reaches hookwitness by another
   name, e.g. from another container).
 - `requests` is how many are kept; `counter` how many passed the checks since
-  the rule counter was last reset; `last_request_at` appears once one arrived.
+  the rule counter was last reset; `started_at` when the first of those
+  arrived, which started the rules' clock (`null` until then);
+  `last_request_at` appears once one arrived.
 - `enabled` is `false` for an endpoint that is off: it keeps its path,
   behaviour, secrets, requests and counter, and requests to its path are
   answered `404` and kept in the Unmatched register (outcome `source` `off`).
@@ -194,8 +196,17 @@ The document (fields left out take their zero value; `default.status` 0 means 20
   reply with both is refused (`422`). A recorded outcome keeps a reply body
   that is not UTF-8 as `body_base64` too.
 - **Conditions:** `every` N (N, 2N, …), `first` N since the counter reset,
-  `random` with `percent` (0 < p ≤ 100). **Actions:** `reply` (with `reply`),
-  `timeout`, `drop`. Delays and timeouts are capped by `-max-wait`.
+  `random` with `percent` (0 < p ≤ 100). By the clock, which starts at the
+  first request after a reset (`started_at`): `window` with `from_s`
+  (default 0) and `to_s` (absent: for ever; above `from_s`); `flap` with
+  `down`, `up` and `unit` `s` or `requests` (the down part first, repeating);
+  `rate` with `n` (1–1000), `per_s` and `block_s` (more than `n` within
+  `per_s` seconds, then for `block_s`; every request the rules see counts).
+  By attempt: `attempts` with `n` (1–1000), the first `n` attempts of each
+  event (the event id, else the same body). Times are seconds, at most
+  604800 (a week). Moving or changing a `rate` rule clears its own count and
+  block. **Actions:** `reply` (with `reply`), `timeout`, `drop`. Delays and
+  timeouts are capped by `-max-wait`.
 - **Required header** checks: `match` is `present`, `equals` (`value`) or
   `regex` (`value`); an optional `error` reply replaces the standard `400`.
 - **Authorization** checks give every request a verdict — `pass`, `fail` or
@@ -238,7 +249,9 @@ The document (fields left out take their zero value; `default.status` 0 means 20
   `attempt`.
 
 - Templates: `{{.Header "X-Id"}}`, `{{.Query "x"}}`, `{{.JSON "a.b.0"}}`,
-  `{{.Var.NAME}}`, `{{.N}}`, `{{.Method}}`, `{{.Path}}`, `{{.Body}}`.
+  `{{.Var.NAME}}`, `{{.N}}`, `{{.Method}}`, `{{.Path}}`, `{{.Body}}`, and
+  `{{.RetryAfter}}` (whole seconds until the matching rule's condition ends,
+  else 0), `{{.Elapsed}}` (seconds since the clock started), `{{.Attempt}}`.
 - A `PUT` keeps the endpoint's secrets; a `secrets` list in the body (e.g.
   sent back as read) is ignored.
 - Validation errors are `422` with `field` pointing at the part:
@@ -352,7 +365,9 @@ One request adds:
   for a path without an endpoint, `off` for an endpoint that is off), `action` (`reply`,
   `timeout`, `drop`, `refused`, `error`, `abandoned`), the reply sent
   (`status`, `headers` as `{name, value}`, the first 64 KiB of `body`),
-  `delay_ms`, `waited_ms` for a timeout, `counter`. `abandoned`: the sender
+  `delay_ms`, `waited_ms` for a timeout, `counter`; a rule by time or state
+  adds `elapsed_ms` since the clock started and, a `rate` rule,
+  `block_until`. `abandoned`: the sender
   gave up during the reply's delay, so nothing was sent — `status` is `0`,
   `waited_ms` how long the sender stayed, `delay_ms` the delay it did not
   wait out, `would_status` the reply it would have got; reports count it as
@@ -396,7 +411,7 @@ Writes, so send them as JSON (an empty object is enough):
 
 | Route | Does |
 |---|---|
-| `POST /endpoints/{id}/reset-counter` | start the rules' count again ("every 3rd" counts from the next request). `200` with the endpoint |
+| `POST /endpoints/{id}/reset-counter` | start the rules' count and clock again ("every 3rd" counts from the next request, "first 30 s" starts with it) and clear rate limits. `200` with the endpoint |
 | `POST /endpoints/{id}/recheck` | verify the kept requests again with the current checks, secrets and schemas — after fixing a secret or a schema. Only verdicts change. `200 {"rechecked": N}` |
 | `POST /endpoints/{id}/schema-draft` `{"requests":[ids]}` | draft a JSON Schema (2020-12) from the bodies of up to 100 of the endpoint's requests; **nothing is stored**. `200` with `name` (suggested), `text`, `exists` and `changes` (how it differs from a stored schema of that name), `discriminator` (the check that picks by a value, the value the requests share, and what it maps to now). `422` (field `requests`) for a body not kept or not JSON, or a request of another endpoint |
 
