@@ -18,6 +18,7 @@ const MaxReplays = 50
 type Replay struct {
 	ID        int64
 	RequestID int64
+	Register  int64 // the request's register (its endpoint, 0: Unmatched); set by AddReplay
 	CreatedAt time.Time
 	By        string // who replayed; "" without login
 	URL       string
@@ -39,8 +40,10 @@ type Replay struct {
 	Error     string
 }
 
-// AddReplay stores rp and sets its ID; the request's oldest replays beyond
-// MaxReplays are removed. A request that is gone yields ErrNotFound.
+// AddReplay stores rp and sets its ID and Register; the request's oldest
+// replays beyond MaxReplays are removed. The request takes the next change
+// sequence, so open feeds send its row again ("replayed N"). A request that
+// is gone yields ErrNotFound.
 func (s *Store) AddReplay(ctx context.Context, rp *Replay) error {
 	sent, err := json.Marshal(pairs(rp.Sent))
 	if err != nil {
@@ -65,8 +68,8 @@ func (s *Store) AddReplay(ctx context.Context, rp *Replay) error {
 		return err
 	}
 	defer tx.Rollback()
-	var one int
-	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM requests WHERE id = ?`, rp.RequestID).Scan(&one); errors.Is(err, sql.ErrNoRows) {
+	var register int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(endpoint_id, 0) FROM requests WHERE id = ?`, rp.RequestID).Scan(&register); errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return err
@@ -90,10 +93,17 @@ func (s *Store) AddReplay(ctx context.Context, rp *Replay) error {
 		rp.RequestID, rp.RequestID, MaxReplays); err != nil {
 		return fmt.Errorf("prune replays: %w", err)
 	}
+	seq, err := nextChangeSeq(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE requests SET changed_at = ?, change_seq = ? WHERE id = ?`, millis(time.Now()), seq, rp.RequestID); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	rp.ID = id
+	rp.ID, rp.Register = id, register
 	rp.CreatedAt = fromMillis(millis(rp.CreatedAt))
 	return nil
 }

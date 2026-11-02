@@ -302,15 +302,25 @@ func (s *Store) changeRequestTx(ctx context.Context, id int64, fn func(tx *sql.T
 		return err
 	}
 	defer tx.Rollback()
-	var seq int64
-	if err := tx.QueryRowContext(ctx, `UPDATE settings SET value = CAST(value AS INTEGER) + 1
-		WHERE key = 'feed.change_seq' RETURNING CAST(value AS INTEGER)`).Scan(&seq); err != nil {
-		return fmt.Errorf("change sequence: %w", err)
+	seq, err := nextChangeSeq(ctx, tx)
+	if err != nil {
+		return err
 	}
 	if err := fn(tx, seq); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// nextChangeSeq takes the next value of the change sequence, in commit
+// order (the caller holds the writer's lock).
+func nextChangeSeq(ctx context.Context, tx *sql.Tx) (int64, error) {
+	var seq int64
+	if err := tx.QueryRowContext(ctx, `UPDATE settings SET value = CAST(value AS INTEGER) + 1
+		WHERE key = 'feed.change_seq' RETURNING CAST(value AS INTEGER)`).Scan(&seq); err != nil {
+		return 0, fmt.Errorf("change sequence: %w", err)
+	}
+	return seq, nil
 }
 
 // ChangeSeq is the newest value of the change sequence: a page rendered
@@ -555,7 +565,8 @@ func (s *Store) EachSelected(ctx context.Context, endpointID int64, sel Selectio
 }
 
 // RequestsChanged lists a register's requests up to upToID whose outcome
-// or verdicts changed after the change sequence value afterSeq, oldest
+// or verdicts changed, or that were replayed, after the change sequence
+// value afterSeq, oldest
 // first, without bodies, and the value they are complete up to: the
 // sequence is read first, so every change up to it is committed and listed;
 // a later one is left for the next call (also when it changed a listed row

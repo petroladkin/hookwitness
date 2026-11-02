@@ -229,7 +229,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	defer func() { hkStop(); <-hkDone }()
 	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, MaxInFlight: cfg.MaxInFlight,
 		Retention: keep, MaxWait: cfg.MaxWait, Keys: keys}
-	replays := replay.New(st, log, replay.Options{Policy: cfg.ReplayAllow, MaxWait: cfg.MaxWait, Budget: catcher})
+	replays := replay.New(st, log, replay.Options{Policy: cfg.ReplayAllow, MaxWait: cfg.MaxWait, Budget: catcher, Live: broker})
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, Separate: separate, PublicURL: cfg.PublicURL, CatchAddr: ln.Addr().String(),
 		MaxBody: cfg.MaxBody, Retention: keep, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,

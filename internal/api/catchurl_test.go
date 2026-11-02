@@ -23,6 +23,9 @@ func TestCatchURL(t *testing.T) {
 		{"separate, empty host", CatchURL{Addr: ":8080", Separate: true}, "localhost:8081", false, "http://localhost:8080"},
 		{"separate, IPv6 admin host", CatchURL{Addr: "0.0.0.0:8080", Separate: true}, "[2001:db8::1]:8081", false, "http://[2001:db8::1]:8080"},
 		{"separate, admin host without a port", CatchURL{Addr: ":8080", Separate: true}, "hooks.example.com", false, "http://hooks.example.com:8080"},
+		{"separate, a port-less name", CatchURL{Addr: ":8080", Separate: true}, "example.test", false, "http://example.test:8080"},
+		{"separate, a port-less IPv6 literal", CatchURL{Addr: ":8080", Separate: true}, "[::1]", false, "http://[::1]:8080"},
+		{"separate, an IPv6 literal with a port", CatchURL{Addr: ":8080", Separate: true}, "[::1]:9000", false, "http://[::1]:8080"},
 	} {
 		r := httptest.NewRequest("GET", "/", nil)
 		r.Host = c.host
