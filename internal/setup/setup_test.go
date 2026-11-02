@@ -1,8 +1,10 @@
 package setup
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -223,5 +225,31 @@ func TestDeliveryInSetup(t *testing.T) {
 	}
 	if f := Export(Source{Path: "/x", Config: emulate.Config{Default: emulate.Reply{Status: 200}, Checks: []emulate.Check{{Kind: emulate.KindDuplicates}}}}); f.Hookwitness != 2 {
 		t.Fatalf("a delivery check alone: format %d", f.Hookwitness)
+	}
+}
+
+// An export that uses nothing newer than 0.2 is what 0.2.0 wrote, byte for
+// byte, so 0.2 reads it: testdata/release-0.2/export.json was written by the
+// v0.2.0 code from config.json, an endpoint with every part 0.2 knew.
+func TestExportAsRelease02(t *testing.T) {
+	b, err := os.ReadFile("testdata/release-0.2/config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	var c emulate.Config
+	if err := d.Decode(&c); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Validate(time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile("testdata/release-0.2/export.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Export(Source{Path: "/orders", Config: c}).JSON(); !bytes.Equal(got, want) {
+		t.Fatalf("the export differs from 0.2.0's:\n%s", got)
 	}
 }

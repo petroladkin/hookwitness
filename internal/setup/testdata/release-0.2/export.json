@@ -1,0 +1,189 @@
+{
+  "hookwitness": 1,
+  "endpoints": [
+    {
+      "path": "/orders",
+      "default": {
+        "status": 202,
+        "headers": [
+          {
+            "name": "X-Seen",
+            "value": "{{.Var \"ENV\"}}"
+          }
+        ],
+        "body": "ok {{.Request.Path}}",
+        "delay_ms": 50,
+        "jitter_ms": 10
+      },
+      "rules": [
+        {
+          "when": {
+            "kind": "every",
+            "n": 3
+          },
+          "do": "reply",
+          "reply": {
+            "status": 503,
+            "headers": [
+              {
+                "name": "Retry-After",
+                "value": "5"
+              }
+            ],
+            "body": "try later"
+          }
+        },
+        {
+          "when": {
+            "kind": "first",
+            "n": 2
+          },
+          "do": "timeout",
+          "reply": {
+            "status": 0
+          }
+        },
+        {
+          "when": {
+            "kind": "random",
+            "percent": 12.5
+          },
+          "do": "drop",
+          "reply": {
+            "status": 0
+          }
+        },
+        {
+          "when": {
+            "kind": "every",
+            "n": 7
+          },
+          "do": "reply",
+          "reply": {
+            "status": 200,
+            "body_base64": "/w=="
+          }
+        }
+      ],
+      "checks": [
+        {
+          "header": "X-Env",
+          "match": "present"
+        },
+        {
+          "kind": "header",
+          "header": "X-Team",
+          "match": "equals",
+          "value": "qa",
+          "error": {
+            "status": 400,
+            "body": "who?"
+          }
+        },
+        {
+          "kind": "github",
+          "enforce": true,
+          "secret": "GH"
+        },
+        {
+          "kind": "stripe",
+          "secret": "ST",
+          "tolerance_s": 600
+        },
+        {
+          "kind": "standard",
+          "secret": "SW",
+          "ignore_timestamp": true
+        },
+        {
+          "kind": "hmac",
+          "header": "X-Signature",
+          "secret": "GH",
+          "algo": "sha1",
+          "encoding": "base64",
+          "prefix": "sha1=",
+          "content": "{{.Header \"X-Time\"}}.{{.Body}}"
+        },
+        {
+          "kind": "bearer",
+          "secret": "TOK"
+        },
+        {
+          "kind": "basic",
+          "secret": "PW",
+          "user": "qa"
+        },
+        {
+          "kind": "schema",
+          "schema": "Order"
+        },
+        {
+          "kind": "schema",
+          "schemas": [
+            "Order",
+            "Refund"
+          ]
+        },
+        {
+          "kind": "schema",
+          "select": {
+            "from": "body",
+            "key": "/type",
+            "map": [
+              {
+                "value": "order.paid",
+                "schema": "Order"
+              },
+              {
+                "value": "refund",
+                "schema": "Refund"
+              }
+            ],
+            "default": [
+              "Order",
+              "Refund"
+            ]
+          }
+        }
+      ],
+      "vars": [
+        {
+          "name": "ENV",
+          "value": "staging"
+        }
+      ],
+      "schemas": [
+        {
+          "name": "Order",
+          "text": "{\"type\":\"object\",\"required\":[\"id\"]}"
+        },
+        {
+          "name": "Refund",
+          "text": "{\"type\":\"object\",\"required\":[\"refund_id\"]}"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "GH",
+          "kind": "key"
+        },
+        {
+          "name": "ST",
+          "kind": "key"
+        },
+        {
+          "name": "SW",
+          "kind": "key"
+        },
+        {
+          "name": "TOK",
+          "kind": "token"
+        },
+        {
+          "name": "PW",
+          "kind": "token"
+        }
+      ]
+    }
+  ]
+}
