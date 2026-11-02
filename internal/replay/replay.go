@@ -84,6 +84,9 @@ type Service struct {
 	o     Options
 	slots chan struct{}
 
+	// body loads a request's body (a seam for tests).
+	body func(ctx context.Context, id int64) ([]byte, error)
+
 	stopCtx context.Context // done on Stop
 	stop    context.CancelFunc
 	running sync.WaitGroup
@@ -100,7 +103,7 @@ func New(st *store.Store, log *slog.Logger, o Options) *Service {
 	if o.Send == nil {
 		o.Send = send.Send
 	}
-	s := &Service{st: st, log: log, o: o, slots: make(chan struct{}, Slots)}
+	s := &Service{st: st, log: log, o: o, slots: make(chan struct{}, Slots), body: st.RequestBody}
 	s.stopCtx, s.stop = context.WithCancel(context.Background())
 	return s
 }
@@ -156,7 +159,9 @@ func (s *Service) Replay(ctx context.Context, id int64, in Input) (store.Replay,
 		s.refused(ctx, id, u)
 		return store.Replay{}, err
 	}
-	req, err := s.st.Request(ctx, id)
+	// The body is loaded only once a slot and its bytes are held: replays
+	// refused as busy never hold it.
+	req, err := s.st.RequestHead(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
 		return store.Replay{}, ErrNotFound
 	}
@@ -185,12 +190,19 @@ func (s *Service) Replay(ctx context.Context, id int64, in Input) (store.Replay,
 		return store.Replay{}, ctx.Err()
 	}
 	defer func() { <-s.slots }()
-	n := int64(len(req.Body))
+	n := req.Size
 	if s.o.Budget != nil && !s.o.Budget.Reserve(n) {
 		return store.Replay{}, ErrBusy
 	}
 	if s.o.Budget != nil {
 		defer s.o.Budget.Release(n)
+	}
+	req.Body, err = s.body(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.Replay{}, ErrNotFound // pruned or cleared meanwhile
+	}
+	if err != nil {
+		return store.Replay{}, err
 	}
 	s.running.Add(1)
 	defer s.running.Done()

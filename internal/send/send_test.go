@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -164,6 +165,24 @@ func TestFraming(t *testing.T) {
 	}
 	if len(res.Notes) != 1 || !strings.Contains(res.Notes[0], "one chunk") {
 		t.Fatalf("notes %q", res.Notes)
+	}
+	// A chunked original that also carried Content-Length (an ambiguous
+	// message) goes without the Content-Length line, and the notes say so.
+	res, err = Send(context.Background(), Head{"POST", "/c", []wire.Header{{Name: "Host", Value: "x"}, {Name: "Content-Length", Value: "11"},
+		{Name: "Transfer-Encoding", Value: "chunked"}, {Name: "content-length", Value: "11"}}}, []byte("hello world"), Options{URL: u})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := tg.captured(), "POST /c HTTP/1.1\r\nHost: "+u.Host+"\r\nTransfer-Encoding: chunked\r\n\r\nb\r\nhello world\r\n0\r\n\r\n"; got != want {
+		t.Fatalf("chunked with Content-Length sent %q, want %q", got, want)
+	}
+	if !slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "Content-Length left out") }) {
+		t.Fatalf("notes %q do not say Content-Length was left out", res.Notes)
+	}
+	for _, hd := range res.Sent {
+		if strings.EqualFold(hd.Name, "Content-Length") {
+			t.Fatalf("recorded lines %v keep Content-Length", res.Sent)
+		}
 	}
 	// An empty chunked body is the last chunk only.
 	Send(context.Background(), Head{"POST", "/c", []wire.Header{{Name: "Host", Value: "x"}, {Name: "Transfer-Encoding", Value: "chunked"}}}, nil, Options{URL: u})

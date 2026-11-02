@@ -53,16 +53,19 @@ func TestDeniedAddresses(t *testing.T) {
 		"fd00:ec2::254",   // AWS IMDS over IPv6
 		"100.100.100.200", // Alibaba Cloud metadata
 		"::ffff:100.100.100.200",
-		"0.0.0.0", "::", // "this host": a way round a loopback-only allowlist
+		"168.63.129.16", // Azure WireServer
+		"::ffff:168.63.129.16",
+		"64:ff9b::a83f:8110", // NAT64 of 168.63.129.16
+		"0.0.0.0", "::",      // "this host": a way round a loopback-only allowlist
 	}
 	allowed := []string{"127.0.0.1", "::1", "198.51.100.3", "198.18.0.10", "100.64.0.1", "203.0.113.9", "2001:db8::1",
-		"fd00:ec2::253", "::ffff:127.0.0.1", "100.100.100.201"}
+		"fd00:ec2::253", "::ffff:127.0.0.1", "100.100.100.201", "168.63.129.15", "168.63.129.17"}
 	var def Policy
 	for _, s := range denied {
 		a := netip.MustParseAddr(s)
 		if err := def.CheckAddr("", 80, a); err == nil {
 			t.Errorf("%s allowed, want refused", s)
-		} else if !strings.Contains(err.Error(), "link-local") && !strings.Contains(err.Error(), "metadata") && !strings.Contains(err.Error(), "unspecified") {
+		} else if !strings.Contains(err.Error(), "link-local") && !strings.Contains(err.Error(), "metadata") && !strings.Contains(err.Error(), "cloud platform") && !strings.Contains(err.Error(), "unspecified") {
 			t.Errorf("%s: refusal %q does not name the rule", s, err)
 		}
 	}
@@ -78,6 +81,39 @@ func TestDeniedAddresses(t *testing.T) {
 	}
 	if p.CheckAddr("", 80, netip.MustParseAddr("169.254.169.254")) == nil {
 		t.Error("allowlist opened the metadata address")
+	}
+	p, err = ParsePolicy("168.63.129.16,azure.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CheckAddr("", 80, netip.MustParseAddr("168.63.129.16")); err == nil || !strings.Contains(err.Error(), "168.63.129.16") {
+		t.Errorf("allowlisted Azure WireServer address: %v, want refused naming it", err)
+	}
+	if err := p.CheckAddr("azure.test", 80, netip.MustParseAddr("168.63.129.16")); err == nil {
+		t.Error("a listed name resolving to the Azure WireServer address was allowed")
+	}
+}
+
+// TestMappedNetwork: an IPv4-mapped CIDR in the allowlist means the IPv4
+// network it maps, as a single mapped address already does.
+func TestMappedNetwork(t *testing.T) {
+	p, err := ParsePolicy("::ffff:198.51.100.0/120")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for addr, ok := range map[string]bool{
+		"198.51.100.7": true, "198.51.100.255": true, "::ffff:198.51.100.1": true,
+		"198.51.101.1": false, "198.51.99.255": false,
+	} {
+		if err := p.CheckAddr("", 80, netip.MustParseAddr(addr)); (err == nil) != ok {
+			t.Errorf("::ffff:198.51.100.0/120 against %s: err %v, want allowed=%v", addr, err, ok)
+		}
+	}
+	if got := p.String(); got != "only ::ffff:198.51.100.0/120" {
+		t.Errorf("String() = %q, the rule as written", got)
+	}
+	if _, err := ParsePolicy("::ffff:0.0.0.0/95"); err == nil || !strings.Contains(err.Error(), "/96") {
+		t.Errorf("a mapped network under /96: %v, want refused naming /96", err)
 	}
 }
 
@@ -141,6 +177,12 @@ func TestCheckURL(t *testing.T) {
 		"http://[fe80::1%25eth0]:80/":     "link-local",
 		"http://[::ffff:169.254.169.254]": "link-local",
 		"http://h/#frag":                  "fragment",
+		"http://h/p?a b":                  "space or control character",
+		"http://h/p a":                    "space or control character",
+		"http://h/p?a=\tb":                "space or control character",
+		"http://h/p?a=\x7f":               "space or control character",
+		"  http://h/p?a=b  ":              "",
+		"http://h/p?a=%20b":               "",
 	} {
 		u, err := ParseTarget(in)
 		if err == nil {
