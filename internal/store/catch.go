@@ -388,6 +388,19 @@ func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts str
 	})
 }
 
+// ForgetOrderMarks drops the order values an endpoint's requests recorded,
+// before a re-check writes them again, oldest first: each request's high
+// mark is then found among the earlier ones alone, as when it was caught,
+// instead of past every later one (a re-check quadratic in the register).
+// A request caught during the re-check is judged against the marks
+// written again so far.
+func (s *Store) ForgetOrderMarks(ctx context.Context, endpoint int64) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	_, err := s.db.ExecContext(ctx, `UPDATE event_seen SET order_value = NULL WHERE endpoint_id = ? AND order_value IS NOT NULL`, endpoint)
+	return err
+}
+
 // recordSignatures records request id's signatures (keyed digests).
 func recordSignatures(ctx context.Context, tx *sql.Tx, endpoint, id int64, sigs []Signature) error {
 	if endpoint == Unmatched {

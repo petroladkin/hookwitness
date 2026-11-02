@@ -19,6 +19,9 @@ func Recheck(ctx context.Context, st *store.Store, ep store.Endpoint, keys emula
 	if err != nil {
 		return 0, err
 	}
+	if err := st.ForgetOrderMarks(ctx, ep.ID); err != nil {
+		return 0, err
+	}
 	n := 0
 	err = st.EachRequest(ctx, ep.ID, func(req store.Request) error {
 		vs, _ := cfg.Verify(toEmulate(req), req.ReceivedAt, !req.TooLarge, keys)

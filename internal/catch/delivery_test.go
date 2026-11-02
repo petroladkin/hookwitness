@@ -142,6 +142,34 @@ func TestOrderThroughTheStore(t *testing.T) {
 	}
 }
 
+// Re-check of the order check gives what the catch gave: the marks it
+// forgets first come back, oldest first.
+func TestRecheckKeepsOrderVerdicts(t *testing.T) {
+	cfg := emulate.Config{Default: emulate.Reply{Status: 200}, Event: &emulate.Source{From: emulate.FromBody, Key: "/id"},
+		Checks: []emulate.Check{{Kind: emulate.KindOrder, Order: &emulate.OrderSpec{Source: emulate.Source{From: emulate.FromBody, Key: "/seq"}, As: "number"}}}}
+	st, ep := openDeliveryStore(t, cfg)
+	var reqs []*store.Request
+	for i, seq := range []int{40, 41, 39, 41, 42, 7} {
+		reqs = append(reqs, stored(t, st, ep, cfg, t0.Add(time.Duration(i)*time.Second), 200, fmt.Sprintf(`{"id":"evt_%d","seq":%d}`, i, seq)))
+	}
+	before := map[int64]auth.Verdict{}
+	for _, r := range reqs {
+		before[r.ID] = verdictOf(t, st, r.ID, 1)
+	}
+	e, _ := st.Endpoint(context.Background(), ep)
+	if _, err := Recheck(context.Background(), st, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range reqs {
+		if got, want := verdictOf(t, st, r.ID, 1), before[r.ID]; got.Result != want.Result || got.Reason != want.Reason {
+			t.Errorf("#%d: re-checked %s %q, caught %s %q", r.No, got.Result, got.Reason, want.Result, want.Reason)
+		}
+	}
+	if v := verdictOf(t, st, reqs[5].ID, 1); v.Result != auth.Fail || !strings.Contains(v.Reason, "7 after 42 (#5)") {
+		t.Errorf("the last: %s %q", v.Result, v.Reason)
+	}
+}
+
 // Concurrent attempts of one event get the numbers 1…n, no gap or repeat.
 func TestAttemptsUnderConcurrency(t *testing.T) {
 	st, ep := openDeliveryStore(t, githubCfg)
