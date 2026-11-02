@@ -744,3 +744,159 @@ func TestDeliveryLookupsUseIndexes(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkFeedChanges: an open feed's wake on a register of 100 000 kept
+// requests, three of which changed since the feed's last value.
+//
+//	go test ./internal/store -run '^$' -bench 'FeedChanges|MarksSpan' -benchtime 200x
+func BenchmarkFeedChanges(b *testing.B) {
+	s := openTemp(b)
+	id := bigRegister(b, s, 100_000)
+	ctx := context.Background()
+	since, _ := s.ChangeSeq(ctx)
+	for _, rid := range []int64{10, 50_000, 99_990} {
+		if err := s.UpdateOutcome(ctx, rid, 500, outcomeJSON(emulate.ActReply, 500)); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ResetTimer()
+	for range b.N {
+		reqs, _, err := s.RequestsChanged(ctx, id, 1<<40, since)
+		if err != nil || len(reqs) != 3 {
+			b.Fatalf("%d changed, %v", len(reqs), err)
+		}
+	}
+}
+
+// BenchmarkMarksSpan: the strip's last two minutes (120 requests) of a
+// register of 100 000 kept requests, one a second.
+func BenchmarkMarksSpan(b *testing.B) {
+	s := openTemp(b)
+	id := bigRegister(b, s, 100_000)
+	ctx := context.Background()
+	from := time.Now().Add(-2 * time.Minute)
+	b.ResetTimer()
+	for range b.N {
+		n := 0
+		if err := s.EachSelected(ctx, id, Selection{From: from}, false, func(Request) error { n++; return nil }); err != nil || n < 110 || n > 125 {
+			b.Fatalf("%d in the span, %v", n, err)
+		}
+	}
+}
+
+// The feed's change query and a time span's queries, as the code issues
+// them, search by their indexes: a wake reads the changed rows, the strip
+// the rows of its span, never the register (a scan or the register's whole
+// id range).
+func TestFeedAndSpanUseIndexes(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	id := bigRegister(t, s, 2000)
+	var plans []string
+	var pageQuery string
+	var pageArgs []any
+	traceQuery = func(query string, args []any) {
+		if strings.Contains(query, "ORDER BY id LIMIT") {
+			pageQuery, pageArgs = query, append([]any(nil), args...) // as sent: the loop moves the cursor after
+		}
+		rows, err := s.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query, args...)
+		if err != nil {
+			t.Errorf("%s: %v", query, err)
+			return
+		}
+		defer rows.Close()
+		var plan []string
+		for rows.Next() {
+			var a, b, c int
+			var d string
+			rows.Scan(&a, &b, &c, &d)
+			plan = append(plan, d)
+		}
+		plans = append(plans, strings.Join(plan, " | "))
+	}
+	t.Cleanup(func() { traceQuery = nil })
+	check := func(what string, want ...string) {
+		t.Helper()
+		if len(plans) == 0 {
+			t.Fatalf("%s: no query traced", what)
+		}
+		all := strings.Join(plans, " || ")
+		t.Logf("%s:\n  %s", what, strings.Join(plans, "\n  "))
+		for _, w := range want {
+			if !strings.Contains(all, w) {
+				t.Errorf("%s: no %q in the plans", what, w)
+			}
+		}
+		if strings.Contains(all, "SCAN requests") {
+			t.Errorf("%s: a scan of the requests", what)
+		}
+		plans = nil
+	}
+	since, _ := s.ChangeSeq(ctx)
+	s.UpdateOutcome(ctx, 1500, 500, outcomeJSON(emulate.ActReply, 500))
+	if reqs, _, err := s.RequestsChanged(ctx, id, 1<<40, since); err != nil || len(reqs) != 1 {
+		t.Fatalf("changed: %d %v", len(reqs), err)
+	}
+	check("the feed's changes", "USING INDEX requests_change_seq (endpoint_id=? AND change_seq>? AND change_seq<?)")
+	n := 0
+	s.EachSelected(ctx, id, Selection{From: time.Now().Add(-2 * time.Minute)}, false, func(Request) error { n++; return nil })
+	check("the strip's span", "USING COVERING INDEX requests_by_time", "USING INDEX requests_by_register (endpoint_id=? AND id>? AND id<?)")
+	if n < 110 || n > 125 {
+		t.Fatalf("%d requests in two minutes", n)
+	}
+	// The plan reads "id>? AND id<?" whichever lower bound it takes: the
+	// span's start must be the only one, the cursor's, or the range starts
+	// at the register's first row (the plan text cannot tell).
+	if strings.Count(pageQuery, "id >") != 1 || len(pageArgs) < 2 || pageArgs[1].(int64) < 1800 || pageArgs[1].(int64) >= 1900 {
+		t.Fatalf("the span's pages start at id %v: %s", pageArgs[1], pageQuery)
+	}
+}
+
+// A 0.2 database (migrations 1-9) upgraded to this one keeps its rows, has
+// the time index the strip's span uses, and passes integrity_check.
+func TestUpgradeFrom02KeepsRowsAndIntegrity(t *testing.T) {
+	ctx := context.Background()
+	p := tempDB(t)
+	old := fstest.MapFS{}
+	ms, err := loadMigrations(migrationFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ms {
+		if m.version < 10 {
+			old["migrations/"+m.name] = &fstest.MapFile{Data: []byte(m.sql)}
+		}
+	}
+	s, err := open(ctx, p, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ep int64
+	s.db.QueryRowContext(ctx, `INSERT INTO endpoints (path, created_at, last_no) VALUES ('/old', 0, 500) RETURNING id`).Scan(&ep)
+	for i := range 500 {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO requests (endpoint_id, no, received_at, method, path, raw_query, proto,
+			remote_addr, headers, body, size, status, outcome) VALUES (?, ?, ?, 'POST', '/old', '', 'HTTP/1.1', '', '[]', x'7b7d', 2,
+			200, ?)`, ep, i+1, 1_700_000_000_000+int64(i)*1000, outcomeJSON(emulate.ActReply, 200)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	s, err = Open(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var rows int
+	var ok, index string
+	s.db.QueryRowContext(ctx, `SELECT count(*) FROM requests`).Scan(&rows)
+	s.db.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&ok)
+	s.db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'requests_by_time'`).Scan(&index)
+	if rows != 500 || ok != "ok" || index != "requests_by_time" {
+		t.Fatalf("after the upgrade: %d rows, integrity %q, index %q", rows, ok, index)
+	}
+	n := 0
+	from := time.UnixMilli(1_700_000_000_000 + 380*1000)
+	if err := s.EachSelected(ctx, ep, Selection{From: from}, false, func(Request) error { n++; return nil }); err != nil || n != 120 {
+		t.Fatalf("the last 120 by time after the upgrade: %d %v", n, err)
+	}
+}
