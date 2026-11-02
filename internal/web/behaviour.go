@@ -30,6 +30,7 @@ type behaviourView struct {
 	// page was made, for "3 min ago".
 	StartedAt, Now time.Time
 	Config         emulate.Config // as stored
+	MayForward     bool           // the viewer may change the receiver (an admin, or login off)
 	MaxWait        time.Duration
 	Version        string // of the stored configuration; every form sends it back
 	Tab            string // checks, rules, default or vars
@@ -54,15 +55,18 @@ type editor struct {
 	// Suggested names the preset Event holds when the endpoint has no
 	// source yet and one of its signature checks is that provider's.
 	Suggested string
+	Forward   emulate.Forward // the receiver ({} for none yet)
 }
 
 // behaviourTabs in the order a request meets them.
-var behaviourTabs = []string{"checks", "rules", "default", "vars", "secrets", "schemas"}
+var behaviourTabs = []string{"checks", "rules", "receiver", "default", "vars", "secrets", "schemas"}
 
 // tabOf is the tab that holds a section ("rule-2", "checks", "var-new",
 // ...); rules when unknown.
 func tabOf(section string) string {
 	switch {
+	case strings.HasPrefix(section, "receiver"):
+		return "receiver"
 	case strings.HasPrefix(section, "check"), section == "event":
 		return "checks"
 	case strings.HasPrefix(section, "var"):
@@ -82,6 +86,13 @@ func tabOf(section string) string {
 func openEditor(cfg emulate.Config, which string) *editor {
 	if which == "default" {
 		return &editor{Kind: "default", Reply: cfg.Default}
+	}
+	if which == "receiver" {
+		e := &editor{Kind: "receiver"}
+		if cfg.Forward != nil {
+			e.Forward = *cfg.Forward
+		}
+		return e
 	}
 	if which == "event" {
 		e := &editor{Kind: "event"}
@@ -216,6 +227,7 @@ func (h *Handler) behaviourPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) showBehaviour(w http.ResponseWriter, r *http.Request, status int, v behaviourView) {
+	v.MayForward = h.mayForwardView(r.Context())
 	nav, err := h.nav(r, v.ID, false)
 	if err != nil {
 		h.fail(w, "behaviour", err)
@@ -276,12 +288,20 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, _ := emulate.Parse(ep.Config) // a copy to edit
 	section, err := applyEdit(&cfg, op, r, h.keys)
+	changed := forwardChanged(stored.Forward, cfg.Forward)
+	if changed && !h.mayReplay(ctx) {
+		refuse(http.StatusForbidden, "receiver", forwardAdminOnly, nil)
+		return
+	}
 	if err == nil {
 		err = cfg.Validate(h.maxWait)
 	}
+	if err == nil && changed {
+		err = h.checkTarget(cfg.Forward)
+	}
 	if err != nil {
 		var ed *editor
-		if strings.HasSuffix(op, "-save") || op == "default" {
+		if strings.HasSuffix(op, "-save") || op == "default" || op == "receiver" {
 			// Reopen the editor on what was typed (applied to the copy).
 			if ed = openEditor(cfg, section); ed != nil && ed.Kind != "default" {
 				ed.I = r.PostFormValue("i")
@@ -322,6 +342,13 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("endpoint behaviour changed", append([]any{"path", ep.Path, "op", op}, who(r)...)...)
+	if changed {
+		receiver := "none"
+		if cfg.Forward != nil {
+			receiver = cfg.Forward.Origin()
+		}
+		h.log.Warn("endpoint receiver changed", append([]any{"path", ep.Path, "receiver", receiver}, who(r)...)...)
+	}
 	http.Redirect(w, r, savedURL(h.regPath(id), section), http.StatusSeeOther)
 }
 
@@ -372,6 +399,13 @@ func applyEdit(cfg *emulate.Config, op string, r *http.Request, keys *secret.Key
 		reply, err := formReply(r, "")
 		cfg.Default = reply
 		return "default", err
+	case "receiver":
+		f, err := formForward(r)
+		cfg.Forward = &f
+		return "receiver", err
+	case "receiver-del":
+		cfg.Forward = nil
+		return "receiver", nil
 	case "rule-save", "rule-up", "rule-down", "rule-del":
 		i, err := at(len(cfg.Rules), act == "save")
 		if err != nil {
@@ -675,8 +709,9 @@ func formReply(r *http.Request, prefix string) (emulate.Reply, error) {
 
 func formRule(r *http.Request) (emulate.Rule, error) {
 	rule := emulate.Rule{
-		When: emulate.Condition{Kind: r.PostFormValue("when")},
-		Do:   r.PostFormValue("do"),
+		When:    emulate.Condition{Kind: r.PostFormValue("when")},
+		Do:      r.PostFormValue("do"),
+		Forward: r.PostFormValue("forward") == "on",
 	}
 	var errs []string
 	// seconds reads a number field; blank is 0 where allowed.
@@ -739,6 +774,8 @@ func tabTitle(tab string) string {
 	switch tab {
 	case "checks":
 		return "Checks"
+	case "receiver":
+		return "Receiver"
 	case "default":
 		return "Default"
 	case "vars":
@@ -764,6 +801,11 @@ func tabCount(c emulate.Config, tab string) string {
 		return strconv.Itoa(len(c.Secrets))
 	case "schemas":
 		return strconv.Itoa(len(c.Schemas))
+	case "receiver":
+		if c.Forward != nil {
+			return "on"
+		}
+		return "off"
 	}
 	return ""
 }
@@ -772,6 +814,8 @@ func editorTitle(e *editor) string {
 	switch e.Kind {
 	case "default":
 		return "Default reply"
+	case "receiver":
+		return "Receiver"
 	case "event":
 		return "Event id"
 	case "var":
@@ -801,6 +845,8 @@ func editorSave(e *editor) string {
 	switch e.Kind {
 	case "default":
 		return "Save default reply"
+	case "receiver":
+		return "Save receiver"
 	case "var":
 		return "Save variable"
 	case "secret":
@@ -997,6 +1043,25 @@ Echo a verification challenge:  {"challenge":"{{.JSON "challenge"}}"}`
 // answerText says in a sentence what was done with a request.
 func answerText(o emulate.Outcome) string {
 	var s string
+	switch {
+	case o.Action == emulate.ActForward && o.Forward != nil && o.Forward.Pending:
+		s = "Being forwarded to the receiver"
+	case o.Action == emulate.ActForward && o.Forward != nil && o.Forward.ErrorKind == "":
+		s = "The receiver's " + strconv.Itoa(o.Status) + " was passed back"
+	case o.Action == emulate.ActForward && o.Forward != nil:
+		s = strconv.Itoa(o.Status) + " sent instead of the receiver's answer"
+	case o.Action == emulate.ActAbandoned && o.Forward != nil:
+		s = "The sender left after " + emulate.Duration(o.WaitedMs) + ", before the receiver answered, so nothing was sent; it would have got " + strconv.Itoa(o.Would)
+	}
+	if s != "" {
+		if w := o.Why(); w != "" {
+			s += " · " + w
+		}
+		if o.Counter > 0 {
+			s += " · request " + i64(o.Counter) + " since the counter reset"
+		}
+		return s + "."
+	}
 	switch o.Action {
 	case emulate.ActTimeout:
 		s = "Held without an answer"

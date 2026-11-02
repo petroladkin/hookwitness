@@ -490,3 +490,10 @@ ol.replays{list-style:none;margin:0;padding:0;display:flex;flex-direction:column
 .replay h3{font:600 10px/1 var(--f-data);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:14px 0 6px}
 .replay pre.line{border-left-color:var(--ink-soft);padding-block:8px}
 .modal ul.help{margin:6px 0 0;padding-left:18px}
+/* the receiver tab */
+.banner.warn{border-color:var(--alarm);color:var(--text)}
+.receiver{display:grid;gap:8px;margin:6px 0 14px}
+.receiver-target{font:600 1.15rem/1.3 var(--f-data);color:var(--ink);margin:0;overflow-wrap:anywhere}
+.receiver form{margin-top:4px}
+.receiver-badge{font-family:var(--f-data);color:var(--ink);border:1px solid var(--ink);padding:1px 6px;text-decoration:none;overflow-wrap:anywhere}
+.receiver-mark{color:var(--muted)}
