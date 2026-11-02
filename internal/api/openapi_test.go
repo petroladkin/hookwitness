@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
@@ -99,7 +100,10 @@ func TestAnswersMatchTheirSchemas(t *testing.T) {
 	e.do("PUT", fmt.Sprintf("/endpoints/%d/secrets/PW", ep.ID), `{"kind":"token","value":"test-pw"}`)
 	_, tag := e.behaviour(t, ep.ID)
 	e.do("PUT", fmt.Sprintf("/endpoints/%d/behaviour", ep.ID), `{"default":{"status":202,"headers":[{"name":"X-A","value":"1"}]},
-		"rules":[{"when":{"kind":"every","n":3},"do":"reply","reply":{"status":503,"body_base64":"//4="}}],
+		"rules":[{"when":{"kind":"every","n":3},"do":"reply","reply":{"status":503,"body_base64":"//4="}},
+			{"when":{"kind":"window","from_s":1,"to_s":2.5},"do":"drop"},{"when":{"kind":"flap","down":1,"up":2,"unit":"requests"},"do":"timeout"},
+			{"when":{"kind":"rate","n":5,"per_s":10,"block_s":30},"do":"reply","reply":{"status":429,"headers":[{"name":"Retry-After","value":"{{.RetryAfter}}"}]}},
+			{"when":{"kind":"attempts","n":1},"do":"reply","reply":{"status":503}}],
 		"checks":[{"kind":"basic","secret":"PW","user":"u"},{"kind":"schema","schema":"S"}],
 		"vars":[{"name":"V","value":"x"}],"schemas":[{"name":"S","text":"{\"type\":\"object\"}"}]}`, "If-Match", tag)
 	r := e.add(t, ep.ID, `{"a":1}`, func(r *store.Request) {
@@ -110,6 +114,12 @@ func TestAnswersMatchTheirSchemas(t *testing.T) {
 		r.Outcome = `{"source":"default","action":"reply","status":202}`
 	})
 	e.add(t, store.Unmatched, "", func(r *store.Request) { r.Path, r.Status = "/typo", 404 })
+	// A request the rules decided starts the clock: started_at is a time.
+	e.st.AddRequest(t.Context(), &store.Request{EndpointID: ep.ID, Method: "POST", Path: "/hooks", ReceivedAt: time.Now()}, store.Keep{Normal: 1000},
+		func(in store.DecideIn) (int, string, string) {
+			return 429, `{"source":"rule","rule":4,"label":"over 5 in 10 s: 30 s","action":"reply","status":429,"elapsed_ms":0,"block_until":"2026-11-03T10:00:30.000Z"}`,
+				fmt.Sprintf(`{"start":%d}`, in.At.UnixMilli())
+		})
 	for _, tc := range []struct {
 		method, path, body, schema string
 	}{

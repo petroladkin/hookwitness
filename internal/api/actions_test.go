@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petroladkin/hookwitness/internal/store"
 )
@@ -40,7 +41,9 @@ func TestClearResetRecheck(t *testing.T) {
 	ep := e.endpoint(t, "/hooks")
 	e.add(t, ep.ID, `{"a":1}`, func(r *store.Request) { r.Headers = append(r.Headers, store.Header{Name: "X-Token", Value: "t"}) })
 	e.st.AddRequest(t.Context(), &store.Request{EndpointID: ep.ID, Method: "POST", Path: "/hooks", Body: []byte("{}"), Status: 200}, store.Keep{Normal: 1000},
-		func(store.DecideIn) (int, string, string) { return 200, `{"action":"reply","status":200}`, "" })
+		func(in store.DecideIn) (int, string, string) {
+			return 200, `{"action":"reply","status":200}`, `{"start":1793700000123}`
+		})
 
 	// A required-header check would not give verdicts; a basic check does.
 	e.do("PUT", fmt.Sprintf("/endpoints/%d/secrets/PW", ep.ID), `{"kind":"token","value":"test-pw"}`)
@@ -56,12 +59,14 @@ func TestClearResetRecheck(t *testing.T) {
 	if len(list.Requests) != 2 || list.Requests[0].Verdict != "fail" {
 		t.Fatalf("verdicts after re-check: %+v", list.Requests)
 	}
-	if got := decodeAs[endpointJSON](t, e.do("GET", fmt.Sprintf("/endpoints/%d", ep.ID), "")); got.Counter != 1 {
-		t.Fatalf("counter before reset: %d", got.Counter)
+	if got := decodeAs[endpointJSON](t, e.do("GET", fmt.Sprintf("/endpoints/%d", ep.ID), "")); got.Counter != 1 ||
+		got.Started == nil || time.Time(*got.Started) != time.UnixMilli(1793700000123).UTC() {
+		t.Fatalf("counter and clock before reset: %d %v", got.Counter, got.Started)
 	}
 	rec = e.do("POST", fmt.Sprintf("/endpoints/%d/reset-counter", ep.ID), "{}")
-	if got := decodeAs[endpointJSON](t, rec); rec.Code != 200 || got.Counter != 0 {
-		t.Fatalf("reset: %d %+v", rec.Code, got)
+	if got := decodeAs[endpointJSON](t, rec); rec.Code != 200 || got.Counter != 0 || got.Started != nil ||
+		!strings.Contains(rec.Body.String(), `"started_at": null`) {
+		t.Fatalf("reset: %d %s", rec.Code, rec.Body)
 	}
 	// Writes need JSON: a form post from another site cannot trigger them.
 	wantError(t, e.do("POST", fmt.Sprintf("/endpoints/%d/recheck", ep.ID), "x=1", "Content-Type", "application/x-www-form-urlencoded"),

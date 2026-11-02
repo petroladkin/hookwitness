@@ -132,7 +132,8 @@ func (h *Handler) clearRequests(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// resetCounter starts the rules' count again ("every 3rd" counts from here).
+// resetCounter starts the rules' count and clock again ("every 3rd" counts
+// from here, "first 30 s" from the next request) and clears their state.
 func (h *Handler) resetCounter(w http.ResponseWriter, r *http.Request) {
 	ep, ok := h.endpoint(w, r)
 	if !ok || !decode(w, r, &struct{}{}, true) {
