@@ -120,6 +120,21 @@ func TestAnswersMatchTheirSchemas(t *testing.T) {
 			return 429, `{"source":"rule","rule":4,"label":"over 5 in 10 s: 30 s","action":"reply","status":429,"elapsed_ms":0,"block_until":"2026-11-03T10:00:30.000Z"}`,
 				fmt.Sprintf(`{"start":%d}`, in.At.UnixMilli())
 		})
+	// A forwarding endpoint with a request the receiver answered.
+	fwd := e.endpoint(t, "/forwarding")
+	_, ftag := e.behaviour(t, fwd.ID)
+	e.putBehaviour(fwd.ID, ftag, `{"forward":{"url":"https://receiver.test/in","keep_host":true,"on_failure":"default"},
+		"rules":[{"when":{"kind":"every","n":2},"do":"reply","reply":{"status":503},"forward":true}]}`)
+	fr := e.add(t, fwd.ID, "{}", func(r *store.Request) {
+		r.Outcome = `{"source":"forward","action":"forward","forward":{"target":"https://receiver.test/in","pending":true,"ms":0}}`
+	})
+	e.st.FinishForward(t.Context(), &store.Forward{RequestID: fr.ID, CreatedAt: time.Now(), URL: "https://receiver.test/in",
+		Options: `{"host":"received","insecure_tls":false,"timeout_ms":30000}`, Line: "POST /in HTTP/1.1", Sent: []store.Header{{Name: "Host", Value: "h"}},
+		Proto: "HTTP/1.1", Status: 502, Reason: "Bad Gateway", Body: []byte{0xff}, Size: 1, ErrorKind: "", Duration: time.Millisecond},
+		502, `{"source":"forward","action":"forward","status":502,"forward":{"target":"https://receiver.test/in","status":502,"ms":1}}`)
+	e.add(t, fwd.ID, "{}", func(r *store.Request) {
+		r.Outcome = `{"source":"forward","action":"forward","status":504,"forward":{"target":"https://receiver.test/in","error_kind":"timeout","fallback":true,"sender_left_ms":10,"ms":30000}}`
+	})
 	for _, tc := range []struct {
 		method, path, body, schema string
 	}{
@@ -137,6 +152,12 @@ func TestAnswersMatchTheirSchemas(t *testing.T) {
 		{"POST", "/setup", `{"hookwitness":2,"endpoints":[]}`, "Error"},
 		{"GET", "/endpoints/999", "", "Error"},
 		{"PATCH", fmt.Sprintf("/endpoints/%d", ep.ID), `{"path":"bad"}`, "Error"},
+		{"GET", fmt.Sprintf("/endpoints/%d", fwd.ID), "", "Endpoint"},
+		{"GET", fmt.Sprintf("/endpoints/%d/behaviour", fwd.ID), "", "Behaviour"},
+		{"GET", fmt.Sprintf("/endpoints/%d/requests?forward=failed&include=body", fwd.ID), "", "RequestList"},
+		{"GET", fmt.Sprintf("/requests/%d", fr.ID), "", "Request"},
+		{"GET", fmt.Sprintf("/requests/%d/forward", fr.ID), "", "ForwardExchange"},
+		{"GET", fmt.Sprintf("/requests/%d/forward", r.ID), "", "Error"},
 	} {
 		rec := e.do(tc.method, tc.path, tc.body)
 		v, err := jsonschema.UnmarshalJSON(bytes.NewReader(rec.Body.Bytes()))

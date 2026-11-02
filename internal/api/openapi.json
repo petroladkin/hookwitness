@@ -462,6 +462,16 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Login is on, the caller is not an admin, and the PUT adds, changes or removes `forward` (`forbidden`). A PUT replaces the whole behaviour: send the stored `forward` unchanged to edit the rest.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -900,6 +910,9 @@
           },
           {
             "$ref": "#/components/parameters/event"
+          },
+          {
+            "$ref": "#/components/parameters/forward"
           }
         ],
         "responses": {
@@ -1126,6 +1139,9 @@
           },
           {
             "$ref": "#/components/parameters/event"
+          },
+          {
+            "$ref": "#/components/parameters/forward"
           }
         ],
         "responses": {
@@ -2045,6 +2061,16 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Login is on, the caller is not an admin, and the file adds, changes or removes an endpoint's receiver (`forbidden`); nothing was imported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -2426,6 +2452,79 @@
           }
         }
       }
+    },
+    "/requests/{id}/forward": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getForward",
+        "summary": "Read a request's exchange with its endpoint's receiver",
+        "responses": {
+          "200": {
+            "description": "The exchange, with the receiver's body (its first 64 KiB).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForwardExchange"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No exchange (`not_found`): the request was not forwarded, its exchange has not ended, or it was cleared or pruned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/requests/{id}/forward/body": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getForwardBody",
+        "summary": "The receiver's answer body exactly as it sent it",
+        "description": "With the receiver's Content-Type, never decompressed, always as an attachment (nosniff, CSP sandbox). At most the first 64 KiB.",
+        "responses": {
+          "200": {
+            "description": "The body.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No exchange (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2529,6 +2628,10 @@
           "to_prune": {
             "type": "integer",
             "description": "In the answer to a change of `retention`: the requests the change removed."
+          },
+          "forwards_to": {
+            "type": "string",
+            "description": "The receiver its requests are passed through to (origin and path); absent when it answers them itself."
           }
         },
         "required": [
@@ -2682,6 +2785,10 @@
           },
           "reply": {
             "$ref": "#/components/schemas/Reply"
+          },
+          "forward": {
+            "type": "boolean",
+            "description": "On an endpoint that forwards: the receiver gets the requests this rule takes too, while the sender gets the rule's answer. Off: the receiver never sees them."
           }
         },
         "required": [
@@ -3024,6 +3131,16 @@
           "event": {
             "$ref": "#/components/schemas/ValueSource",
             "description": "Where the sender puts an event's id, the same on every retry (e.g. header X-GitHub-Delivery, body /id): attempts and retry groups follow it. Absent: per body."
+          },
+          "forward": {
+            "$ref": "#/components/schemas/Forward"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "In answers: what the configuration risks, such as a receiver without an enforced authorization check (an open relay). Ignored in a PUT."
           }
         },
         "additionalProperties": false
@@ -3139,6 +3256,13 @@
               "null"
             ],
             "description": "Its attempt among the kept requests of its event (or of its body when the endpoint names no event source); null: not counted."
+          },
+          "forward": {
+            "$ref": "#/components/schemas/ForwardNote"
+          },
+          "not_forwarded": {
+            "type": "boolean",
+            "description": "On an endpoint that forwards: a rule kept this request from the receiver."
           }
         },
         "required": [
@@ -3409,7 +3533,7 @@
               "object",
               "null"
             ],
-            "description": "What was done: source (default, rule, check, limit, busy, unmatched \u2014 no endpoint at the path, off \u2014 the path is an endpoint's that is off), action (reply, timeout, drop, refused, error, abandoned \u2014 the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB; withheld says what of the configured reply HTTP did not send \u2014 a body and some headers with 204 or 304, a body to HEAD), delay_ms, waited_ms, counter; for a rule by time or state, elapsed_ms (since the clock started) and, for a rate rule, block_until."
+            "description": "What was done: source (default, rule, check, limit, busy, unmatched \u2014 no endpoint at the path, off \u2014 the path is an endpoint's that is off), action (reply, timeout, drop, refused, error, abandoned \u2014 the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB; withheld says what of the configured reply HTTP did not send \u2014 a body and some headers with 204 or 304, a body to HEAD), delay_ms, waited_ms, counter; for a rule by time or state, elapsed_ms (since the clock started) and, for a rate rule, block_until. On an endpoint that forwards: source forward with action forward (the receiver's answer, or the failure answer, was sent), source loop (508: the request came back on the server's own forward), forward (the receiver's side, as the request's forward) and not_forwarded (a rule kept it from the receiver)."
           },
           "verdicts": {
             "type": "array",
@@ -3448,6 +3572,13 @@
               "null"
             ],
             "description": "Its attempt among the kept requests of its event (or of its body when the endpoint names no event source); null: not counted."
+          },
+          "forward": {
+            "$ref": "#/components/schemas/ForwardNote"
+          },
+          "not_forwarded": {
+            "type": "boolean",
+            "description": "On an endpoint that forwards: a rule kept this request from the receiver."
           }
         },
         "required": [
@@ -3771,6 +3902,10 @@
           "event": {
             "$ref": "#/components/schemas/ValueSource",
             "description": "Where the sender puts an event's id (format 2)."
+          },
+          "forward": {
+            "$ref": "#/components/schemas/Forward",
+            "description": "The receiver requests are passed through to (format 2), as configured. Importing one that adds or changes a receiver needs an admin once login is on."
           }
         },
         "required": [
@@ -3789,7 +3924,7 @@
               1,
               2
             ],
-            "description": "The format marker and version: 1, or 2 when an endpoint carries its own retention, an event source or a delivery check. A file of a newer format is refused; an export writes the lowest version that holds it."
+            "description": "The format marker and version: 1, or 2 when an endpoint carries its own retention, an event source, a delivery check, a rule by time or state, a receiver or a rule's forward switch. A file of a newer format is refused; an export writes the lowest version that holds it."
           },
           "endpoints": {
             "type": "array",
@@ -4273,6 +4408,246 @@
           "key"
         ],
         "additionalProperties": false
+      },
+      "Forward": {
+        "type": "object",
+        "description": "The receiver this endpoint passes requests through to (the recorder in the middle): each request that passes its checks and that no rule takes is sent there byte for byte, and its answer goes back to the sender. Adding, changing or removing it needs an admin once login is on.",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "http(s)://host[:port]/path, with no query (the sender's own query is sent with each request) and no user name or password."
+          },
+          "keep_host": {
+            "type": "boolean",
+            "description": "Send the Host line as received; by default the target's host and port."
+          },
+          "insecure_tls": {
+            "type": "boolean",
+            "description": "https: accept any certificate."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "The exchange's timeout, from 100 ms to -max-wait; absent or 0: 30 s, or -max-wait if shorter."
+          },
+          "on_failure": {
+            "type": "string",
+            "enum": [
+              "gateway",
+              "default"
+            ],
+            "description": "What the sender gets when the receiver fails: a gateway error (502, or 504 for a timeout; the default) or the endpoint's default reply."
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "ForwardNote": {
+        "type": "object",
+        "description": "The receiver's side of a request on an endpoint that forwards; the whole exchange is at /requests/{id}/forward.",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "The receiver's origin and path at the time."
+          },
+          "status": {
+            "type": "integer",
+            "description": "The receiver's status; absent when it gave none."
+          },
+          "error_kind": {
+            "type": "string",
+            "enum": [
+              "dial",
+              "tls",
+              "timeout",
+              "reset",
+              "write",
+              "answer",
+              "refused",
+              "too_large",
+              "upgrade",
+              "busy"
+            ],
+            "description": "Why there was no answer to pass back: the receiver could not be reached (dial, tls), did not answer in time (timeout), closed early (reset), the request could not be written (write) or the answer read (answer), the target policy refused it (refused), the answer is over 1 MiB (too_large), it switched protocols (upgrade, 101), or all 64 forward slots were busy (busy)."
+          },
+          "fallback": {
+            "type": "boolean",
+            "description": "The sender got the failure answer (a gateway error, or the default reply)."
+          },
+          "sender_left_ms": {
+            "type": "integer",
+            "description": "The sender left this long after the exchange began, before the answer: it got nothing."
+          },
+          "ms": {
+            "type": "integer",
+            "description": "The exchange's duration."
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "The exchange has not ended yet (forwarding\u2026)."
+          }
+        },
+        "required": [
+          "target",
+          "ms"
+        ],
+        "additionalProperties": false
+      },
+      "ForwardExchange": {
+        "type": "object",
+        "description": "A request's exchange with its endpoint's receiver: what was sent and what the receiver answered. status 0 with error set: there was no (complete) answer to pass back.",
+        "properties": {
+          "request_id": {
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "url": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "enum": [
+              "target",
+              "received"
+            ]
+          },
+          "insecure_tls": {
+            "type": "boolean"
+          },
+          "timeout_ms": {
+            "type": "integer"
+          },
+          "line": {
+            "type": "string",
+            "description": "The request line sent: the method, the receiver's path and the caught query, HTTP/1.1; empty when nothing was sent (the target policy, no slot)."
+          },
+          "sent": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "The header lines written, in order: the caught ones, with Host as chosen."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Where the request sent differs from the one caught (HTTP/1.0 sent as 1.1, a chunked body as one chunk and without Content-Length, a Host added)."
+          },
+          "proto": {
+            "type": "string",
+            "description": "The answer's protocol; empty without an answer."
+          },
+          "status": {
+            "type": "integer",
+            "description": "The answer's status; 0 without an answer. Redirects are not followed."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "The answer's header lines as received: order, case and repeats kept."
+          },
+          "body_size": {
+            "type": "integer",
+            "description": "The answer body's bytes; -1 when it was cut before its end (timeout or reset)."
+          },
+          "body_cut": {
+            "type": "boolean",
+            "description": "Only the first 64 KiB are kept."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "description": "From the first byte written to the last byte read."
+          },
+          "ttfb_ms": {
+            "type": "integer",
+            "description": "From the first byte written to the first byte of the answer."
+          },
+          "error": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "dial",
+                  "tls",
+                  "timeout",
+                  "reset",
+                  "write",
+                  "answer",
+                  "refused",
+                  "too_large",
+                  "upgrade",
+                  "busy"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          "body_text": {
+            "type": "string",
+            "description": "The answer body when it is UTF-8 text, as it arrived (never decompressed). In a list only with include=body."
+          },
+          "body_base64": {
+            "type": "string",
+            "description": "The answer body in base64 when it is not UTF-8."
+          },
+          "by_rule": {
+            "type": "integer",
+            "description": "The rule that let the receiver get the request too (its forward switch); 0: forwarded because no rule took it."
+          }
+        },
+        "required": [
+          "request_id",
+          "created_at",
+          "url",
+          "host",
+          "insecure_tls",
+          "timeout_ms",
+          "line",
+          "sent",
+          "notes",
+          "proto",
+          "status",
+          "reason",
+          "headers",
+          "body_size",
+          "body_cut",
+          "duration_ms",
+          "ttfb_ms",
+          "error",
+          "by_rule"
+        ],
+        "additionalProperties": false
       }
     },
     "parameters": {
@@ -4540,6 +4915,19 @@
         "description": "Only the requests of this event id (every attempt).",
         "schema": {
           "type": "string"
+        }
+      },
+      "forward": {
+        "name": "forward",
+        "in": "query",
+        "description": "Only requests forwarded and answered 2xx by the receiver (ok), forwarded and failed or answered otherwise (failed), or not forwarded (none).",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "failed",
+            "none"
+          ]
         }
       }
     },

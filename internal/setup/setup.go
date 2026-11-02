@@ -24,7 +24,7 @@ import (
 // newer one is refused. Export writes the lowest version that holds the
 // file, so a file of endpoints that use nothing newer still reads in older
 // versions: 2 adds an endpoint's retention, its event source, delivery
-// checks and rules by time and state.
+// checks, rules by time and state, and a receiver.
 const Format = 2
 
 // MaxSize bounds a setup file: schemas are up to 1 MiB each.
@@ -51,6 +51,9 @@ type Endpoint struct {
 	Retention *store.Retention `json:"retention,omitempty"`
 	// Event is where the sender puts an event's id (format 2).
 	Event *emulate.Source `json:"event,omitempty"`
+	// Forward is the receiver requests are passed through to (format 2),
+	// as configured: its URL carries no query and no user name.
+	Forward *emulate.Forward `json:"forward,omitempty"`
 }
 
 // Secret names a secret the endpoint needs, and its kind: "key" (a signing
@@ -94,11 +97,17 @@ func Export(eps ...Source) File {
 				f.Hookwitness = 2
 			}
 		}
-		// So are the conditions by time and state.
+		// So are the conditions by time and state, a receiver and the
+		// rules' forward switch.
 		for _, r := range c.Rules {
-			if r.When.Clocked() {
+			if r.When.Clocked() || r.Forward {
 				f.Hookwitness = 2
 			}
+		}
+		if c.Forward != nil {
+			fw := *c.Forward
+			e.Forward = &fw
+			f.Hookwitness = 2
 		}
 		f.Endpoints = append(f.Endpoints, e)
 	}
@@ -180,7 +189,7 @@ func Parse(data []byte, o Options) (File, error) {
 // value; the file's other secrets are not set, and secrets the file does
 // not name are dropped. Applying the same file twice gives the same result.
 func (e Endpoint) Config(old *emulate.Config) emulate.Config {
-	c := emulate.Config{Default: e.Default, Rules: e.Rules, Checks: e.Checks, Vars: e.Vars, Schemas: e.Schemas, Event: e.Event}
+	c := emulate.Config{Default: e.Default, Rules: e.Rules, Checks: e.Checks, Vars: e.Vars, Schemas: e.Schemas, Event: e.Event, Forward: e.Forward}
 	if c.Default.Status == 0 {
 		c.Default.Status = 200 // as stored configurations read
 	}

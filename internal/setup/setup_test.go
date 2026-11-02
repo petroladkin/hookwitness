@@ -289,3 +289,33 @@ func TestExportAsRelease02(t *testing.T) {
 		t.Fatalf("the export differs from 0.2.0's:\n%s", got)
 	}
 }
+
+// TestForwardInSetup: a receiver travels as configured in format 2 and
+// comes back the same, the rules' forward switch with it; a receiver with a
+// query is refused at parse.
+func TestForwardInSetup(t *testing.T) {
+	cfg := emulate.Config{Default: emulate.Reply{Status: 202},
+		Forward: &emulate.Forward{URL: "https://receiver.test/in", KeepHost: true, TimeoutMs: 5000, OnFailure: emulate.OnFailureDefault},
+		Rules:   []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenEvery, N: 3}, Do: emulate.ActDrop, Forward: true}}}
+	f := Export(Source{Path: "/live", Config: cfg})
+	b := f.JSON()
+	if f.Hookwitness != 2 || !strings.Contains(string(b), `"url": "https://receiver.test/in"`) {
+		t.Fatalf("format %d:\n%s", f.Hookwitness, b)
+	}
+	parsed, err := Parse(b, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Endpoints[0].Config(nil); got.String() != cfg.String() {
+		t.Fatalf("round trip:\n%s\nwant\n%s", got.String(), cfg.String())
+	}
+	// The rule's switch alone is format 2.
+	sw := emulate.Config{Default: emulate.Reply{Status: 200}, Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenFirst, N: 1}, Do: emulate.ActDrop, Forward: true}}}
+	if f := Export(Source{Path: "/x", Config: sw}); f.Hookwitness != 2 {
+		t.Fatalf("a rule's switch: format %d", f.Hookwitness)
+	}
+	bad := `{"hookwitness":2,"endpoints":[{"path":"/q","default":{"status":200},"forward":{"url":"https://receiver.test/in?token=1"},"rules":[],"checks":[],"vars":[],"schemas":[],"secrets":[]}]}`
+	if _, err := Parse([]byte(bad), opts); err == nil || !strings.Contains(err.Error(), "must not have a query") {
+		t.Fatalf("a receiver with a query: %v", err)
+	}
+}

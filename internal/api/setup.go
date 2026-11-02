@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/setup"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -106,6 +107,8 @@ func (h *Handler) importSetup(w http.ResponseWriter, r *http.Request) {
 		switch status {
 		case http.StatusConflict:
 			code = "duplicate_path"
+		case http.StatusForbidden:
+			code = "forbidden"
 		case http.StatusInternalServerError:
 			h.fail(w, "import setup", err)
 			return
@@ -114,6 +117,54 @@ func (h *Handler) importSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, status, map[string]any{"endpoints": res})
+}
+
+// checkReceivers applies the receiver rules to a file's endpoints: those it
+// creates, and those it replaces whose receiver differs.
+func (h *Handler) checkReceivers(r *http.Request, f setup.File, plan setup.Plan) (int, error) {
+	replace := plan.Replace
+	if replace == nil {
+		replace = setup.Never
+	}
+	admin := true
+	if id := access.From(r.Context()); id != nil && !id.Admin() {
+		admin = false
+	}
+	for _, e := range f.Endpoints {
+		var before *emulate.Forward
+		_, text, _, err := h.store.EndpointByPath(r.Context(), e.Path)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+		case err != nil:
+			return http.StatusInternalServerError, err
+		case !replace(e.Path):
+			continue // refused as a taken path, or kept
+		default:
+			if c, err := emulate.Parse(text); err == nil {
+				before = c.Forward
+			}
+		}
+		if !forwardChanged(before, e.Forward) {
+			continue
+		}
+		if !admin {
+			return http.StatusForbidden, fmt.Errorf("%s: %s", e.Path, ForwardAdminOnly)
+		}
+		if e.Forward != nil {
+			u, err := e.Forward.Target()
+			if err == nil {
+				err = h.replay.Policy().CheckURL(u)
+			}
+			if err != nil {
+				msg := err.Error()
+				if strings.Contains(msg, "-replay-allow none") {
+					msg = "forwarding is off on this server (-replay-allow none)"
+				}
+				return http.StatusUnprocessableEntity, fmt.Errorf("%s: receiver: %s", e.Path, msg)
+			}
+		}
+	}
+	return 0, nil
 }
 
 // ApplySetup parses and applies a setup file for a caller (the API and the
@@ -128,8 +179,13 @@ func (h *Handler) ApplySetup(r *http.Request, data []byte, plan setup.Plan) ([]s
 	return h.ApplyFile(r, f, plan)
 }
 
-// ApplyFile applies a parsed setup file, as ApplySetup.
+// ApplyFile applies a parsed setup file, as ApplySetup. A file that adds,
+// changes or removes an endpoint's receiver needs an admin once login is
+// on (403), and a receiver the target policy refuses is refused (422).
 func (h *Handler) ApplyFile(r *http.Request, f setup.File, plan setup.Plan) ([]setup.Result, int, error) {
+	if status, err := h.checkReceivers(r, f, plan); err != nil {
+		return nil, status, err
+	}
 	res, err := setup.Apply(r.Context(), h.store, f, plan, h.setupOptions())
 	var inv *setup.InvalidError
 	switch {
