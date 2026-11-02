@@ -321,7 +321,11 @@ await shot("report-html", `file://${join(work, "report.html")}`, { maxHeight: 10
   await sleep(600);
   await send("/github/push", push, delivery);
   await shot("delivery-checks", `${UI}/e/${gp}/behaviour?tab=checks`, { maxHeight: 700 });
-  await shot("delivery-duplicate", `${UI}/e/${gp}/r/${await byNo(gp, 3)}`, { maxHeight: 1500 });
+  // Wide, the exhibit scrolls on its own: bring its Verdicts to the top.
+  // Narrow, the page scrolls: shoot the verdicts themselves.
+  await shot("delivery-duplicate", `${UI}/e/${gp}/r/${await byNo(gp, 3)}`, WIDTH < 821 ? { selector: "#exhibit .verdicts", maxHeight: 1600 } : { maxHeight: 800,
+    step: `(() => { const x = document.getElementById("exhibit"), v = x.querySelector(".verdicts").previousElementSibling;
+      if (x.scrollHeight > x.clientHeight) x.scrollTop = v.offsetTop - x.offsetTop - 12; else v.scrollIntoView(); })()` });
   await api("DELETE", `/endpoints/${gp}`);
 }
 
