@@ -80,7 +80,7 @@ func TestMarksKeptFrom(t *testing.T) {
 	now := time.Now()
 	for i := range 4 {
 		r := &store.Request{EndpointID: ep.ID, ReceivedAt: now.Add(-time.Duration(40-i*10) * time.Minute), Method: "POST", Path: "/small", Status: 200}
-		if err := e.st.AddRequest(context.Background(), r, 3, nil); err != nil {
+		if err := e.st.AddRequest(context.Background(), r, store.Keep{Normal: 3}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

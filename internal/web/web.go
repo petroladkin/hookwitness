@@ -86,7 +86,7 @@ type Options struct {
 	PublicURL string        // base URL senders reach the catch listener at; "" = derived
 	CatchAddr string        // the catch listener's address (a real port), for catch URLs when the admin is separate
 	MaxBody   int64         // the catcher's body limit, shown when a body was refused
-	Retention int           // requests kept per register
+	Retention store.Keep    // requests kept per register by default
 	MaxWait   time.Duration // longest delay an endpoint may configure
 	Hosts     []string      // host names the UI answers to besides IP addresses and localhost
 	Keys      *secret.Key   // seals and hashes endpoint secrets; verifies on re-check
@@ -102,7 +102,7 @@ type Options struct {
 
 // New returns the UI.
 func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Handler {
-	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention, maxWait: o.MaxWait, keys: o.Keys,
+	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention.Normal, maxWait: o.MaxWait, keys: o.Keys,
 		hosts: map[string]bool{}, stop: make(chan struct{}), auth: o.Access, limiter: access.NewLimiter(nil), proxies: o.Proxies}
 	if h.maxWait == 0 {
 		h.maxWait = 5 * time.Minute

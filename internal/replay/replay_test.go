@@ -54,7 +54,7 @@ func caught(t *testing.T, st *store.Store, body []byte) *store.Request {
 			{Name: "Content-Type", Value: "application/json"},
 			{Name: "Content-Length", Value: strconv.Itoa(len(body))},
 		}}
-	if err := st.AddRequest(ctx, r, 100, nil); err != nil {
+	if err := st.AddRequest(ctx, r, store.Keep{Normal: 100}, nil); err != nil {
 		t.Fatal(err)
 	}
 	return r
@@ -179,10 +179,10 @@ func TestRefusals(t *testing.T) {
 	// Bodies not kept whole.
 	big := &store.Request{EndpointID: r.EndpointID, ReceivedAt: time.Now(), Method: "POST", Path: "/gh", Proto: "HTTP/1.1",
 		Size: 20 << 20, TooLarge: true}
-	st.AddRequest(ctx, big, 100, nil)
+	st.AddRequest(ctx, big, store.Keep{Normal: 100}, nil)
 	cut := &store.Request{EndpointID: store.Unmatched, ReceivedAt: time.Now(), Method: "POST", Path: "/nope", Proto: "HTTP/1.1",
 		Body: bytes.Repeat([]byte("a"), 64<<10), Size: 100 << 10}
-	st.AddRequest(ctx, cut, 100, nil)
+	st.AddRequest(ctx, cut, store.Keep{Normal: 100}, nil)
 	var nk *NotKeptError
 	if _, err := svc.Replay(ctx, big.ID, Input{URL: "http://127.0.0.1:1/"}); !errors.As(err, &nk) || !strings.Contains(nk.Reason, "not kept") {
 		t.Fatalf("too large: %v", err)

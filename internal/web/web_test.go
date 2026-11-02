@@ -29,7 +29,7 @@ type env struct {
 
 func newEnv(t *testing.T) env {
 	t.Helper()
-	return newEnvWith(t, Options{Prefix: "/admin", MaxBody: 10 << 20, Retention: 1000, Hosts: []string{"hooks.example.test", "example.com"}})
+	return newEnvWith(t, Options{Prefix: "/admin", MaxBody: 10 << 20, Retention: store.Keep{Normal: 1000}, Hosts: []string{"hooks.example.test", "example.com"}})
 }
 
 func newEnvWith(t *testing.T, o Options) env {
@@ -73,7 +73,7 @@ func (e env) add(t *testing.T, endpointID int64, body string, mod func(*store.Re
 	if mod != nil {
 		mod(r)
 	}
-	if err := e.st.AddRequest(context.Background(), r, 1000, nil); err != nil {
+	if err := e.st.AddRequest(context.Background(), r, store.Keep{Normal: 1000}, nil); err != nil {
 		t.Fatal(err)
 	}
 	return r
@@ -582,7 +582,7 @@ func TestWithheldShown(t *testing.T) {
 // is under "/", catch URLs point at the catch listener, and paths under
 // "/admin" are ordinary endpoint paths.
 func TestAdminAtTheRootOfItsPort(t *testing.T) {
-	e := newEnvWith(t, Options{Prefix: "", Separate: true, CatchAddr: "127.0.0.1:8080", MaxBody: 10 << 20, Retention: 1000, Hosts: []string{"example.com"}})
+	e := newEnvWith(t, Options{Prefix: "", Separate: true, CatchAddr: "127.0.0.1:8080", MaxBody: 10 << 20, Retention: store.Keep{Normal: 1000}, Hosts: []string{"example.com"}})
 	rec := e.do("POST", "/endpoints", url.Values{"path": {"/admin/stripe"}})
 	loc := rec.Header().Get("Location")
 	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(loc, "/e/") {
@@ -629,7 +629,7 @@ func TestAdminAtTheRootOfItsPort(t *testing.T) {
 // With a public URL, catch URLs are built on it, whatever the browser's
 // host.
 func TestCatchURLsFromThePublicURL(t *testing.T) {
-	e := newEnvWith(t, Options{Prefix: "/admin", PublicURL: "https://hooks.example.com", MaxBody: 10 << 20, Retention: 1000, Hosts: []string{"example.com"}})
+	e := newEnvWith(t, Options{Prefix: "/admin", PublicURL: "https://hooks.example.com", MaxBody: 10 << 20, Retention: store.Keep{Normal: 1000}, Hosts: []string{"example.com"}})
 	e.do("POST", "/admin/endpoints", url.Values{"path": {"/gh"}})
 	body := e.do("GET", "/admin/", nil).Body.String()
 	if !strings.Contains(body, "https://hooks.example.com/gh") {

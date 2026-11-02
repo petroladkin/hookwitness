@@ -74,7 +74,7 @@ func serveRealWith(t *testing.T, bodyTimeout time.Duration) (addr string, st *st
 		t.Fatal(err)
 	}
 	h := New(Options{DB: st, Log: quiet, AdminPrefix: "/admin",
-		Catch: &catch.Handler{Store: st, Live: live.New(), Log: quiet, MaxBody: 1 << 20, Retention: 1000, BodyTimeout: bodyTimeout}})
+		Catch: &catch.Handler{Store: st, Live: live.New(), Log: quiet, MaxBody: 1 << 20, Retention: store.Keep{Normal: 1000}, BodyTimeout: bodyTimeout}})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- Serve(ctx, ln, h, quiet) }()

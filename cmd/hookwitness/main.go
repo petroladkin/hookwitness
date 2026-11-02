@@ -221,11 +221,11 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 
 	broker := live.New()
 	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, MaxInFlight: cfg.MaxInFlight,
-		Retention: cfg.Retention, MaxWait: cfg.MaxWait, Keys: keys}
+		Retention: store.Keep{Normal: cfg.Retention, Anomalies: cfg.RetentionAnomalies}, MaxWait: cfg.MaxWait, Keys: keys}
 	replays := replay.New(st, log, replay.Options{Policy: cfg.ReplayAllow, MaxWait: cfg.MaxWait, Budget: catcher})
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, Separate: separate, PublicURL: cfg.PublicURL, CatchAddr: ln.Addr().String(),
-		MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
+		MaxBody: cfg.MaxBody, Retention: store.Keep{Normal: cfg.Retention, Anomalies: cfg.RetentionAnomalies}, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
 		Access: auth, Proxies: cfg.TrustedProxies, Replay: replays, MCPMaxSessions: cfg.MCPMaxSessions,
 	})
 	o := server.Options{DB: st, Log: log, AdminPrefix: cfg.AdminPrefix, Admin: ui, Catch: catcher}

@@ -16,8 +16,8 @@ func TestChangeSeqOrdersUpdates(t *testing.T) {
 	s := openTemp(t)
 	ep, _ := s.CreateEndpoint(ctx, "/seq")
 	a, b := sample(ep.ID, "a"), sample(ep.ID, "b")
-	s.AddRequest(ctx, a, 100, nil)
-	s.AddRequest(ctx, b, 100, nil)
+	s.AddRequest(ctx, a, Keep{Normal: 100}, nil)
+	s.AddRequest(ctx, b, Keep{Normal: 100}, nil)
 	start, err := s.ChangeSeq(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestChangeSeqConcurrentWriters(t *testing.T) {
 	var reqs []*Request
 	for i := range 20 {
 		r := sample(ep.ID, string(rune('a'+i)))
-		s.AddRequest(ctx, r, 100, nil)
+		s.AddRequest(ctx, r, Keep{Normal: 100}, nil)
 		reqs = append(reqs, r)
 	}
 	start, _ := s.ChangeSeq(ctx)

@@ -24,7 +24,7 @@ func setup(t *testing.T, maxBody int64) (*Handler, *store.Store, *bytes.Buffer) 
 	}
 	t.Cleanup(func() { st.Close() })
 	var logs bytes.Buffer
-	h := &Handler{Store: st, Live: live.New(), Log: slog.New(slog.NewTextHandler(&logs, nil)), MaxBody: maxBody, Retention: 1000}
+	h := &Handler{Store: st, Live: live.New(), Log: slog.New(slog.NewTextHandler(&logs, nil)), MaxBody: maxBody, Retention: store.Keep{Normal: 1000}}
 	return h, st, &logs
 }
 

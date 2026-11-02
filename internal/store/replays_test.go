@@ -24,7 +24,7 @@ func TestReplays(t *testing.T) {
 	s := openTemp(t)
 	ep, _ := s.CreateEndpoint(ctx, "/a")
 	r := sample(ep.ID, "body")
-	if err := s.AddRequest(ctx, r, 100, nil); err != nil {
+	if err := s.AddRequest(ctx, r, Keep{Normal: 100}, nil); err != nil {
 		t.Fatal(err)
 	}
 	first := sampleReplay(r.ID, 200)
@@ -72,7 +72,7 @@ func TestReplayCap(t *testing.T) {
 	s := openTemp(t)
 	ep, _ := s.CreateEndpoint(ctx, "/a")
 	r := sample(ep.ID, "body")
-	s.AddRequest(ctx, r, 100, nil)
+	s.AddRequest(ctx, r, Keep{Normal: 100}, nil)
 	var ids []int64
 	for i := range MaxReplays + 1 {
 		rp := sampleReplay(r.ID, 200+i)
@@ -102,7 +102,7 @@ func TestReplaysGoWithTheirRequest(t *testing.T) {
 	ep, _ := s.CreateEndpoint(ctx, "/a")
 	add := func(keep int) *Request {
 		r := sample(ep.ID, "b")
-		if err := s.AddRequest(ctx, r, keep, nil); err != nil {
+		if err := s.AddRequest(ctx, r, Keep{Normal: keep}, nil); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.AddReplay(ctx, sampleReplay(r.ID, 200)); err != nil {
@@ -125,7 +125,7 @@ func TestReplaysGoWithTheirRequest(t *testing.T) {
 	}
 	// The Unmatched register too.
 	u := sample(Unmatched, "u")
-	s.AddRequest(ctx, u, 100, nil)
+	s.AddRequest(ctx, u, Keep{Normal: 100}, nil)
 	s.AddReplay(ctx, sampleReplay(u.ID, 404))
 	if err := s.ClearRequests(ctx, Unmatched); err != nil || count() != 0 {
 		t.Fatalf("after clearing Unmatched: %d replays, %v", count(), err)

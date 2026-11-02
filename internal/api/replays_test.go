@@ -153,7 +153,7 @@ func TestReplayNeedsLogin(t *testing.T) {
 	ep, _ := e.st.CreateEndpoint(ctx, "/a")
 	r := &store.Request{EndpointID: ep.ID, Method: "POST", Path: "/a", Proto: "HTTP/1.1", Body: []byte("{}"), Size: 2,
 		Headers: []store.Header{{Name: "Content-Length", Value: "2"}}}
-	if err := e.st.AddRequest(ctx, r, 100, nil); err != nil {
+	if err := e.st.AddRequest(ctx, r, store.Keep{Normal: 100}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.st.AddUser(ctx, "ann", "admin", e.auth.HashPassword("admin-password-1234")); err != nil {

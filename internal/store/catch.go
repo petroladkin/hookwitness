@@ -257,8 +257,13 @@ func (s *Store) updateEndpoint(ctx context.Context, query string, args ...any) e
 // UpdateOutcome replaces a stored request's outcome once the action has run
 // (measured delay, how long a sender waited, a render error).
 func (s *Store) UpdateOutcome(ctx context.Context, id int64, status int, outcome string) error {
-	return s.changeRequest(ctx, id, `UPDATE requests SET status = ?, outcome = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
-		status, outcome, millis(time.Now()))
+	return s.changeRequestTx(ctx, id, func(tx *sql.Tx, seq int64) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE requests SET status = ?, outcome = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
+			status, outcome, millis(time.Now()), seq, id); err != nil {
+			return err
+		}
+		return classify(ctx, tx, id) // its lane follows; the limits apply at the next insert or prune
+	})
 }
 
 // changeRequest runs the update of request id, whose query ends in
@@ -349,9 +354,11 @@ func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts str
 		} else if v != nil {
 			verdicts = *v
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE requests SET verdict = ?, verdicts = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
-			verdict, verdicts, millis(time.Now()), seq, id)
-		return err
+		if _, err := tx.ExecContext(ctx, `UPDATE requests SET verdict = ?, verdicts = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
+			verdict, verdicts, millis(time.Now()), seq, id); err != nil {
+			return err
+		}
+		return classify(ctx, tx, id)
 	})
 }
 
@@ -591,8 +598,26 @@ func (s *Store) clearRequests(ctx context.Context, endpointID int64) error {
 			return err
 		}
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM requests WHERE endpoint_id IS ?`, register(endpointID))
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM requests WHERE endpoint_id IS ?`, register(endpointID)); err != nil {
+		return err
+	}
+	// Before now nothing is kept: the strip hatches it.
+	now := millis(time.Now())
+	if endpointID == Unmatched {
+		_, err = tx.ExecContext(ctx, `UPDATE settings SET value = ? WHERE key IN ('unmatched.pruned_normal_at', 'unmatched.pruned_anomaly_at')`,
+			strconv.FormatInt(now, 10))
+	} else {
+		_, err = tx.ExecContext(ctx, `UPDATE endpoints SET pruned_normal_at = ?, pruned_anomaly_at = ? WHERE id = ?`, now, now, endpointID)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // AddRequest stores r in its register (r.EndpointID), numbers it, and prunes
@@ -601,9 +626,9 @@ func (s *Store) clearRequests(ctx context.Context, endpointID int64) error {
 // the endpoint's counter advances and decide sets r.Status and r.Outcome in
 // the same transaction. An endpoint deleted meanwhile yields ErrNotFound,
 // one turned off meanwhile ErrOff.
-func (s *Store) AddRequest(ctx context.Context, r *Request, keep int, decide Decide) error {
-	if keep < 1 {
-		return fmt.Errorf("keep must be at least 1, got %d", keep)
+func (s *Store) AddRequest(ctx context.Context, r *Request, keep Keep, decide Decide) error {
+	if keep.Normal < 1 || keep.Anomalies < 0 {
+		return fmt.Errorf("keep must be at least 1 normal and 0 anomalies, got %+v", keep)
 	}
 	headers, err := json.Marshal(pairs(r.Headers))
 	if err != nil {
@@ -676,19 +701,40 @@ func (s *Store) AddRequest(ctx context.Context, r *Request, keep int, decide Dec
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM requests WHERE endpoint_id IS ? AND id <= (
-		SELECT id FROM requests WHERE endpoint_id IS ? ORDER BY id DESC LIMIT 1 OFFSET ?)`,
-		register(r.EndpointID), register(r.EndpointID), keep); err != nil {
-		return fmt.Errorf("prune requests: %w", err)
+	// Signatures first, then the class, then the prune: a redelivery's
+	// earlier delivery is in the anomaly lane before the lanes are pruned.
+	// A note that names a request the prune then removed is made again.
+	plain := r.Verdicts
+	note := func() error {
+		v, err := noteRepeats(ctx, tx, r.EndpointID, id, r.Signatures, r.Repeated)
+		if err != nil {
+			return err
+		}
+		r.Verdicts = plain
+		if v != nil {
+			r.Verdicts = *v
+		}
+		return nil
 	}
-	// After the prune: a request no longer kept is not named.
-	if v, err := noteRepeats(ctx, tx, r.EndpointID, id, r.Signatures, r.Repeated); err != nil {
+	if err := note(); err != nil {
 		return err
-	} else if v != nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE requests SET verdicts = ? WHERE id = ?`, *v, id); err != nil {
+	}
+	noted := r.Verdicts != plain
+	if err := classify(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := pruneOnInsert(ctx, tx, r.EndpointID, keep); err != nil {
+		return err
+	}
+	if noted {
+		if err := note(); err != nil {
+			return err
+		}
+	}
+	if r.Verdicts != plain {
+		if _, err := tx.ExecContext(ctx, `UPDATE requests SET verdicts = ? WHERE id = ?`, r.Verdicts, id); err != nil {
 			return fmt.Errorf("note repeated signatures: %w", err)
 		}
-		r.Verdicts = *v
 	}
 	if err := tx.Commit(); err != nil {
 		return err

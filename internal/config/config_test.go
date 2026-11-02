@@ -20,7 +20,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Config{Addr: DefaultAddr, DBPath: DefaultDBPath, LogFormat: DefaultLogFormat,
-		MaxBody: 10 << 20, MaxInFlight: 256 << 20, Retention: 1000, AdminPrefix: "/admin", MaxWait: 5 * time.Minute, MCPMaxSessions: 32}
+		MaxBody: 10 << 20, MaxInFlight: 256 << 20, Retention: 1000, RetentionAnomalies: 1000, AdminPrefix: "/admin", MaxWait: 5 * time.Minute, MCPMaxSessions: 32}
 	if !reflect.DeepEqual(c, want) {
 		t.Fatalf("got %+v, want %+v", c, want)
 	}
