@@ -22,6 +22,7 @@ import (
 
 	"github.com/petroladkin/hookwitness/internal/api"
 	"github.com/petroladkin/hookwitness/internal/catch"
+	"github.com/petroladkin/hookwitness/internal/forward"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -71,6 +72,7 @@ func newEnv(t *testing.T) env {
 	a := api.New(st, lv, log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: stop, Version: "v0.0.0-test",
 		Keep: store.Keep{Normal: 1000, Anomalies: 1000}})
 	catcher := &catch.Handler{Store: st, Live: lv, Log: log, MaxBody: 1 << 20, Retention: store.Keep{Normal: 1000, Anomalies: 1000}, Keys: keys}
+	catcher.Forward = forward.New(log, forward.Options{MaxWait: time.Minute, Budget: catcher})
 
 	polls, inPoll := &atomic.Int64{}, &atomic.Int64{}
 	counted := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

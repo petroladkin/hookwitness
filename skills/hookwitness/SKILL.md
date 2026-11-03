@@ -129,6 +129,14 @@ without `to_s`: gone from then on), `{"kind":"flap","down":10,"up":20,"unit":"s"
 `Retry-After: {{.RetryAfter}}`), and `{"kind":"attempts","n":1}` (each event's first
 attempt fails). A backoff check then judges whether the sender waited.
 
+Record a live integration instead of mocking it: the same PUT with
+`"forward":{"url":"https://receiver.example/webhooks"}` passes each request no rule
+takes on to that receiver byte for byte and answers with its answer; a rule's
+`"forward":true` lets the receiver have the requests it takes too (the sender gets
+the fault). Requests then carry `forward` (the receiver's status or `error_kind`);
+`GET $API/requests/<id>/forward` has the whole exchange. Live traffic leaves the
+server: only an admin may set it once login is on; add an enforced signature check.
+
 ## 4. Trigger the sender, then wait for what arrived
 
 Keep a cursor: the id of the last request you handled, `0` at the start.

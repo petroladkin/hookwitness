@@ -36,6 +36,7 @@ type registerView struct {
 	Path     string // empty for Unmatched
 	Enabled  bool   // the endpoint is on (always true for Unmatched)
 	Unset    int    // its secrets without a value (imported from a setup file)
+	Receiver string // where its requests are forwarded (origin and path); "" when it answers itself
 	Count    int
 	Rows     []rowView
 	More     bool  // older requests exist beyond Rows
@@ -113,7 +114,8 @@ type exhibitView struct {
 	Images   []imageView
 	// CanReplay: the whole body is kept, so it can be sent as it arrived.
 	CanReplay bool
-	Replays   []replayView // newest first
+	Replays   []replayView  // newest first
+	Exchange  *exchangeView // the receiver's side, when forwarded
 }
 
 // imageView is an image the request carries, under its body.
@@ -185,12 +187,16 @@ func tryCommand(base, path string) string {
 // status, a refusal, a render error, a refused body), "timeout" or "drop".
 func (r rowView) mark() string {
 	switch {
+	case r.Outcome.Pending():
+		return "ok" // judged when the receiver answers; the row refreshes then
 	case r.Outcome.HeldUp():
 		return "timeout"
 	case r.Outcome.Action == emulate.ActDrop:
 		return "drop"
 	case r.TooLarge || !r.Outcome.Good():
 		return "bad"
+	case r.Outcome.Forward != nil && r.Outcome.Forward.Fallback:
+		return "bad" // the receiver failed; the sender got the default reply
 	}
 	return "ok"
 }
@@ -210,6 +216,10 @@ func (r rowView) tag() string {
 		return strconv.Itoa(o.Status) + " refused"
 	case o.Action == emulate.ActError:
 		return "500 template error"
+	case o.Source == emulate.FromForward && o.Forward != nil:
+		return o.Stamp()
+	case o.Source == emulate.FromLoop:
+		return "508 loop"
 	case o.Source == emulate.FromRule:
 		return strconv.Itoa(o.Status) + " · rule " + strconv.Itoa(o.Rule)
 	case o.Source == emulate.FromOff:

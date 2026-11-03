@@ -83,7 +83,20 @@ byte (Host replaced in place unless kept), to a URL from the UI, the API
 (`POST <prefix>/api/v1/requests/{id}/replays`) or MCP (`replay_request`), by an admin once login is on;
 the target's answer is kept with the request (newest 50); link-local and
 cloud-metadata addresses are refused on the address dialled, and
-`-replay-allow` narrows the targets or turns replay off. Setup files: an endpoint's setup (path,
+`-replay-allow` narrows the targets or turns replay off. Recorder in the
+middle: an endpoint with a receiver (`forward`: URL without query or
+userinfo, Host, TLS, timeout 30 s by default, a gateway error or the
+default reply on failure) passes each request that passes its checks and
+that no rule takes on to it, byte for byte, and answers with its answer
+(up to 1 MiB, framed by the server, protected like any reply); a rule's
+forward switch lets the receiver have its requests too; the exchange is
+kept with the request (`forwards`, its body's first 64 KiB), the sender
+leaving does not end it, 64 at once, `508` for a request back on the
+server's own forward; the same target policy as replay; only an admin
+changes a receiver once login is on (UI Receiver tab, API, MCP, setup
+import), with an open-relay warning; rows, the request page (Receiver
+section), reports, the API (`forward`, `forward=` filter,
+`/requests/{id}/forward`) and MCP show the receiver's side. Setup files: an endpoint's setup (path,
 behaviour, secret names and kinds, never values; `"hookwitness": 1`,
 unknown fields refused) exports from the Behaviour page, Export all, `GET
 <prefix>/api/v1/setup` and MCP `export_endpoint`, and imports (all or
@@ -132,6 +145,9 @@ that makes it false.
   database file is created 0600, an existing one keeps its mode.
   Users, sessions and tokens (`access.go`; the last admin guarded inside the
   write transaction).
+  Forwards (`forwards.go`: one exchange per request, stored with the
+  final outcome in one transaction; the `forward=` filter reads the
+  outcome).
   Endpoints and requests (`catch.go`; the rules' counter and their state,
   `endpoints.state`, read and written in the transaction that stores a
   request, with its attempt of its event, so decisions are exact under
@@ -214,7 +230,13 @@ that makes it false.
   policy, `nosniff` unless the endpoint sets it, and never a `Set-Cookie` of
   the login cookie: catch paths share the UI's origin), delays, holds
   (timeout) or
-  resets (drop, SO_LINGER 0); holds end on shutdown.
+  resets (drop, SO_LINGER 0); holds end on shutdown. An endpoint with a
+  receiver (`forward.go`): the request is stored pending, sent through
+  `internal/forward`, and the exchange and the final outcome stored
+  together (`store.FinishForward`); the answer passed back or the failure
+  answer; a rule with the forward switch answers while the receiver gets
+  it; a request on one of the server's own forward connections is a loop
+  (508).
 - `internal/live` — wake-ups for live feeds; feeds read what they missed from
   the store, so nothing is lost or repeated.
 - `internal/api` — the JSON API under `<prefix>/api/v1`, mounted by
@@ -245,6 +267,13 @@ that makes it false.
   no redirects), and the target `Policy` checked on the dialled address
   (the dialer's Control hook): link-local and metadata addresses always
   refused, `-replay-allow` parsed here.
+- `internal/forward` — forwards of caught requests to an endpoint's
+  receiver: 64 at once (5 s for a slot, then busy), 1 MiB of
+  `-max-inflight` held for the answer, the answer passed back without
+  framing and hop-by-hop lines, its first 64 KiB kept, failures by kind,
+  the local ends of its open connections (the loop guard, `Own`), logs
+  naming only the target's origin; `Stop`/`Wait` at shutdown (the
+  catcher's `Stop` stops it).
 - `internal/replay` — replays of caught requests: refuses bodies not kept
   whole, four at once, bodies held against `-max-inflight` (the catcher's
   `Reserve`/`Release`), the timeout, the record (`store` `replays`, newest

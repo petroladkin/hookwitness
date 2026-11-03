@@ -421,3 +421,31 @@ func TestTLS(t *testing.T) {
 		t.Fatalf("trusted: %v %+v %s", err, res, proto)
 	}
 }
+
+// TestOnConnect: the hook is told the connection's local address before the
+// request is written; the target sees that address as the remote end.
+func TestOnConnect(t *testing.T) {
+	var seen string
+	var mu sync.Mutex
+	tg := newTarget(t, func(c net.Conn, _ []byte) {
+		mu.Lock()
+		seen = c.RemoteAddr().String()
+		mu.Unlock()
+		io.WriteString(c, "HTTP/1.1 204 No Content\r\n\r\n")
+	})
+	var local net.Addr
+	_, err := Send(context.Background(), Head{Method: "GET", Target: "/"}, nil, Options{URL: tg.url(t), OnConnect: func(a net.Addr) {
+		if tg.captured() != "" {
+			t.Error("told after the request was written")
+		}
+		local = a
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if local == nil || local.String() != seen {
+		t.Fatalf("OnConnect told %v; the target saw %q", local, seen)
+	}
+}

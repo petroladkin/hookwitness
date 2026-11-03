@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -198,6 +199,9 @@ templ endpointsPage(nav navView, d endpointsDialog) {
 										if n := unsetSecrets(e.Config); n > 0 {
 											<a class="unset" href={ templ.SafeURL(nav.registerURL(e.ID) + "/behaviour?tab=secrets") }>{ plural(n, "secret", "secrets") } not set</a>
 										}
+										if rv := receiverOf(e.Config); rv != "" {
+											<a class="tag receiver-badge" href={ templ.SafeURL(nav.registerURL(e.ID) + "/behaviour?tab=receiver") } title="Requests are forwarded here: live traffic leaves the server">→ { rv }</a>
+										}
 									</td>
 									<td class="url">{ nav.Catch }{ e.Path }</td>
 									<td class="num">{ strconv.Itoa(e.Count) }</td>
@@ -287,6 +291,9 @@ templ importDialog(nav navView, v importView) {
 				for _, it := range v.Items {
 					<fieldset class="masks import-item">
 						<legend>{ it.Path } · { it.Summary }</legend>
+						if it.Receiver != "" {
+							<p class="banner warn">Forwards live traffic to <code>{ it.Receiver }</code>: requests to this endpoint leave the server and the receiver's answers come back to their senders. Only an admin can import a receiver.</p>
+						}
 						<label>Path <input name={ "path_" + strconv.Itoa(it.I) } value={ it.Target } required spellcheck="false" autocomplete="off"/></label>
 						if it.Taken {
 							<label class="check"><input type="checkbox" name={ "replace_" + strconv.Itoa(it.I) } checked?={ it.Replace }/> { it.Target } is already an endpoint: replace its behaviour (its requests, counter and on/off state stay)</label>
@@ -359,6 +366,9 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 			<div class="reg-id">
 				@registerPicker(nav, reg)
 				<span class="kept"><span id="kept" data-count="kept">{ strconv.Itoa(reg.Count) }</span> kept</span>
+				if reg.Receiver != "" {
+					<a class="tag receiver-badge" href={ templ.SafeURL(reg.Base + "/behaviour?tab=receiver") } title="Requests no rule takes are forwarded here: live traffic leaves the server">→ { reg.Receiver }</a>
+				}
 				@keepsLine(reg.Keeps)
 			</div>
 			<div class="reg-tools">
@@ -594,6 +604,90 @@ templ replayDialog(v replayDialogView) {
 			</div>
 		</form>
 	</dialog>
+}
+
+// receiverSection is the request's exchange with its endpoint's receiver:
+// where it went, what the receiver answered, what was sent.
+templ receiverSection(x exhibitView) {
+	<section id="receiver" aria-label="Receiver">
+		<h2>Receiver</h2>
+		if x.Outcome.NotForwarded {
+			<p class="note">Not forwarded: rule { strconv.Itoa(x.Outcome.Rule) } took this request, and the receiver never saw it.</p>
+		} else if x.Outcome.Forward.Pending {
+			<p class="note">Being forwarded to <code>{ x.Outcome.Forward.Target }</code>…</p>
+		} else if e := x.Exchange; e != nil {
+			<div class="replay">
+				<p>
+					<span class={ "rstamp", templ.KV("bad", !e.good()) }>{ e.stamp() }</span>
+					<span class="rurl">{ e.URL }</span>
+					if e.Status != 0 {
+						<span class="rmeta">· { millisOf(e.Duration) }</span>
+					}
+				</p>
+				if e.ByRule > 0 {
+					<p class="note">Rule { strconv.Itoa(e.ByRule) } took it and the sender got the rule's answer; the receiver got it too.</p>
+				}
+				if e.SenderLeft > 0 {
+					<p class="note">The sender gave up after { millisOf(e.SenderLeft) }; the exchange went on for { millisOf(time.Duration(x.Outcome.Forward.Ms) * time.Millisecond) }.</p>
+				}
+				if e.Error != "" {
+					<p class="note">No answer passed back: <code>{ e.Error }</code></p>
+				}
+				for _, n := range e.Notes {
+					<p class="note">{ n }.</p>
+				}
+				if e.Insecure {
+					<p class="note">The receiver's certificate was not verified.</p>
+				}
+				if e.Status != 0 {
+					<h3>The receiver's answer · { strconv.Itoa(len(e.Headers)) } header lines · first byte after { millisOf(e.TTFB) }</h3>
+					<div class="scroll">
+						<table class="kv">
+							<tbody>
+								for _, hd := range e.Headers {
+									<tr><th>{ hd.Name }</th><td>{ hd.Value }</td></tr>
+								}
+							</tbody>
+						</table>
+					</div>
+					switch e.Body.Kind {
+						case bodyEmpty:
+							<p class="note">No body.</p>
+						case bodyJSON, bodyText:
+							<pre class="body sent">{ e.Body.Text }</pre>
+						case bodyBinary:
+							<p class="note">Binary, { size(e.Size) }, kept as it arrived (never decompressed). The first bytes:</p>
+							<pre class="body hex">{ e.Body.Hex }</pre>
+					}
+					if e.Cut {
+						if e.Size < 0 {
+							<p class="note">The answer ended before its end; what arrived is kept.</p>
+						} else {
+							<p class="note">Only the first 64 KiB of { size(e.Size) } are kept.</p>
+						}
+					}
+					if e.Body.Kind != bodyEmpty {
+						<p><a href={ templ.SafeURL(e.Download) } download>Download the receiver's answer body</a></p>
+					}
+				}
+				if e.Line != "" {
+					<h3>Sent · { strconv.Itoa(len(e.Sent)) } header lines · Host { hostWord(e.Host) }</h3>
+					<pre class="body line">{ e.Line }</pre>
+					<div class="scroll">
+						<table class="kv">
+							<tbody>
+								for _, hd := range e.Sent {
+									<tr><th>{ hd.Name }</th><td>{ hd.Value }</td></tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				}
+			</div>
+		} else {
+			<p class="note">Forwarded to <code>{ x.Outcome.Forward.Target }</code>; the exchange was not kept.</p>
+		}
+	</section>
 }
 
 // replays are the request's replays, newest first: the target, its answer
@@ -865,6 +959,9 @@ templ row(r rowView) {
 				if t := r.tag(); t != "" {
 					<span class={ "tag", "mark-" + r.mark() }>{ t }</span>
 				}
+				if m := r.Outcome.ReceiverMark(); m != "" && r.Outcome.Source != emulate.FromForward {
+					<span class="tag receiver-mark">{ m }</span>
+				}
 			</span>
 		</a>
 	</li>
@@ -985,6 +1082,9 @@ templ exhibit(x exhibitView) {
 	}
 	@verdicts(x)
 	@answer(x)
+	if x.Outcome.Forward != nil || x.Outcome.NotForwarded {
+		@receiverSection(x)
+	}
 	if len(x.Replays) > 0 {
 		@replays(x)
 	}
@@ -1175,9 +1275,17 @@ templ behaviourPage(nav navView, b behaviourView) {
 						</p>
 					}
 					@checkList(b)
+				case "receiver":
+					@toolbar(b, "receiver", receiverAction(b)) {
+						<p class="note">A receiver makes this endpoint a recorder in the middle: each request that passes the checks and that no rule takes goes on to it as it arrived, and its answer goes back to the sender. Both sides are kept.</p>
+						if !b.MayForward {
+							<p class="note">Only an admin can change where requests are forwarded.</p>
+						}
+					}
+					@receiverSummary(b)
 				case "default":
 					@toolbar(b, "default", "Edit default reply") {
-						<p class="note">The answer when no check refuses the request and no rule matches.</p>
+						<p class="note">{ defaultNote(b.Config) }</p>
 					}
 					@replySummary(b.Config.Default)
 				case "secrets":
@@ -1219,7 +1327,9 @@ templ toolbar(b behaviourView, edit, label string) {
 		<div class="toolbar-note">
 			{ children... }
 		</div>
-		<a class="btn solid" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + tabOf(edit) + "&edit=" + edit) }>{ label }</a>
+		if label != "" {
+			<a class="btn solid" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + tabOf(edit) + "&edit=" + edit) }>{ label }</a>
+		}
 	</div>
 	if b.NoDraft != "" {
 		<p class="error banner" role="alert">No draft: { b.NoDraft }.</p>
@@ -1256,7 +1366,14 @@ templ ruleList(b behaviourView) {
 			for i, rule := range b.Config.Rules {
 				<li id={ "rule-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "rule-"+strconv.Itoa(i)) }>
 					<span class="no">{ strconv.Itoa(i + 1) }</span>
-					<span class="what"><b>{ rule.When.Label() }</b> → { rule.Action() }</span>
+					<span class="what">
+						<b>{ rule.When.Label() }</b> → { rule.Action() }
+						if b.Config.Forward != nil && rule.Forward {
+							· the receiver gets it too
+						} else if b.Config.Forward != nil {
+							· not forwarded
+						}
+					</span>
 					@rowActions(b, "rule", i, len(b.Config.Rules), true)
 				</li>
 			}
@@ -1430,6 +1547,9 @@ templ editorDialog(b behaviourView, e *editor) {
 					<input type="hidden" name="op" value="schema-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
 					@schemaFields(e)
+				case "receiver":
+					<input type="hidden" name="op" value="receiver"/>
+					@receiverFields(b, e.Forward)
 				case "var":
 					<input type="hidden" name="op" value="var-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
@@ -1446,11 +1566,59 @@ templ editorDialog(b behaviourView, e *editor) {
 				<button class="btn solid" type="submit">{ editorSave(e) }</button>
 				<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + b.Tab) }>Cancel</a>
 			</div>
-			if e.Kind != "var" && e.Kind != "secret" && e.Kind != "schema" && e.Kind != "event" {
+			if e.Kind != "var" && e.Kind != "secret" && e.Kind != "schema" && e.Kind != "event" && e.Kind != "receiver" {
 				@templateRef()
 			}
 		</form>
 	</dialog>
+}
+
+templ receiverSummary(b behaviourView) {
+	if f := b.Config.Forward; f != nil {
+		<div class="receiver">
+			<p class="receiver-target"><span aria-hidden="true">→</span> <code>{ f.Where() }</code></p>
+			<p class="note">{ f.Summary(b.MaxWait) }</p>
+			if openRelay(b.Config) {
+				<p class="banner warn" role="note">
+					Anyone who reaches this endpoint's URL reaches the receiver, answers included.
+					<a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=check-new") }>Add an enforced authorization check</a>.
+				</p>
+			}
+			if b.MayForward {
+				<form method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+					<input type="hidden" name="op" value="receiver-del"/>
+					<input type="hidden" name="v" value={ b.Version }/>
+					<button class="btn quiet" type="submit">Remove receiver</button>
+				</form>
+			}
+		</div>
+	} else {
+		<p class="empty">No receiver: this endpoint answers every request itself.</p>
+	}
+}
+
+templ receiverFields(b behaviourView, f emulate.Forward) {
+	<label>URL <input name="url" value={ f.URL } required spellcheck="false" autocomplete="off" autofocus placeholder="https://receiver.example/webhooks"/></label>
+	<p class="help">http or https, with no query (the sender's own query goes with each request) and no user name or password. The target policy (<code>-replay-allow</code>) applies.</p>
+	<div class="grid2">
+		<label>
+			Host sent
+			<select name="host">
+				<option value="target" selected?={ !f.KeepHost }>the receiver's</option>
+				<option value="received" selected?={ f.KeepHost }>as received</option>
+			</select>
+		</label>
+		<label>Timeout, s <input type="number" name="timeout" value={ timeoutField(f) } min="0.1" step="any" placeholder={ secondsOf(b.MaxWait) }/></label>
+	</div>
+	<label>
+		When the receiver fails
+		<select name="on_failure">
+			<option value="gateway" selected?={ !f.FallsBackToDefault() }>answer 502, or 504 for a timeout</option>
+			<option value="default" selected?={ f.FallsBackToDefault() }>answer the default reply</option>
+		</select>
+	</label>
+	<label class="check"><input type="checkbox" name="insecure_tls" checked?={ f.InsecureTLS }/> Accept any TLS certificate</label>
+	<p class="help">Each request goes as it arrived: its header lines in order and case, its body's bytes, as HTTP/1.1, a chunked body as one chunk. Redirects are not followed. The answer passes back whole up to 1 MiB, its first 64 KiB are kept. With the default reply on failure the sender stays happy, and the receiver misses those requests.</p>
 }
 
 templ templateRef() {
@@ -1516,6 +1684,10 @@ templ ruleFields(b behaviourView, rule emulate.Rule) {
 	<p class="help whened w-rate">More than N requests within Per seconds trip it; it then takes every request during the next Block seconds, and the count starts again. It counts every request the rules see, also those an earlier rule takes.</p>
 	<p class="help whened w-attempts">Attempts of the same event: its id where the endpoint's event id says (the Checks tab), else the same body. A request without the id is a first attempt.</p>
 	<p class="help whened w-window w-flap w-rate w-attempts">A reply can say <code>{ "{{.RetryAfter}}" }</code> (seconds until this condition ends, e.g. in a <code>Retry-After</code> header), <code>{ "{{.Elapsed}}" }</code> (seconds since the start) and <code>{ "{{.Attempt}}" }</code>.</p>
+	if b.Config.Forward != nil {
+		<label class="check"><input type="checkbox" name="forward" checked?={ rule.Forward }/> The receiver gets these requests too</label>
+		<p class="help">On: the receiver gets each request this rule takes, while the sender gets the rule's answer (a receiver that processed it, a sender that saw a failure). Off: the receiver never sees them.</p>
+	}
 	<label>
 		Do
 		<select name="do">

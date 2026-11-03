@@ -37,6 +37,8 @@ type importItem struct {
 	// ToPrune how many requests of the endpoint at Target it would delete.
 	Retention store.Retention
 	ToPrune   int
+	// Receiver is where the endpoint forwards live traffic, "" when none.
+	Receiver string
 }
 
 func (h *Handler) setupOptions() setup.Options {
@@ -138,6 +140,9 @@ func (h *Handler) importSetup(w http.ResponseWriter, r *http.Request) {
 	v := importView{Review: true, Text: text}
 	for i, e := range f.Endpoints {
 		it := importItem{I: i, Path: e.Path, Target: e.Path, Summary: setupSummary(e), Secrets: e.Secrets}
+		if e.Forward != nil {
+			it.Receiver = e.Forward.Where()
+		}
 		if e.Retention != nil {
 			it.Retention = *e.Retention
 		}

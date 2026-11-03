@@ -73,6 +73,10 @@ type Rule struct {
 	When  Condition `json:"when"`
 	Do    string    `json:"do"`              // ActReply, ActTimeout or ActDrop
 	Reply Reply     `json:"reply,omitempty"` // for ActReply
+	// Forward: on an endpoint that forwards, the receiver gets the request
+	// too, while the sender gets this rule's answer. Off: the receiver
+	// never sees the requests this rule takes.
+	Forward bool `json:"forward,omitempty"`
 }
 
 // Check match kinds.
@@ -134,6 +138,9 @@ type Config struct {
 	// Event is where the sender puts an event's id, the same on every
 	// retry; nil: attempts are counted per body (delivery.go).
 	Event *Source `json:"event,omitempty"`
+	// Forward makes the endpoint pass requests through to a receiver
+	// (forward.go); nil: it answers them itself.
+	Forward *Forward `json:"forward,omitempty"`
 }
 
 // DefaultConfig is what a new endpoint does: 200 with an empty body.
@@ -188,6 +195,11 @@ func (c Config) Validate(maxWait time.Duration) error {
 	if c.Event != nil {
 		if err := c.Event.validate("event id"); err != nil {
 			return err
+		}
+	}
+	if c.Forward != nil {
+		if err := c.Forward.validate(maxWait); err != nil {
+			return fmt.Errorf("receiver: %w", err)
 		}
 	}
 	if len(c.Schemas) > 0 {
@@ -461,6 +473,9 @@ type Choice struct {
 	Elapsed    time.Duration
 	RetryAfter int
 	BlockUntil int64
+	// Forward: the receiver gets the request (Do is ActForward, or a rule
+	// with its forward switch on an endpoint that forwards).
+	Forward bool
 }
 
 // Choose picks the first rule whose condition holds for the request

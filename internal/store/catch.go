@@ -961,6 +961,7 @@ type ListQuery struct {
 	Event         *string // only requests of this event id
 	Pinned        bool    // only pinned requests
 	Anomaly       bool    // only anomalies
+	Forward       string  // ForwardOK, ForwardFailed, ForwardNone; "" for any
 	// Match, when set, is asked about each kept body that passed the other
 	// filters; requests without a kept body never match.
 	Match    func(body []byte) bool
@@ -1001,6 +1002,7 @@ func (s *Store) List(ctx context.Context, endpointID int64, q ListQuery) ([]Requ
 	if q.Anomaly {
 		where += " AND anomaly"
 	}
+	where += forwardWhere(q.Forward)
 	if q.Contains != nil {
 		where += " AND instr(body, ?) > 0" // both blobs: a byte search
 		args = append(args, q.Contains)

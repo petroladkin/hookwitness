@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/petroladkin/hookwitness/internal/catch"
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -21,6 +22,9 @@ type endpointJSON struct {
 	Enabled  bool   `json:"enabled"`    // off: requests to its path go to Unmatched
 	Created  stamp  `json:"created_at"`
 	Last     *stamp `json:"last_request_at,omitempty"`
+	// ForwardsTo is the receiver its requests go to (origin and path);
+	// absent when it answers them itself.
+	ForwardsTo string `json:"forwards_to,omitempty"`
 	retentionView
 	ToPrune *int `json:"to_prune,omitempty"` // in a PATCH answer: requests the change removed
 }
@@ -36,6 +40,11 @@ func (h *Handler) endpointView(r *http.Request, ep store.Endpoint) endpointJSON 
 	if !ep.StartedAt.IsZero() {
 		started := stamp(ep.StartedAt)
 		v.Started = &started
+	}
+	if strings.Contains(ep.Config, `"forward"`) {
+		if c, err := emulate.Parse(ep.Config); err == nil && c.Forward != nil {
+			v.ForwardsTo = c.Forward.Where()
+		}
 	}
 	return v
 }

@@ -179,11 +179,13 @@ func (d *Data) JSON(path string) string {
 // therefore always adds "Content-Security-Policy: sandbox" (an endpoint's
 // own policy is sent too: several policies only narrow each other), adds
 // "X-Content-Type-Options: nosniff" unless the endpoint sets it, and drops
-// any Set-Cookie of sessionCookie, the admin's login cookie.
+// any Set-Cookie that a browser could read as sessionCookie, the admin's
+// login cookie: by its name, or a cookie without a name whose value holds
+// "sessionCookie=" (browsers send a nameless cookie back as its value).
 func (r Rendered) Protect(sessionCookie string) Rendered {
 	hs := make([]Header, 0, len(r.Headers)+2)
 	for _, h := range r.Headers {
-		if strings.EqualFold(h.Name, "Set-Cookie") && cookieName(h.Value) == sessionCookie {
+		if strings.EqualFold(h.Name, "Set-Cookie") && setsCookie(h.Value, sessionCookie) {
 			continue
 		}
 		hs = append(hs, h)
@@ -195,6 +197,27 @@ func (r Rendered) Protect(sessionCookie string) Rendered {
 		hs = append(hs, Header{"X-Content-Type-Options", "nosniff"})
 	}
 	r.Headers = hs
+	return r
+}
+
+// setsCookie reports whether a Set-Cookie value may set the cookie name:
+// its name, or a nameless cookie carrying "name=".
+func setsCookie(v, name string) bool {
+	pair, _, _ := strings.Cut(v, ";")
+	n := cookieName(pair)
+	return n == name || n == "" && strings.Contains(pair, name+"=")
+}
+
+// NoSniff makes the reply say "X-Content-Type-Options: nosniff" whatever
+// it said: for an answer a third party wrote (a receiver's).
+func (r Rendered) NoSniff() Rendered {
+	hs := make([]Header, 0, len(r.Headers)+1)
+	for _, h := range r.Headers {
+		if !strings.EqualFold(h.Name, "X-Content-Type-Options") {
+			hs = append(hs, h)
+		}
+	}
+	r.Headers = append(hs, Header{"X-Content-Type-Options", "nosniff"})
 	return r
 }
 

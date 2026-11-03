@@ -410,6 +410,10 @@ func (p *pdfWriter) head(h *Head) error {
 		p.place(p.caption("Pruned"))
 		p.place(p.plain(h.PrunedLine))
 	}
+	if h.ReceiverLine != "" {
+		p.place(p.caption("Receiver"))
+		p.place(p.plain(h.ReceiverLine))
+	}
 	if h.Setup != nil {
 		p.setup(h)
 	}
@@ -453,6 +457,10 @@ func (p *pdfWriter) setup(h *Head) {
 			rows = append(rows, [2]string{sc.Name, sc.Use})
 		}
 		part("Schemas", rows, "")
+	}
+	if s.Receiver != "" {
+		p.place(p.caption("Receiver"))
+		p.place(p.plain(s.Receiver))
 	}
 	rows = nil
 	for _, r := range s.Rules {
@@ -616,6 +624,9 @@ func (p *pdfWriter) item(it Item) error {
 	}})
 	top = append(top, p.row("Received", 70, 7.5, cText, stamp(it.At)+" from "+it.Remote+" · "+it.Proto)...)
 	top = append(top, p.row("Answer", 70, 7.5, cText, answerLine(it.Answer))...)
+	if it.Receiver != "" {
+		top = append(top, p.row("Receiver", 70, 7.5, cText, it.Receiver)...)
+	}
 	if it.Pinned {
 		top = append(top, p.row("Pinned", 70, 7.5, cText, "never pruned by retention")...)
 	}
@@ -715,6 +726,24 @@ func (p *pdfWriter) item(it Item) error {
 	}
 	if it.Body.Cut {
 		p.place(p.plain("Cut at " + size(int64(it.Body.Shown)) + "."))
+	}
+	if it.ReceiverBody != nil {
+		p.place(gapBlock(3))
+		p.place(p.caption("The receiver's answer · " + strconv.Itoa(len(it.ReceiverHeaders)) + " header lines · " + receiverBodyNote(it)))
+		if len(it.ReceiverHeaders) > 0 {
+			var rows [][2]string
+			var masked []bool
+			for _, hd := range it.ReceiverHeaders {
+				rows = append(rows, [2]string{hd.Name, hd.Value})
+				masked = append(masked, hd.Masked)
+			}
+			for _, b := range p.kv(rows, masked) {
+				p.place(b)
+			}
+		}
+		for _, b := range p.bodyLines(*it.ReceiverBody) {
+			p.place(b)
+		}
 	}
 	p.place(gapBlock(10))
 	return p.err

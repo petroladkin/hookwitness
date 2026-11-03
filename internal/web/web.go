@@ -27,7 +27,6 @@ import (
 	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/api"
 	"github.com/petroladkin/hookwitness/internal/catch"
-	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/mcp"
 	"github.com/petroladkin/hookwitness/internal/replay"
@@ -147,6 +146,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("POST "+p+"/r/{id}/replay", h.replayRequest)
 	mux.HandleFunc("POST "+p+"/r/{id}/pin", h.pin)
 	mux.HandleFunc("GET "+p+"/replays/{id}/body", h.replayBody)
+	mux.HandleFunc("GET "+p+"/r/{id}/forward/body", h.forwardBody)
 	mux.HandleFunc("GET "+p+"/static/{file...}", h.static)
 	mux.HandleFunc("GET "+p+"/login", h.loginPage)
 	mux.HandleFunc("POST "+p+"/login", h.login)
@@ -593,6 +593,7 @@ func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64
 		Path:     ep.Path,
 		Enabled:  ep.Enabled || reg == store.Unmatched,
 		Unset:    unsetSecrets(ep.Config),
+		Receiver: receiverOf(ep.Config),
 		Count:    ep.Count,
 		Rows:     rows,
 		More:     more,
@@ -665,7 +666,7 @@ func (h *Handler) row(req store.Request, n int, fresh bool) rowView {
 		Delivery: n,
 		Href:     h.regPath(req.EndpointID) + "/r/" + strconv.FormatInt(req.ID, 10),
 		Fresh:    fresh,
-		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
+		Outcome:  h.outcomeOf(req),
 		Verdict:  req.Verdict,
 		Replays:  req.Replays,
 		Repeat:   repeatNote(req.Verdicts),
@@ -751,7 +752,7 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		Self:     h.regPath(req.EndpointID) + "/r/" + strconv.FormatInt(req.ID, 10),
 		Unmatch:  req.EndpointID == store.Unmatched,
 		Limit:    h.limit,
-		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
+		Outcome:  h.outcomeOf(req),
 		Verdicts: parseVerdicts(req.Verdicts),
 	}
 	if req.Event != nil && *req.Event != "" {
@@ -769,6 +770,11 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 	v.CanReplay = !req.TooLarge && int64(len(req.Body)) >= req.Size && h.mayReplay(ctx)
 	if req.Replays > 0 {
 		if v.Replays, err = h.replays(ctx, req.ID); err != nil {
+			return exhibitView{}, err
+		}
+	}
+	if v.Outcome.Forward != nil {
+		if v.Exchange, err = h.exchange(ctx, req, v.Outcome); err != nil {
 			return exhibitView{}, err
 		}
 	}

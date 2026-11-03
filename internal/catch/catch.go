@@ -3,6 +3,7 @@ package catch
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/emulate"
+	"github.com/petroladkin/hookwitness/internal/forward"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/wire"
@@ -41,6 +43,10 @@ type Handler struct {
 	MaxWait time.Duration
 	// Keys opens signing keys and matches tokens of authorization checks.
 	Keys emulate.Keyring
+	// Forward passes requests through to the receivers endpoints name; nil
+	// makes one with the default policy on first use.
+	Forward *forward.Service
+	fwOnce  sync.Once
 
 	// after starts a wait's timer; tests replace it to see the durations
 	// asked for without waiting. Nil means a real timer.
@@ -69,9 +75,15 @@ func (h *Handler) stopping() chan struct{} {
 	return h.stop
 }
 
-// Stop ends pending delays and timeout holds; give it to server.Serve as an
-// onShutdown function so a held request does not delay the shutdown.
-func (h *Handler) Stop() { h.stopOnce.Do(func() { close(h.stopping()) }) }
+// Stop ends pending delays, timeout holds and forwards (each recorded as
+// ended by the stop); give it to server.Serve as an onShutdown function so
+// a held request does not delay the shutdown.
+func (h *Handler) Stop() {
+	h.stopOnce.Do(func() {
+		close(h.stopping())
+		h.forwarder().Stop()
+	})
+}
 
 // Wait returns when every request being answered has stored its outcome.
 // http.Server.Shutdown does not wait for handlers whose connection was
@@ -160,6 +172,14 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	}
 
 	plan.free = free
+	switch {
+	case plan.forward:
+		h.forwardOut(ctx, w, r, req, plan)
+		return
+	case plan.forwardToo:
+		h.forwardToo(ctx, w, r, req, plan)
+		return
+	}
 	if changed := h.carryOut(w, r, req, plan); changed {
 		if err := h.Store.UpdateOutcome(ctx, req.ID, plan.out.Status, plan.out.String()); err != nil {
 			h.Log.Error("catch: outcome not stored", "request", req.ID, "err", err)
@@ -179,6 +199,9 @@ type plan struct {
 	closing bool          // close the connection after answering
 	decide  store.Decide  // set when the rules decide (the request passed the checks)
 	free    func()        // the body is no longer needed (MaxInFlight)
+	// forward: the receiver answers the sender (forward.go); forwardToo: a
+	// rule answers and the receiver gets the request as well.
+	forward, forwardToo bool
 }
 
 // plan works out the outcome for everything but the rules, which decide
@@ -226,6 +249,16 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy, off bool) *plan
 		pl.closing = true
 		return pl
 	}
+	if cfg.Forward != nil && h.forwarder().Own(req.RemoteAddr) {
+		// It came back on the server's own forward: a loop.
+		pl.out = loopOutcome()
+		pl.reply, pl.render = emulate.Reply{Status: pl.out.Status, Headers: []emulate.Header{{Name: "Content-Type", Value: "text/plain; charset=utf-8"}},
+			BodyBase64: base64.StdEncoding.EncodeToString([]byte(loopText))}, true // exact bytes, not a template
+		pl.data = emulate.NewData(er, nil, 0)
+		req.Status, req.Outcome = pl.out.Status, pl.out.String()
+		h.Log.Warn("catch: a forward came back to a forwarding endpoint; answered 508", "path", req.Path, "remote", req.RemoteAddr)
+		return pl
+	}
 	if f != nil {
 		pl.data = emulate.NewData(er, cfg.Vars, 0)
 		pl.reply, pl.render = f.Refusal(), true
@@ -248,6 +281,18 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy, off bool) *plan
 		if ch.Do == emulate.ActReply {
 			pl.reply, pl.render = ch.Reply, true
 			pl.out.Status = ch.Reply.Status
+		}
+		if cfg.Forward != nil {
+			switch {
+			case ch.Do == emulate.ActForward:
+				pl.out.Source, pl.forward = emulate.FromForward, true
+				pl.out.Forward = &emulate.ForwardNote{Target: cfg.Forward.Where(), Pending: true}
+			case ch.Forward:
+				pl.forwardToo = true
+				pl.out.Forward = &emulate.ForwardNote{Target: cfg.Forward.Where(), Pending: true}
+			default:
+				pl.out.NotForwarded = true
+			}
 		}
 		return pl.out.Status, pl.out.String(), state
 	}
@@ -322,6 +367,17 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 			return true
 		}
 	}
+	writeReply(w, rendered)
+	return true
+}
+
+// writeReply sends a rendered reply: its headers only (no sniffed
+// Content-Type), framed by the server.
+func writeReply(w http.ResponseWriter, rendered emulate.Rendered) { writeReplyLen(w, rendered, "") }
+
+// writeReplyLen is writeReply with the Content-Length to declare ("": the
+// body's): an answer to HEAD keeps the receiver's.
+func writeReplyLen(w http.ResponseWriter, rendered emulate.Rendered, length string) {
 	hd := w.Header()
 	hd["Content-Type"] = nil // no sniffing: only the configured headers
 	for _, x := range rendered.Headers {
@@ -330,10 +386,12 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 		}
 		hd.Add(x.Name, x.Value)
 	}
-	hd.Set("Content-Length", strconv.Itoa(len(rendered.Body)))
+	if length == "" {
+		length = strconv.Itoa(len(rendered.Body))
+	}
+	hd.Set("Content-Length", length)
 	w.WriteHeader(rendered.Status)
 	w.Write(rendered.Body)
-	return true
 }
 
 // wait sleeps for d unless the sender leaves or the server stops, and

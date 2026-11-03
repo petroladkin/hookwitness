@@ -306,6 +306,12 @@ curl -s -d '{}' -H 'X-Api-Key: key_test' $H   # 200
 curl -s -d '{}' -H 'X-Api-Key: nope' $H       # 401 refused by the check
 ```
 
+## A real receiver behind it
+
+An endpoint can also pass requests on to a real receiver and answer with
+its answer, rules still taking some for faults: see [Recording a live
+integration](recorder.md).
+
 ## With the API
 
 Everything on this page is the behaviour document of the REST API: `GET` and

@@ -71,7 +71,9 @@ On a shared server, narrow the targets with `-replay-allow` (or
 `HOOKWITNESS_REPLAY_ALLOW`): host names, `host:port`, addresses and CIDR
 networks, separated by commas. An IPv4-mapped network such as
 `::ffff:198.51.100.0/120` means the IPv4 network it maps (`198.51.100.0/24`).
-`none` turns replay off.
+`none` turns replay off. The same policy bounds where endpoints may
+[forward live traffic](recorder.md#keep-it-closed), and `none` turns that
+off too.
 
 <!-- docs-check: skip: starts a long-running server -->
 ```sh

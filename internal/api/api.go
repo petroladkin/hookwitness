@@ -115,6 +115,8 @@ func (h *Handler) routes() []route {
 		{"GET", "/requests/{id}/body", h.rawBody, needAny},
 		{"GET", "/requests/{id}/image", h.getImage, needAny},
 		{"POST", "/requests/{id}/replays", h.replayRequest, needAdminRole},
+		{"GET", "/requests/{id}/forward", h.getForward, needAny},
+		{"GET", "/requests/{id}/forward/body", h.forwardBody, needAny},
 		{"GET", "/requests/{id}/replays", h.listReplays, needAny},
 		{"GET", "/replays/{id}", h.getReplay, needAny},
 		{"GET", "/replays/{id}/body", h.replayBody, needAny},

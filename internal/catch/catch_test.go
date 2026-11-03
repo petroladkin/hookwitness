@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/petroladkin/hookwitness/internal/forward"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/wire"
@@ -25,6 +26,7 @@ func setup(t *testing.T, maxBody int64) (*Handler, *store.Store, *bytes.Buffer) 
 	t.Cleanup(func() { st.Close() })
 	var logs bytes.Buffer
 	h := &Handler{Store: st, Live: live.New(), Log: slog.New(slog.NewTextHandler(&logs, nil)), MaxBody: maxBody, Retention: store.Keep{Normal: 1000}}
+	h.Forward = forward.New(h.Log, forward.Options{MaxWait: h.maxWait(), Budget: h}) // the default policy: loopback receivers allowed
 	return h, st, &logs
 }
 

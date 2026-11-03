@@ -58,6 +58,11 @@ type Outcome struct {
 	// and a rate rule's block end (UTC, three fraction digits).
 	ElapsedMs  *int64 `json:"elapsed_ms,omitempty"`
 	BlockUntil string `json:"block_until,omitempty"`
+	// The receiver's side on an endpoint that forwards (forward.go): the
+	// exchange's summary, or NotForwarded when a rule kept the request from
+	// the receiver.
+	Forward      *ForwardNote `json:"forward,omitempty"`
+	NotForwarded bool         `json:"not_forwarded,omitempty"`
 }
 
 // SetReply records the reply actually sent.
@@ -98,6 +103,9 @@ func ParseOutcome(s string, status int) Outcome {
 // Stamp is the short text on the exhibit: "500 sent", "timeout", "dropped",
 // "400 refused".
 func (o Outcome) Stamp() string {
+	if o.Action == ActForward && o.Forward != nil {
+		return o.forwardStamp()
+	}
 	switch o.Action {
 	case ActTimeout:
 		return "timeout"
@@ -116,10 +124,31 @@ func (o Outcome) Stamp() string {
 func (o Outcome) Why() string {
 	switch o.Source {
 	case FromRule:
+		s := fmt.Sprintf("rule %d · %s", o.Rule, o.Label)
 		if o.ElapsedMs != nil {
-			return fmt.Sprintf("rule %d · %s · at %s", o.Rule, o.Label, Duration(*o.ElapsedMs))
+			s += " · at " + Duration(*o.ElapsedMs)
 		}
-		return fmt.Sprintf("rule %d · %s", o.Rule, o.Label)
+		switch {
+		case o.NotForwarded:
+			s += " · not forwarded"
+		case o.Forward != nil:
+			s += " · the receiver got it too"
+		}
+		return s
+	case FromForward:
+		if o.Forward == nil {
+			return "forwarded"
+		}
+		s := "forwarded to " + o.Forward.Target
+		if o.Forward.ErrorKind != "" {
+			s += " · " + FailureWords(o.Forward.ErrorKind)
+			if o.Forward.Fallback && o.Status != GatewayStatus(o.Forward.ErrorKind) {
+				s += " · the default reply was sent"
+			}
+		}
+		return s
+	case FromLoop:
+		return FailureWords(FailLoop)
 	case FromCheck:
 		return o.Check
 	case FromLimit:
@@ -158,9 +187,10 @@ func (o *Outcome) Abandon(waited int64) {
 // reply it did not wait for. The strip and reports count both as timeouts.
 func (o Outcome) HeldUp() bool { return o.Action == ActTimeout || o.Action == ActAbandoned }
 
-// Good reports a 2xx answer; the strip marks the rest.
+// Good reports a 2xx answer the sender got, from the reply or the
+// receiver; the strip marks the rest.
 func (o Outcome) Good() bool {
-	return (o.Action == ActReply) && o.Status >= 200 && o.Status < 300
+	return (o.Action == ActReply || o.Action == ActForward) && o.Status >= 200 && o.Status < 300
 }
 
 // Anomalous reports a request retention keeps in the anomaly lane, apart
@@ -170,7 +200,19 @@ func (o Outcome) Good() bool {
 // the same rule in SQL (internal/store anomalyExpr; a test holds them
 // together). Every request the strip marks other than "ok" is one.
 func Anomalous(o Outcome, tooLarge bool, verdict string, redelivered bool) bool {
-	return tooLarge || !o.Good() || verdict == "fail" || redelivered
+	answered := !o.Pending() && (!o.Good() || o.receiverMissed())
+	return tooLarge || answered || verdict == "fail" || redelivered
+}
+
+// Pending reports a forward that has not ended yet: its class waits for
+// the end.
+func (o Outcome) Pending() bool { return o.Forward != nil && o.Forward.Pending }
+
+// receiverMissed reports a forwarding endpoint's request the receiver did
+// not take: a rule kept it from the receiver, or the receiver failed (the
+// sender got a gateway error, the default reply, or a rule's answer).
+func (o Outcome) receiverMissed() bool {
+	return o.NotForwarded || o.Forward != nil && o.Forward.ErrorKind != ""
 }
 
 // AsSent is the reply as HTTP sends it for a request of method, as Go's

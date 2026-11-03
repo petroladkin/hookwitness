@@ -45,6 +45,15 @@ var classCases = []classCase{
 	{outcomeJSON(emulate.ActError, 500), 500, false, "", false},
 	{outcomeJSON(emulate.ActAbandoned, 0), 0, false, "", false},
 	{outcomeJSON(emulate.ActReply, 413), 413, true, "", false},
+	{`{"source":"forward","action":"forward","status":200,"forward":{"target":"http://r.test/h","status":200,"ms":3}}`, 200, false, "", false},
+	{`{"source":"forward","action":"forward","status":502,"forward":{"target":"http://r.test/h","error_kind":"dial","fallback":true,"ms":3}}`, 502, false, "", false},
+	{`{"source":"forward","action":"forward","status":200,"forward":{"target":"http://r.test/h","error_kind":"dial","fallback":true,"ms":3}}`, 200, false, "", false},
+	{`{"source":"forward","action":"forward","forward":{"target":"http://r.test/h","pending":true,"ms":0}}`, 0, false, "", false},
+	{`{"source":"forward","action":"forward","forward":{"target":"http://r.test/h","pending":true,"ms":0}}`, 0, false, "fail", false},
+	{`{"source":"rule","rule":1,"action":"reply","status":200,"forward":{"target":"http://r.test/h","error_kind":"timeout","ms":3}}`, 200, false, "", false},
+	{`{"source":"rule","rule":1,"action":"reply","status":200,"not_forwarded":true}`, 200, false, "", false},
+	{`{"source":"rule","rule":1,"action":"reply","status":200,"forward":{"target":"http://r.test/h","status":200,"ms":3}}`, 200, false, "", false},
+	{`{"source":"forward","action":"forward","status":200,"forward":{"target":"http://r.test/h","status":200,"ms":3}}`, 200, false, "fail", false},
 	{"", 200, false, "", false}, // caught before outcomes were recorded
 	{"", 500, false, "", false},
 	{"not json", 200, false, "", false},
@@ -455,6 +464,9 @@ func TestRetentionMigration(t *testing.T) {
 	s.db.QueryRowContext(ctx, `INSERT INTO endpoints (path, created_at, last_no) VALUES ('/old', 0, 40) RETURNING id`).Scan(&ep)
 	want := map[int64]bool{}
 	for i, c := range classCases {
+		if strings.Contains(c.outcome, "forward") {
+			continue // 0.2 never forwarded: such outcomes are new
+		}
 		var id int64
 		// Numbers from 3 on: the first two were pruned by 0.2.
 		if err := s.db.QueryRowContext(ctx, `INSERT INTO requests (endpoint_id, no, received_at, method, path, raw_query, proto,

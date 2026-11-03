@@ -64,6 +64,18 @@ setup_api_key() {
   hw_behave "$id" '.checks = [{"header":"X-Api-Key","match":"equals","value":"key_test","error":{"status":401,"headers":[{"name":"Content-Type","value":"application/json"}],"body":"{\"error\":\"bad key\"}"}}]'
 }
 
+# --- recorder ----------------------------------------------------------------
+
+# docs/recorder.md: /live forwards to /mock, a second endpoint of the same
+# server that answers 201 by itself.
+setup_recorder() {
+  local mock live
+  mock=$(hw_endpoint /mock)
+  hw_behave "$mock" '.default = {"status":201,"headers":[{"name":"Content-Type","value":"application/json"}],"body":"{\"ok\":true}"}' || return 1
+  live=$(hw_endpoint /live)
+  hw_behave "$live" ".forward = {\"url\":\"$HW/mock\"}"
+}
+
 # --- replies: rules by time and state ----------------------------------------
 
 setup_deploy_window() {

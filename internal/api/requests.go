@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/picture"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
@@ -45,6 +46,11 @@ type summaryJSON struct {
 	Anomaly     bool    `json:"anomaly"` // kept in the anomaly lane: not answered 2xx, a failed verdict, a redelivery
 	Event       *string `json:"event"`   // its event id (the endpoint's event source); null: none
 	Attempt     *int    `json:"attempt"` // its attempt among the kept requests of its event (or body); null: not counted
+	// Forward is the receiver's side on an endpoint that forwards (the
+	// whole exchange at /requests/{id}/forward); NotForwarded: a rule kept
+	// the request from the receiver.
+	Forward      *emulate.ForwardNote `json:"forward,omitempty"`
+	NotForwarded bool                 `json:"not_forwarded,omitempty"`
 }
 
 // requestJSON is one caught request in full.
@@ -111,6 +117,10 @@ func summaryView(req store.Request) summaryJSON {
 	if req.Attempt > 0 {
 		n := req.Attempt
 		v.Attempt = &n
+	}
+	if strings.Contains(req.Outcome, "forward") {
+		o := emulate.ParseOutcome(req.Outcome, req.Status)
+		v.Forward, v.NotForwarded = o.Forward, o.NotForwarded
 	}
 	if req.EndpointID != store.Unmatched {
 		id := req.EndpointID
@@ -221,11 +231,13 @@ type listQuery struct {
 	event         *string     // event=<id>
 	pinned        bool        // pinned=true
 	anomaly       bool        // anomaly=true
+	forward       string      // forward=ok|failed|none
 }
 
 func (l listQuery) store() store.ListQuery {
 	q := store.ListQuery{Before: l.before, After: l.after, HasAfter: l.hasAfter, Limit: l.limit,
-		Verdict: l.verdict, Status: l.status, Contains: l.contains, WithBody: l.bodies, Pinned: l.pinned, Anomaly: l.anomaly, Event: l.event}
+		Verdict: l.verdict, Status: l.status, Contains: l.contains, WithBody: l.bodies, Pinned: l.pinned, Anomaly: l.anomaly, Event: l.event,
+		Forward: l.forward}
 	if len(l.match) > 0 {
 		q.Match = matchAll(l.match)
 	}
@@ -288,6 +300,13 @@ func parseList(w http.ResponseWriter, r *http.Request) (listQuery, bool) {
 		}
 		ev := q.Get("event")
 		l.event = &ev
+	}
+	if q.Has("forward") {
+		switch l.forward = q.Get("forward"); l.forward {
+		case store.ForwardOK, store.ForwardFailed, store.ForwardNone:
+		default:
+			return bad("forward", "forward is ok (the receiver answered 2xx), failed (it failed or answered otherwise) or none (not forwarded)")
+		}
 	}
 	for name, dst := range map[string]*bool{"pinned": &l.pinned, "anomaly": &l.anomaly} {
 		if q.Has(name) {

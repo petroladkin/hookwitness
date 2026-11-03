@@ -54,6 +54,10 @@ type Options struct {
 	// KeepHost sends the received Host line as it is; by default its value
 	// becomes the target's host and port, in the same place.
 	KeepHost bool
+	// OnConnect, when set, is told the local address of the connection once
+	// it is open, before anything is written: a forward knows its own
+	// connections when they come back to the server (a loop).
+	OnConnect func(local net.Addr)
 
 	Resolver Resolver       // nil: net.DefaultResolver
 	RootCAs  *x509.CertPool // nil: the system's roots
@@ -134,6 +138,9 @@ func Send(ctx context.Context, h Head, body []byte, o Options) (Response, error)
 		return res, classify(ctx, "dial", err)
 	}
 	defer conn.Close()
+	if o.OnConnect != nil {
+		o.OnConnect(conn.LocalAddr())
+	}
 	stop := context.AfterFunc(ctx, func() { conn.SetDeadline(time.Unix(1, 0)) })
 	defer stop()
 	if dl, ok := ctx.Deadline(); ok {
