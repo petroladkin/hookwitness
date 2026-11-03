@@ -178,8 +178,9 @@ func TestForwardsOnRelease020Database(t *testing.T) {
 	if fw, err := s.ForwardOf(ctx, reqs[0].ID); err != nil || fw.Status != 200 {
 		t.Fatalf("a forward of an old request: %+v, %v", fw, err)
 	}
-	if v, _ := s.SchemaVersion(ctx); v != 13 {
-		t.Fatalf("schema %d after the upgrade", v)
+	ms, _ := loadMigrations(migrationFS)
+	if v, _ := s.SchemaVersion(ctx); v != ms[len(ms)-1].version {
+		t.Fatalf("schema %d after the upgrade, want the newest", v)
 	}
 }
 

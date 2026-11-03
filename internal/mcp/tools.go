@@ -15,6 +15,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/petroladkin/hookwitness/internal/access"
+	"github.com/petroladkin/hookwitness/internal/store"
 )
 
 // MaxBody is how much of a request body a tool result carries; the result
@@ -241,7 +242,29 @@ func (s *tools) listEndpoints(ctx context.Context, _ *sdk.CallToolRequest, _ str
 	if off > 0 {
 		summary += fmt.Sprintf(", %d off (requests to an off endpoint go to Unmatched)", off)
 	}
+	if st, err := s.c.get(ctx, "/storage", nil); err == nil {
+		summary += "; " + storageWords(st)
+		out["storage"] = st
+	}
 	return result(summary, out)
+}
+
+// storageWords is the database's size in a line: "database 1.8 GiB of
+// 4.0 GiB (size limit), 3 warning(s): …".
+func storageWords(st map[string]any) string {
+	n := func(v any) string { f, _ := v.(float64); return store.Size(int64(f)) }
+	s := "database " + n(st["used_bytes"])
+	if st["limit_bytes"] != nil {
+		s += " of " + n(st["limit_bytes"]) + " (size limit: the oldest bodies, then requests, are dropped over it; pinned never)"
+	} else {
+		s += ", no size limit"
+	}
+	if ws, _ := st["warnings"].([]any); len(ws) > 0 {
+		for _, w := range ws {
+			s += fmt.Sprintf("; warning: %v", w)
+		}
+	}
+	return s
 }
 
 func (s *tools) getEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in EndpointIn) (*sdk.CallToolResult, map[string]any, error) {
@@ -950,6 +973,9 @@ func describe(r map[string]any) string {
 	}
 	if left, ok := fw["sender_left_ms"]; ok && left != nil {
 		s += fmt.Sprintf("; the sender left after %v ms", num(left))
+	}
+	if r["body_dropped"] == true {
+		s += "; body dropped to stay under the database size limit"
 	}
 	if v, _ := r["verdict"].(string); v != "" {
 		s += ", verdict " + v

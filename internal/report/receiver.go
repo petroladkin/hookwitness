@@ -129,6 +129,9 @@ func site(target string) string {
 // receiverBodyNote is the line about the receiver's answer body.
 func receiverBodyNote(it Item) string {
 	b := *it.ReceiverBody
+	if b.Dropped {
+		return size(b.Size) + " · not kept: " + store.AnswerDropped
+	}
 	s := bodyNote(b)
 	if it.ReceiverCut {
 		s += " · only the first 64 KiB kept"
@@ -148,7 +151,7 @@ func (h *Head) receiverAnswer(it *Item, fw store.Forward) {
 		}
 		it.ReceiverHeaders = append(it.ReceiverHeaders, Header{Name: hd.Name, Value: hd.Value})
 	}
-	b := viewBody(store.Request{Body: fw.Body, Size: int64(len(fw.Body))}, h.bodyLimit)
+	b := viewBody(store.Request{Body: fw.Body, Size: int64(len(fw.Body)), BodyDropped: fw.BodyDropped}, h.bodyLimit)
 	b.Size = fw.Size
 	it.ReceiverBody = &b
 	it.ReceiverCut = fw.Truncated

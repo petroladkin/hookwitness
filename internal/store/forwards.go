@@ -22,17 +22,20 @@ type Forward struct {
 	Sent      []Header // the header lines written, in order
 	Notes     []string // where the request sent differs from the one received
 
-	Proto     string
-	Status    int
-	Reason    string
-	Headers   []Header // the receiver's header lines: order, case, repeats
-	Body      []byte   // the receiver's first bytes
-	Size      int64    // answer body bytes; -1 when cut before its end
-	Truncated bool
-	Duration  time.Duration
-	TTFB      time.Duration
-	ErrorKind string
-	Error     string
+	Proto   string
+	Status  int
+	Reason  string
+	Headers []Header // the receiver's header lines: order, case, repeats
+	Body    []byte   // the receiver's first bytes
+	// BodyDropped: the answer's bytes were dropped with the request's body
+	// (the size limit); Body is empty.
+	BodyDropped bool
+	Size        int64 // answer body bytes; -1 when cut before its end
+	Truncated   bool
+	Duration    time.Duration
+	TTFB        time.Duration
+	ErrorKind   string
+	Error       string
 }
 
 // FinishForward stores a request's exchange and its final outcome in one
@@ -88,7 +91,7 @@ func (s *Store) FinishForward(ctx context.Context, fw *Forward, status int, outc
 }
 
 const forwardColumns = `request_id, created_at, url, options, line, sent, notes, proto, status, reason, headers,
-	size, truncated, duration_ms, ttfb_ms, error_kind, error, body`
+	size, truncated, duration_ms, ttfb_ms, error_kind, error, body_dropped, body`
 
 // ForwardOf returns a request's exchange with the receiver, with the
 // answer's body; ErrNotFound when it has none.
@@ -98,7 +101,7 @@ func (s *Store) ForwardOf(ctx context.Context, requestID int64) (Forward, error)
 	var sent, notes, headers string
 	err := s.db.QueryRowContext(ctx, `SELECT `+forwardColumns+` FROM forwards WHERE request_id = ?`, requestID).Scan(
 		&fw.RequestID, &at, &fw.URL, &fw.Options, &fw.Line, &sent, &notes, &fw.Proto, &fw.Status, &fw.Reason, &headers,
-		&fw.Size, &fw.Truncated, &dur, &ttfb, &fw.ErrorKind, &fw.Error, &fw.Body)
+		&fw.Size, &fw.Truncated, &dur, &ttfb, &fw.ErrorKind, &fw.Error, &fw.BodyDropped, &fw.Body)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Forward{}, ErrNotFound
 	}

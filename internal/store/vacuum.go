@@ -118,6 +118,12 @@ type Housekeeping struct {
 	Now      func() time.Time       // nil: time.Now
 	Pruned   func(reg int64, n int) // a register lost n requests to retention (wake its feeds)
 	Report   func(freed int64, err error)
+	// MaxSize is the database size limit (-max-db-size); 0: none. Over it
+	// the tick, and a large body at once (Nudge), evict (evict.go);
+	// Evicted is told what an eviction did (the feeds of e.Registers lost
+	// requests).
+	MaxSize int64
+	Evicted func(Evicted)
 }
 
 // Housekeep applies retention (ages, counts left over after a limit was
@@ -134,6 +140,8 @@ func (s *Store) Housekeep(ctx context.Context, h Housekeeping) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.nudge:
+			s.evictFor(ctx, h)
 		case <-t.C:
 			pruned, err := s.Prune(ctx, now(), h.Keep)
 			for reg, n := range pruned {
@@ -144,6 +152,7 @@ func (s *Store) Housekeep(ctx context.Context, h Housekeeping) {
 			if err != nil && ctx.Err() == nil {
 				h.Report(0, fmt.Errorf("retention: %w", err))
 			}
+			s.evictFor(ctx, h)
 			freed, err := s.Reclaim(ctx, ReclaimFrom)
 			if (freed > 0 || err != nil) && ctx.Err() == nil {
 				h.Report(freed, err)

@@ -96,7 +96,16 @@ server's own forward; the same target policy as replay; only an admin
 changes a receiver once login is on (UI Receiver tab, API, MCP, setup
 import), with an open-relay warning; rows, the request page (Receiver
 section), reports, the API (`forward`, `forward=` filter,
-`/requests/{id}/forward`) and MCP show the receiver's side. Setup files: an endpoint's setup (path,
+`/requests/{id}/forward`) and MCP show the receiver's side. Size limit:
+with `-max-db-size` the minute tick (and a body over 1 MiB at once) drops,
+globally and oldest first, normal bodies, then normal requests, then
+anomalies' bodies, then anomalies, until the used pages are under 95 % of
+it; pinned never; a dropped body keeps the request's metadata and verdicts
+(`body_dropped`; replay refused, re-check notes it and keeps its order
+mark, raw body and images 404), its replays' and receiver's answer
+bodies go with it (`body_dropped`, 404); the endpoints page, `GET <prefix>/api/v1/storage` and MCP name the
+size, the limit, pinned bytes and the volume's free space, with warnings on
+every page. Setup files: an endpoint's setup (path,
 behaviour, secret names and kinds, never values; `"hookwitness": 1`,
 unknown fields refused) exports from the Behaviour page, Export all, `GET
 <prefix>/api/v1/setup` and MCP `export_endpoint`, and imports (all or
@@ -145,6 +154,12 @@ that makes it false.
   database file is created 0600, an existing one keeps its mode.
   Users, sessions and tokens (`access.go`; the last admin guarded inside the
   write transaction).
+  The size limit (`evict.go`: `Evict` in batches under the writer's lock,
+  a pass bounded by the requests it started with, moved up a few times
+  when requests that arrived meanwhile hold work of an earlier step;
+  `DropBodies`; `Usage` from used pages; `storage.go`: `Storage`, its
+  warnings, the volume's space by statfs on Linux and macOS); the WAL cut
+  back to `WALLimit` after checkpoints.
   Forwards (`forwards.go`: one exchange per request, stored with the
   final outcome in one transaction; the `forward=` filter reads the
   outcome).
@@ -158,7 +173,8 @@ that makes it false.
   feed resumes (`Last-Event-ID: <request id>.<seq>`); the signatures kept
   requests carried, as keyed digests (`signature_seen`), so a passing
   signature that repeats an earlier kept request's gets a note (the
-  result unchanged).
+  result unchanged); order marks (`event_seen`) are compared only with
+  marks of the same order definition (`order_def`).
 - `internal/setup` — setup files: `Export` (secret names and kinds only),
   `Parse` (format marker and version, unknown fields refused, paths and
   behaviours validated), `Endpoint.Config` (a replace keeps the values of

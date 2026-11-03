@@ -158,6 +158,7 @@ func TestAnswersMatchTheirSchemas(t *testing.T) {
 		{"GET", fmt.Sprintf("/requests/%d", fr.ID), "", "Request"},
 		{"GET", fmt.Sprintf("/requests/%d/forward", fr.ID), "", "ForwardExchange"},
 		{"GET", fmt.Sprintf("/requests/%d/forward", r.ID), "", "Error"},
+		{"GET", "/storage", "", "Storage"},
 	} {
 		rec := e.do(tc.method, tc.path, tc.body)
 		v, err := jsonschema.UnmarshalJSON(bytes.NewReader(rec.Body.Bytes()))

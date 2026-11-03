@@ -71,6 +71,10 @@ type Request struct {
 	Replays    int    // replays kept of it
 	Pinned     bool   // never pruned by retention
 	Anomaly    bool   // kept in the anomaly lane (emulate.Anomalous)
+	// BodyDropped: the body was dropped to stay under the database size
+	// limit (evict.go); Body is nil and Kept 0, while Size and BodySHA256
+	// stay.
+	BodyDropped bool
 
 	// Written only: the signatures it carried (keyed digests), and with
 	// them Repeated, which gets each check's earliest earlier kept request
@@ -419,12 +423,59 @@ func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts str
 // mark is then found among the earlier ones alone, as when it was caught,
 // instead of past every later one (a re-check quadratic in the register).
 // A request caught during the re-check is judged against the marks
-// written again so far.
-func (s *Store) ForgetOrderMarks(ctx context.Context, endpoint int64) error {
+// written again so far. A request whose body was dropped is not checked
+// again: it keeps its mark. The marks dropped are returned by request, so
+// a request whose body is dropped during the re-check gets its own back
+// (NoteVerdicts).
+func (s *Store) ForgetOrderMarks(ctx context.Context, endpoint int64) (map[int64]float64, error) {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
-	_, err := s.db.ExecContext(ctx, `UPDATE event_seen SET order_value = NULL WHERE endpoint_id = ? AND order_value IS NOT NULL`, endpoint)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	const which = `endpoint_id = ? AND order_value IS NOT NULL
+		AND request_id NOT IN (SELECT id FROM requests WHERE endpoint_id = ? AND body_dropped = 1)`
+	rows, err := tx.QueryContext(ctx, `SELECT request_id, order_value FROM event_seen WHERE `+which, endpoint, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	marks := map[int64]float64{}
+	for rows.Next() {
+		var id int64
+		var v float64
+		if err := rows.Scan(&id, &v); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		marks[id] = v
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE event_seen SET order_value = NULL WHERE `+which, endpoint, endpoint); err != nil {
+		return nil, err
+	}
+	return marks, tx.Commit()
+}
+
+// NoteVerdicts replaces a request's verdicts JSON only, keeping its overall
+// verdict, signatures and delivery records: a re-check that cannot check a
+// request again (its body dropped) notes so. A mark gives the request its
+// order mark back when it has none.
+func (s *Store) NoteVerdicts(ctx context.Context, id int64, verdicts string, mark *float64) error {
+	return s.changeRequestTx(ctx, id, func(tx *sql.Tx, seq int64) error {
+		if mark != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE event_seen SET order_value = ? WHERE request_id = ? AND order_value IS NULL`, *mark, id); err != nil {
+				return err
+			}
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE requests SET verdicts = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
+			verdicts, millis(time.Now()), seq, id)
+		return err
+	})
 }
 
 // recordSignatures records request id's signatures (keyed digests).
@@ -857,6 +908,9 @@ func (s *Store) AddRequest(ctx context.Context, r *Request, keep Keep, decide De
 	}
 	r.ID, r.No = id, no
 	r.ReceivedAt = fromMillis(millis(r.ReceivedAt))
+	if len(r.Body) > LargeBody {
+		s.Nudge() // a size limit is checked now, not only at the tick
+	}
 	return nil
 }
 
@@ -873,7 +927,8 @@ const requestColumns = `id, endpoint_id, no, received_at, method, path, raw_quer
 	headers, body_sha256, size, too_large, status, outcome, verdict, verdicts, ifnull(length(body), 0),
 	(SELECT COUNT(*) FROM replays WHERE replays.request_id = requests.id), pinned, anomaly,
 	(SELECT event FROM event_seen WHERE event_seen.request_id = requests.id),
-	ifnull((SELECT attempt FROM event_seen WHERE event_seen.request_id = requests.id), 0)`
+	ifnull((SELECT attempt FROM event_seen WHERE event_seen.request_id = requests.id), 0),
+	body_dropped AND NOT too_large AND size > 0`
 
 func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, error) {
 	var r Request
@@ -882,7 +937,7 @@ func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, er
 	var headers string
 	var event sql.NullString
 	dst := []any{&r.ID, &ep, &r.No, &at, &r.Method, &r.Path, &r.RawQuery, &r.Proto, &r.RemoteAddr,
-		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts, &r.Kept, &r.Replays, &r.Pinned, &r.Anomaly, &event, &r.Attempt}
+		&headers, &r.BodySHA256, &r.Size, &r.TooLarge, &r.Status, &r.Outcome, &r.Verdict, &r.Verdicts, &r.Kept, &r.Replays, &r.Pinned, &r.Anomaly, &event, &r.Attempt, &r.BodyDropped}
 	if withBody {
 		dst = append(dst, &r.Body)
 	}
@@ -898,8 +953,11 @@ func scanRequest(sc interface{ Scan(...any) error }, withBody bool) (Request, er
 		r.BodySHA256 = nil
 	}
 	// SQLite returns an empty blob as nil; nil is kept for "not stored".
-	if withBody && r.Body == nil && !r.TooLarge {
+	if withBody && r.Body == nil && !r.TooLarge && !r.BodyDropped {
 		r.Body = []byte{}
+	}
+	if r.BodyDropped {
+		r.Body, r.Kept = nil, 0
 	}
 	var ps [][2]string
 	if err := json.Unmarshal([]byte(headers), &ps); err != nil {

@@ -542,6 +542,9 @@ type Body struct {
 	Shown  int   // the limit a cut body was cut at
 	Kept   int64 // bytes kept: less than Size when only the head was (Unmatched)
 	Busy   bool  // not kept: the server was busy (503)
+	// Dropped: kept when caught, dropped later to stay under the database
+	// size limit.
+	Dropped bool
 }
 
 // Answer is what Hookwitness did.
@@ -603,7 +606,12 @@ func (h *Head) item(r store.Request) Item {
 		}
 	}
 	payload.MarkBad(it.Body.Tokens, bad)
-	if !r.TooLarge {
+	if r.BodyDropped {
+		// No body to look into: only the images the verdicts recorded.
+		for _, f := range picture.Find(nil, "", it.Verdicts) {
+			it.Images = append(it.Images, ItemImage{Found: f})
+		}
+	} else if !r.TooLarge {
 		ct := ""
 		for _, hd := range r.Headers {
 			if strings.EqualFold(hd.Name, "Content-Type") {
@@ -664,6 +672,9 @@ func viewBody(r store.Request, limit int) Body {
 		b.SHA256 = hex.EncodeToString(r.BodySHA256)
 	}
 	switch {
+	case r.BodyDropped:
+		b.Kind, b.Dropped, b.Kept = BodyNotKept, true, 0
+		return b
 	case r.TooLarge:
 		b.Kind = BodyNotKept
 		b.Busy = emulate.ParseOutcome(r.Outcome, r.Status).Source == emulate.FromBusy
@@ -739,6 +750,13 @@ func bodyNote(b Body) string {
 	case BodyEmpty:
 		return "no body"
 	case BodyNotKept:
+		if b.Dropped {
+			s := size(b.Size) + " · not kept: " + store.DroppedReason
+			if b.SHA256 != "" {
+				s += " · sha256 " + b.SHA256
+			}
+			return s
+		}
 		if b.Busy {
 			return size(b.Size) + " declared · not kept: the server was busy (503)"
 		}

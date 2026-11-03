@@ -28,6 +28,10 @@ type navView struct {
 	Bare       bool   // the login page: no endpoints, no addresses
 	Theme      string // this browser's choice: "light", "dark" or "" (auto)
 	Here       string // the page's own URL, where the theme switch comes back to
+	// Storage is the database's size against its limit (nil: unknown);
+	// StorageWarnings are on every page.
+	Storage         *store.Storage
+	StorageWarnings []string
 }
 
 // registerView is one register: an endpoint's requests or the Unmatched ones.
@@ -96,6 +100,7 @@ type exhibitView struct {
 	From     string
 	Size     int64
 	TooLarge bool
+	Dropped  bool // the body was dropped to stay under the database size limit
 	Status   int
 	Delivery int
 	Event    *string // the event it belongs to; nil or "" when counted per body

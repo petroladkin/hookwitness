@@ -79,6 +79,7 @@ variable. In Docker, pass the variables: `-e HOOKWITNESS_RETENTION=5000`.
 | `-log-format` | `HOOKWITNESS_LOG_FORMAT` | `text` | `text` or `json` |
 | `-max-body` | `HOOKWITNESS_MAX_BODY` | `10MiB` | the largest body kept, in bytes or with `KiB`, `MiB`, `GiB`, at most `512MiB`; a larger one is answered `413` and not kept |
 | `-max-inflight` | `HOOKWITNESS_MAX_INFLIGHT` | the larger of `256MiB` and twice `-max-body` | bytes of request bodies read at once; a body that does not fit is answered `503` with `Retry-After: 5` and kept without its body; at least `-max-body` |
+| `-max-db-size` | `HOOKWITNESS_MAX_DB_SIZE` | none | a size limit for the database (at least `64MiB`): over it the oldest bodies, then requests, are dropped, normal ones before anomalies, pinned never ([Keeping requests](keeping.md#a-size-limit-for-the-database)) |
 | `-retention` | `HOOKWITNESS_RETENTION` | `1000` | normal requests kept per endpoint by default, and as many unmatched; each endpoint can set its own ([Keeping requests](keeping.md)) |
 | `-retention-anomalies` | `HOOKWITNESS_RETENTION_ANOMALIES` | `1000` | anomalies (not answered 2xx, a failed verdict, a redelivery) kept per endpoint by default, apart from the normal ones; `0`: no separate lane |
 | `-admin-addr` | `HOOKWITNESS_ADMIN_ADDR` | none | the admin's own address (host:port) for the UI, the API and MCP; none: they live under `-admin-prefix` on `-addr` ([below](#the-admin-on-its-own-port)) |
@@ -99,6 +100,8 @@ The database grows to at most about (endpoints × (`-retention` +
 place of the defaults, plus `-retention` × 64 KiB for the Unmatched register,
 which keeps only the first 64 KiB of a body, plus the pinned requests.
 Pinned requests are never pruned; an age limit is applied once a minute.
+With `-max-db-size` it stays at most the limit plus about a minute of
+traffic, plus what pinned requests hold beyond it.
 
 Ctrl-C or SIGTERM stops the server gracefully: requests in flight finish,
 held timeouts end.

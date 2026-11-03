@@ -69,3 +69,41 @@ func TestReceiverInReports(t *testing.T) {
 		t.Fatal("a report without forwarding names a receiver")
 	}
 }
+
+// A request whose body was dropped to stay under the database size limit
+// shows the reason and its digest instead of the body.
+func TestDroppedBodyInReports(t *testing.T) {
+	at := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+	r := store.Request{ID: 1, No: 1, EndpointID: 1, ReceivedAt: at, Method: "POST", Path: "/a", Proto: "HTTP/1.1", Status: 200,
+		Outcome: `{"source":"default","action":"reply","status":200}`, Size: 2048, BodySHA256: []byte{0xab, 0xcd}, BodyDropped: true}
+	o := Options{Endpoint: "/a", Selection: "whole register", Generated: at, Version: "test"}
+	for _, f := range []Format{Markdown, HTML} {
+		out := render(t, f, o, []store.Request{r})
+		if !strings.Contains(out, "2.0 KiB · not kept: the body was dropped to stay under the database size limit · sha256 abcd") {
+			t.Errorf("%s: no reason for the dropped body", f)
+		}
+	}
+	if pdf := render(t, PDF, o, []store.Request{r}); !strings.HasPrefix(pdf, "%PDF-") {
+		t.Fatal("no PDF")
+	}
+
+	// An image body that was dropped is not described as an empty one, and
+	// a receiver's answer dropped with it says so.
+	r.Headers = []store.Header{{Name: "Content-Type", Value: "image/png"}}
+	r.Outcome = `{"source":"forward","action":"forward","status":201,"forward":{"target":"https://receiver.test/in","status":201,"ms":3}}`
+	o.Exchange = func(context.Context, int64) (store.Forward, error) {
+		return store.Forward{RequestID: 1, Status: 201, Reason: "Created", Size: 4, BodyDropped: true}, nil
+	}
+	for _, f := range []Format{Markdown, HTML} {
+		out := render(t, f, o, []store.Request{r})
+		if strings.Contains(out, "not valid") || strings.Contains(out, "e3b0c442") {
+			t.Errorf("%s: a dropped image body described as an empty one", f)
+		}
+		if !strings.Contains(out, "4 B · not kept: the answer body was dropped with the request") {
+			t.Errorf("%s: the receiver's dropped answer not said", f)
+		}
+	}
+	if pdf := render(t, PDF, o, []store.Request{r}); !strings.HasPrefix(pdf, "%PDF-") {
+		t.Fatal("no PDF")
+	}
+}
