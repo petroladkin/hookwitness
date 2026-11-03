@@ -69,3 +69,21 @@ func TestReceiverInReports(t *testing.T) {
 		t.Fatal("a report without forwarding names a receiver")
 	}
 }
+
+// A request whose body was dropped to stay under the database size limit
+// shows the reason and its digest instead of the body.
+func TestDroppedBodyInReports(t *testing.T) {
+	at := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+	r := store.Request{ID: 1, No: 1, EndpointID: 1, ReceivedAt: at, Method: "POST", Path: "/a", Proto: "HTTP/1.1", Status: 200,
+		Outcome: `{"source":"default","action":"reply","status":200}`, Size: 2048, BodySHA256: []byte{0xab, 0xcd}, BodyDropped: true}
+	o := Options{Endpoint: "/a", Selection: "whole register", Generated: at, Version: "test"}
+	for _, f := range []Format{Markdown, HTML} {
+		out := render(t, f, o, []store.Request{r})
+		if !strings.Contains(out, "2.0 KiB · not kept: the body was dropped to stay under the database size limit · sha256 abcd") {
+			t.Errorf("%s: no reason for the dropped body", f)
+		}
+	}
+	if pdf := render(t, PDF, o, []store.Request{r}); !strings.HasPrefix(pdf, "%PDF-") {
+		t.Fatal("no PDF")
+	}
+}

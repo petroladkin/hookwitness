@@ -435,3 +435,24 @@ func TestClockRulesTool(t *testing.T) {
 		t.Fatalf("an empty window: %s", text)
 	}
 }
+
+// list_endpoints names the database's size; a request whose body was
+// dropped says so.
+func TestStorageTools(t *testing.T) {
+	e := newEnv(t)
+	e.ok(t, "create_endpoint", map[string]any{"path": "/s"})
+	out, text := e.ok(t, "list_endpoints", map[string]any{})
+	if !strings.Contains(text, "; database ") || !strings.Contains(text, "no size limit") || out["storage"] == nil {
+		t.Fatalf("list_endpoints: %s", text)
+	}
+	e.deliver("/s", `{"a":1}`)
+	r, _ := e.ok(t, "list_requests", map[string]any{"endpoint": "/s"})
+	id := int64(r["requests"].([]any)[0].(map[string]any)["id"].(float64))
+	if err := e.catcher.Store.DropBodies(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	got, text := e.ok(t, "get_request", map[string]any{"id": id})
+	if got["body_dropped"] != true || got["body_kept"] != false || !strings.Contains(text, "body dropped") {
+		t.Fatalf("get_request: %s", text)
+	}
+}
