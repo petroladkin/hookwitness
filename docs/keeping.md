@@ -96,6 +96,59 @@ curl -s "$api/endpoints/$id/requests?pinned=true" | jq -c '[.requests[] | .no]'
 Clearing the register removes pinned requests too, and its confirmation
 says how many; deleting the endpoint removes them with it.
 
+## A size limit for the database
+
+Retention bounds each register by count and age. A size limit bounds the
+whole database: start the server with `-max-db-size` (or
+`HOOKWITNESS_MAX_DB_SIZE`), such as `-max-db-size 4GiB`, at least 64 MiB.
+Once a minute, and right after a body over 1 MiB, the server checks the
+database's size. Over the limit, it drops what is oldest across all
+endpoints until the database is under 95 % of the limit, in this order:
+
+1. the bodies of normal requests;
+2. normal requests whose bodies are already gone;
+3. the bodies of anomalies;
+4. anomalies.
+
+Pinned requests and their bodies are never dropped. A request whose body
+was dropped keeps everything else: its size and digest, its header lines,
+the answer and the verdicts; retries still group by it. Its page says
+"Body not kept: dropped to stay under the database size limit". It cannot
+be replayed; a re-check keeps its verdicts and notes that it was not
+checked again; its raw body and images answer `404 not_kept`; the API says
+`body_dropped`, and so do reports.
+
+The limit is soft: between two checks the database can grow by about a
+minute of traffic past it. Pinned requests can hold more than the limit;
+then nothing more can be dropped, and every page says so.
+
+The endpoints page names the database's size, the limit, how much the
+pinned requests hold and the free space of the volume (on Linux and
+macOS). Every page warns at 90 % of the limit, when the pins alone are
+over it, and when the volume has under 1 GiB or 5 % free. `GET
+<prefix>/api/v1/storage` gives the same numbers, and MCP's
+`list_endpoints` names them.
+
+Here a server with a 64 MiB limit receives 80 MiB in 2 MiB bodies: the
+oldest bodies go, the 40 requests stay.
+
+<!-- docs-check: fresh -->
+```sh
+D=$(mktemp -d); head -c 2097152 /dev/urandom > "$D/body"   # a 2 MiB body
+hookwitness serve -addr 127.0.0.1:18490 -db "$D/hw.db" -max-db-size 64MiB >/dev/null 2>&1 & HWPID=$!
+H=http://127.0.0.1:18490; API=$H/admin/api/v1
+until curl -fs -o /dev/null $H/healthz; do sleep 0.2; done
+curl -s -o /dev/null -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/big"}'
+for i in $(seq 40); do curl -s -o /dev/null --data-binary @"$D/body" $H/big; done   # 80 MiB sent
+sleep 1
+curl -s $API/storage | jq -c '{under: (.used_bytes < .limit_bytes), limit_bytes}'
+# {"under":true,"limit_bytes":67108864}
+curl -s "$API/endpoints?path=/big" | jq '.endpoints[0].id' |
+  xargs -I{} curl -s "$API/endpoints/{}/requests?limit=50" | jq -c '{kept: (.requests | length), bodies_dropped: ([.requests[] | select(.body_dropped)] | length > 0)}'
+# {"kept":40,"bodies_dropped":true}
+kill $HWPID
+```
+
 ## In reports, setup files and MCP
 
 - A report whose range lost requests to retention says so in its summary,
@@ -108,5 +161,5 @@ says how many; deleting the endpoint removes them with it.
 - Agents use the MCP tools `set_retention` and `pin_request`; see [Testing
   a sender with an AI agent](agents.md).
 
-The size of the database follows from the limits: see [Configuration and
-deployment](deployment.md#settings).
+The size of the database follows from the limits, or from the size limit
+above: see [Configuration and deployment](deployment.md#settings).

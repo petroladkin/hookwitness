@@ -342,8 +342,11 @@ A list item:
 - `verdict` is the overall verdict of the authorization and schema checks:
   `fail` if any failed, else `n/v` if any could not verify, else `pass` if any
   passed, else `n/c` when none applied; `""` when the endpoint has none.
-- `body_kept` is false when the body was over `-max-body` (answered `413`) or
-  the server was busy reading other bodies (answered `503`).
+- `body_kept` is false when the body was over `-max-body` (answered `413`),
+  the server was busy reading other bodies (answered `503`), or the body was
+  dropped later to stay under the database size limit: then `body_dropped`
+  is true, `body_size` and the digest stay, its raw body and images answer
+  `404 not_kept`, and a replay is refused (`409 body_not_kept`).
 - `body_cut` is true when only the start of the body was kept: the Unmatched
   register keeps 64 KiB; `body_size` is the whole.
 
@@ -536,6 +539,21 @@ naming it.
 curl -s -o report.pdf -w '%{http_code}\n' "$API/endpoints/1/report?format=pdf&scope=picked&pick=3-5&mask=Authorization"
 # 200
 ```
+
+### Storage
+
+| Route | Does |
+|---|---|
+| `GET /storage` | the database's size against its limit: `used_bytes` (used pages), `limit_bytes` (`-max-db-size`, `null` without one), `pinned_bytes` (about what pinned requests hold, never dropped), `volume_free_bytes` and `volume_total_bytes` (`null` where the system does not tell), and `warnings` (at 90 % of the limit, pins over it, the volume under 1 GiB or 5 % free) |
+
+<!-- docs-check: setup: api -->
+```sh
+curl -s $API/storage | jq -c '{limit_bytes, warnings}'
+# {"limit_bytes":null,"warnings":[]}
+```
+
+See [Keeping requests](keeping.md#a-size-limit-for-the-database) for what
+the limit drops, and in what order.
 
 ### Users and tokens
 
