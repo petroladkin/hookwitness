@@ -39,7 +39,11 @@ var errLocked = errors.New("locked")
 // Store is an open, migrated database.
 type Store struct {
 	db   *sql.DB
+	path string   // the database file
 	lock *os.File // a shared lock on <db>.lock while open (Compact takes it exclusively)
+	// nudge wakes the housekeeping for a size check after a large body
+	// (evict.go); full means one is already pending.
+	nudge chan struct{}
 	// wmu serialises writes inside this process: SQLite has one writer at a
 	// time anyway, and queueing here is cheaper than retrying SQLITE_BUSY.
 	wmu sync.Mutex
@@ -104,7 +108,7 @@ func open(ctx context.Context, dbPath string, migrations fs.FS) (*Store, error) 
 		lock.Close()
 		return nil, err
 	}
-	return &Store{db: db, lock: lock}, nil
+	return &Store{db: db, path: dbPath, lock: lock, nudge: make(chan struct{}, 1)}, nil
 }
 
 // setupRetry bounds how long Open keeps retrying a busy database.

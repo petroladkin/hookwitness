@@ -181,6 +181,10 @@ func (h *Handler) rawBody(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "body", err)
 		return
 	}
+	if req.BodyDropped {
+		WriteError(w, http.StatusNotFound, "not_kept", store.DroppedReason, "")
+		return
+	}
 	if req.TooLarge {
 		WriteError(w, http.StatusNotFound, "not_kept", "the body was over the limit and was not kept", "")
 		return

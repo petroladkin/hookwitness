@@ -116,6 +116,8 @@ func (h *Handler) replayDefaults(ctx context.Context, req store.Request, ex *exh
 	switch {
 	case h.replay.Policy().Off():
 		v.Blocked = "Replay is off on this server (-replay-allow none)."
+	case req.BodyDropped:
+		v.Blocked = "The body of this request was dropped to stay under the database size limit, so it cannot be sent as it arrived."
 	case req.TooLarge:
 		v.Blocked = "The body of this request was not kept, so it cannot be sent as it arrived."
 	case int64(len(req.Body)) < req.Size:

@@ -2,6 +2,8 @@ package catch
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
@@ -24,6 +26,11 @@ func Recheck(ctx context.Context, st *store.Store, ep store.Endpoint, keys emula
 	}
 	n := 0
 	err = st.EachRequest(ctx, ep.ID, func(req store.Request) error {
+		if req.BodyDropped {
+			// Checked again without its body it would read as empty: the
+			// verdicts it has stay, with a note.
+			return st.NoteVerdicts(ctx, req.ID, droppedNote(req.Verdicts))
+		}
 		vs, _ := cfg.Verify(toEmulate(req), req.ReceivedAt, !req.TooLarge, keys)
 		n++
 		// Oldest first: a request's repeats are told against the earlier
@@ -33,6 +40,23 @@ func Recheck(ctx context.Context, st *store.Store, ep store.Endpoint, keys emula
 			delivery(cfg, er, vs, req.ReceivedAt))
 	})
 	return n, err
+}
+
+// DroppedNote is the note a re-check leaves on the verdicts of a request
+// whose body was dropped.
+const DroppedNote = "body dropped to stay under the database size limit: not checked again"
+
+func droppedNote(verdicts string) string {
+	var vs []auth.Verdict
+	if json.Unmarshal([]byte(verdicts), &vs) != nil {
+		return verdicts
+	}
+	for i := range vs {
+		if !strings.Contains(vs[i].Note, DroppedNote) {
+			vs[i].Note = strings.TrimPrefix(vs[i].Note+" · "+DroppedNote, " · ")
+		}
+	}
+	return emulate.VerdictsJSON(vs)
 }
 
 // signatures are the digests of the signatures the verdicts read, as the

@@ -742,6 +742,7 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		Size:     req.Size,
 		Kept:     int64(len(req.Body)),
 		TooLarge: req.TooLarge,
+		Dropped:  req.BodyDropped,
 		Status:   req.Status,
 		Delivery: n,
 		Event:    req.Event,
@@ -788,6 +789,10 @@ func (h *Handler) downloadBody(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req, err := h.store.Request(r.Context(), id)
+	if err == nil && req.BodyDropped {
+		http.Error(w, store.DroppedReason, http.StatusNotFound)
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) || (err == nil && req.TooLarge) {
 		http.NotFound(w, r)
 		return

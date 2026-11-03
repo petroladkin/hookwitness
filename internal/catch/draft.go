@@ -65,6 +65,9 @@ func DraftSchema(cfg emulate.Config, path string, reqs []store.Request) (SchemaD
 		if r.TooLarge {
 			return SchemaDraft{}, fmt.Errorf("request %d: its body was over the limit and was not kept", r.No)
 		}
+		if r.BodyDropped {
+			return SchemaDraft{}, fmt.Errorf("request %d: %s", r.No, store.DroppedReason)
+		}
 		if msg := schema.BodyError(r.Body); msg != "" {
 			return SchemaDraft{}, fmt.Errorf("request %d: %s", r.No, msg)
 		}

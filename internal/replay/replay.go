@@ -173,6 +173,8 @@ func (s *Service) Replay(ctx context.Context, id int64, in Input) (store.Replay,
 		return store.Replay{}, err
 	}
 	switch {
+	case req.BodyDropped:
+		return store.Replay{}, &NotKeptError{store.DroppedReason + ", so it cannot be sent as it arrived"}
 	case req.TooLarge:
 		return store.Replay{}, &NotKeptError{"the body of this request was not kept (over the size limit, or the server was busy), so it cannot be sent as it arrived"}
 	case req.Kept < req.Size:

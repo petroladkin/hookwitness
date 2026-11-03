@@ -999,7 +999,7 @@ templ exhibit(x exhibitView) {
 		</div>
 	</div>
 	<div class="ex-actions">
-		if !x.TooLarge && x.Size > 0 {
+		if !x.TooLarge && !x.Dropped && x.Size > 0 {
 			<a class="btn" href={ templ.SafeURL(x.Download) } download>Download body</a>
 		}
 		<a class="btn" href={ templ.SafeURL(x.Self + "?report") }>Report</a>
@@ -1024,7 +1024,13 @@ templ exhibit(x exhibitView) {
 		@images(x)
 	}
 	<h2>Body</h2>
-	if x.TooLarge && x.Outcome.Source == emulate.FromBusy {
+	if x.Dropped {
+		<div class="too">
+			Body not kept: dropped to stay under the database size limit (<code>-max-db-size</code>). It was { size(x.Size) };
+			its digest, the header lines, the answer and the verdicts stay, and retries still group by it.
+			Pin a request to keep its body.
+		</div>
+	} else if x.TooLarge && x.Outcome.Source == emulate.FromBusy {
 		<div class="too">
 			Hookwitness was reading other bodies up to its <code>-max-inflight</code> limit when this one
 			arrived ({ size(x.Size) } declared), so it answered 503 with <code>Retry-After</code> and did not keep the body.
