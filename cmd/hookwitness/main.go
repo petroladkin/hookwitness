@@ -226,9 +226,22 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 					return
 				}
 				log.Info("free space given back to the file system", "bytes", freed)
+			},
+			MaxSize: cfg.MaxDBSize,
+			Evicted: func(e store.Evicted) {
+				attrs := []any{"bodies", e.Bodies, "requests", e.Rows, "used", e.After, "limit", cfg.MaxDBSize}
+				if e.Stuck {
+					log.Warn("size limit: what is left is pinned; nothing more can be dropped", attrs...)
+					return
+				}
+				log.Warn("size limit: the oldest bodies and requests dropped", attrs...)
 			}})
 	}()
 	defer func() { hkStop(); <-hkDone }()
+	if cfg.MaxDBSize > 0 {
+		used, _ := st.Usage(ctx)
+		log.Info("database size limit", "limit", cfg.MaxDBSize, "used", used)
+	}
 	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, MaxInFlight: cfg.MaxInFlight,
 		Retention: keep, MaxWait: cfg.MaxWait, Keys: keys}
 	replays := replay.New(st, log, replay.Options{Policy: cfg.ReplayAllow, MaxWait: cfg.MaxWait, Budget: catcher, Live: broker})
@@ -249,7 +262,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, Separate: separate, PublicURL: cfg.PublicURL, CatchAddr: ln.Addr().String(),
 		MaxBody: cfg.MaxBody, Retention: keep, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
-		Access: auth, Proxies: cfg.TrustedProxies, Replay: replays, MCPMaxSessions: cfg.MCPMaxSessions,
+		Access: auth, Proxies: cfg.TrustedProxies, Replay: replays, MCPMaxSessions: cfg.MCPMaxSessions, MaxDBSize: cfg.MaxDBSize,
 	})
 	o := server.Options{DB: st, Log: log, AdminPrefix: cfg.AdminPrefix, Admin: ui, Catch: catcher}
 	if !separate {

@@ -58,6 +58,8 @@ type Handler struct {
 	catch   api.CatchURL // where senders reach the catch listener
 	limit   int64        // the body limit, shown when a body was refused
 	keep    store.Keep   // the default retention per register
+	maxDB   int64        // the database size limit; 0: none
+	stor    storageCache
 	maxWait time.Duration
 	hosts   map[string]bool
 	keys    *secret.Key
@@ -97,11 +99,14 @@ type Options struct {
 	Replay *replay.Service
 	// MCPMaxSessions caps the MCP sessions open at once; 0: no limit.
 	MCPMaxSessions int
+	// MaxDBSize is the database size limit, shown with the database's
+	// size; 0: none.
+	MaxDBSize int64
 }
 
 // New returns the UI.
 func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Handler {
-	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention, maxWait: o.MaxWait, keys: o.Keys,
+	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention, maxWait: o.MaxWait, keys: o.Keys, maxDB: o.MaxDBSize,
 		hosts: map[string]bool{}, stop: make(chan struct{}), auth: o.Access, limiter: access.NewLimiter(nil), proxies: o.Proxies}
 	if h.maxWait == 0 {
 		h.maxWait = 5 * time.Minute
@@ -173,7 +178,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	}
 	h.replay = o.Replay
 	ao := api.Options{Prefix: prefix, Keep: o.Retention, Reserved: h.reserve, Catch: h.catch, MaxWait: h.maxWait, Stop: h.stop, Version: version.String(),
-		Access: o.Access, Replay: o.Replay}
+		Access: o.Access, Replay: o.Replay, MaxDBSize: o.MaxDBSize}
 	if o.Keys != nil {
 		ao.Keys, ao.Keyring = o.Keys, o.Keys // a nil *secret.Key must stay a nil interface
 	}
@@ -324,6 +329,10 @@ func (h *Handler) nav(r *http.Request, current int64, onRegister bool) (navView,
 		Build:      version.String(),
 		Theme:      theme(r),
 		Here:       r.URL.RequestURI(),
+	}
+	if st, err := h.storage(r.Context()); err == nil {
+		v.Storage = &st
+		v.StorageWarnings = st.Warnings()
 	}
 	if h.auth != nil {
 		on, err := h.uiLoginOn(r.Context())

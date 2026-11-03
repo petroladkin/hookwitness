@@ -242,3 +242,29 @@ func TestReplayAllow(t *testing.T) {
 		t.Fatalf("flag over env: %v %v", c.ReplayAllow, err)
 	}
 }
+
+// -max-db-size: none by default, at least 64 MiB, from the flag or the
+// environment.
+func TestMaxDBSize(t *testing.T) {
+	noEnv := env(nil)
+	sized := env(map[string]string{"HOOKWITNESS_MAX_DB_SIZE": "4GiB"})
+	for _, c := range []struct {
+		args []string
+		env  func(string) string
+		want int64
+	}{
+		{nil, noEnv, 0},
+		{[]string{"-max-db-size", "64MiB"}, noEnv, 64 << 20},
+		{nil, sized, 4 << 30},
+	} {
+		got, err := Parse(c.args, c.env, io.Discard)
+		if err != nil || got.MaxDBSize != c.want {
+			t.Errorf("%v: %d %v, want %d", c.args, got.MaxDBSize, err, c.want)
+		}
+	}
+	for _, bad := range []string{"63MiB", "lots", "0"} {
+		if _, err := Parse([]string{"-max-db-size", bad}, noEnv, io.Discard); err == nil || !strings.Contains(err.Error(), "max db size") {
+			t.Errorf("%s: %v", bad, err)
+		}
+	}
+}

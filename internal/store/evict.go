@@ -2,7 +2,7 @@ package store
 
 import (
 	"context"
-
+	"database/sql"
 	"fmt"
 )
 
@@ -78,6 +78,45 @@ type Evicted struct {
 	// Stuck: the budget could not be reached: what is left is pinned (or
 	// there is nothing more to drop).
 	Stuck bool
+}
+
+// dropBodies drops the bodies of the requests ids (and their replays' and
+// forward's answer bodies); the rest of each request stays.
+func dropBodies(ctx context.Context, tx *sql.Tx, ids []any) error {
+	in := "(?" + repeatString(",?", len(ids)-1) + ")"
+	for _, q := range []string{
+		`UPDATE requests SET body = NULL, body_dropped = 1 WHERE pinned = 0 AND id IN ` + in,
+		`UPDATE replays SET body = NULL WHERE request_id IN ` + in,
+		`UPDATE forwards SET body = NULL WHERE request_id IN ` + in,
+	} {
+		if _, err := tx.ExecContext(ctx, q, ids...); err != nil {
+			return fmt.Errorf("drop bodies: %w", err)
+		}
+	}
+	return nil
+}
+
+// DropBodies drops the bodies of the given requests, as the size limit
+// does (pinned ones are left alone).
+func (s *Store) DropBodies(ctx context.Context, ids ...int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	if err := dropBodies(ctx, tx, args); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // evictFor runs an eviction for the housekeeping and tells whom it asks.
@@ -201,14 +240,8 @@ func (s *Store) evictBatch(ctx context.Context, st evictStep, last, need int64, 
 	}
 	in := "(?" + repeatString(",?", len(ids)-1) + ")"
 	if !st.rows {
-		for _, q := range []string{
-			`UPDATE requests SET body = NULL, body_dropped = 1 WHERE id IN ` + in,
-			`UPDATE replays SET body = NULL WHERE request_id IN ` + in,
-			`UPDATE forwards SET body = NULL WHERE request_id IN ` + in,
-		} {
-			if _, err := tx.ExecContext(ctx, q, ids...); err != nil {
-				return 0, fmt.Errorf("drop bodies: %w", err)
-			}
+		if err := dropBodies(ctx, tx, ids); err != nil {
+			return 0, err
 		}
 		e.Bodies += len(batch)
 		return len(batch), tx.Commit()

@@ -2525,6 +2525,27 @@
           }
         }
       }
+    },
+    "/storage": {
+      "get": {
+        "operationId": "getStorage",
+        "summary": "The database's size, its limit and the volume's free space",
+        "responses": {
+          "200": {
+            "description": "The numbers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Storage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3214,7 +3235,7 @@
           },
           "body_kept": {
             "type": "boolean",
-            "description": "False when the body was over the limit (413) or the server was busy reading other bodies (503)."
+            "description": "False when the body was over the limit (413), the server was busy reading other bodies (503), or the body was dropped later to stay under the database size limit (body_dropped)."
           },
           "body_cut": {
             "type": "boolean",
@@ -3263,6 +3284,10 @@
           "not_forwarded": {
             "type": "boolean",
             "description": "On an endpoint that forwards: a rule kept this request from the receiver."
+          },
+          "body_dropped": {
+            "type": "boolean",
+            "description": "The body was kept when caught and dropped later to stay under the database size limit: body_kept is false, body_size and the digest stay."
           }
         },
         "required": [
@@ -3493,7 +3518,7 @@
           },
           "body_kept": {
             "type": "boolean",
-            "description": "False when the body was over the limit (413) or the server was busy reading other bodies (503)."
+            "description": "False when the body was over the limit (413), the server was busy reading other bodies (503), or the body was dropped later to stay under the database size limit (body_dropped)."
           },
           "body_cut": {
             "type": "boolean",
@@ -3579,6 +3604,10 @@
           "not_forwarded": {
             "type": "boolean",
             "description": "On an endpoint that forwards: a rule kept this request from the receiver."
+          },
+          "body_dropped": {
+            "type": "boolean",
+            "description": "The body was kept when caught and dropped later to stay under the database size limit: body_kept is false, body_size and the digest stay."
           }
         },
         "required": [
@@ -4646,6 +4675,56 @@
           "ttfb_ms",
           "error",
           "by_rule"
+        ],
+        "additionalProperties": false
+      },
+      "Storage": {
+        "type": "object",
+        "description": "The database's size against its size limit (-max-db-size), and the free space of its volume.",
+        "properties": {
+          "used_bytes": {
+            "type": "integer",
+            "description": "Bytes in the database's used pages (the WAL is not counted)."
+          },
+          "limit_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The size limit; null: none. Over it the oldest bodies, then requests, are dropped at the minute tick: normal ones before anomalies, pinned never."
+          },
+          "pinned_bytes": {
+            "type": "integer",
+            "description": "About what pinned requests hold; never dropped."
+          },
+          "volume_free_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Free bytes on the database's volume, for this user; null where the system does not tell (only Linux and macOS do)."
+          },
+          "volume_total_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At 90 % of the limit or more; pinned requests over the limit; the volume under 1 GiB or 5 % free."
+          }
+        },
+        "required": [
+          "used_bytes",
+          "limit_bytes",
+          "pinned_bytes",
+          "volume_free_bytes",
+          "volume_total_bytes",
+          "warnings"
         ],
         "additionalProperties": false
       }

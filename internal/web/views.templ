@@ -45,6 +45,11 @@ templ layout(nav navView, pageTitle string) {
 						<a href={ templ.SafeURL(nav.Prefix + "/users") }>Add a user</a> to turn login on.
 					</p>
 				}
+				if !nav.Bare {
+					for _, w := range nav.StorageWarnings {
+						<p class="nologin storage-warn" role="alert"><b>Storage.</b> { w }.</p>
+					}
+				}
 				{ children... }
 				if nav.Build != "" {
 					<footer class="build">Hookwitness { nav.Build }</footer>
@@ -221,6 +226,9 @@ templ endpointsPage(nav navView, d endpointsDialog) {
 						</tbody>
 					</table>
 				</div>
+			}
+			if nav.Storage != nil {
+				<p class="storage-line">{ storageLine(*nav.Storage) }</p>
 			}
 			if d.Import != nil {
 				@importDialog(nav, *d.Import)

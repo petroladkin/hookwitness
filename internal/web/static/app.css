@@ -497,3 +497,5 @@ ol.replays{list-style:none;margin:0;padding:0;display:flex;flex-direction:column
 .receiver form{margin-top:4px}
 .receiver-badge{font-family:var(--f-data);color:var(--ink);border:1px solid var(--ink);padding:1px 6px;text-decoration:none;overflow-wrap:anywhere}
 .receiver-mark{color:var(--muted)}
+.storage-warn{margin-top:6px}
+.storage-line{margin:18px 0 0;font:400 12px/1.5 var(--f-data);color:var(--muted)}

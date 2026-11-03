@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -281,5 +282,35 @@ func TestLargeBodyNudges(t *testing.T) {
 	case <-s.nudge:
 		t.Fatal("a nudge after a small body")
 	default:
+	}
+}
+
+// TestStorageWarnings: the numbers and what they warn of.
+func TestStorageWarnings(t *testing.T) {
+	ctx := context.Background()
+	f := fillEvict(t)
+	st, err := f.s.Storage(ctx, 0)
+	if err != nil || st.Used <= 0 || st.Pinned < 100<<10 || st.Limit != 0 {
+		t.Fatalf("storage %+v %v", st, err)
+	}
+	if !st.VolumeKnown || st.VolumeTotal <= 0 || st.VolumeFree <= 0 {
+		t.Fatalf("the volume of a test database: %+v", st)
+	}
+	for _, c := range []struct {
+		st   Storage
+		want string
+	}{
+		{Storage{Used: 95, Limit: 100}, "at 95 % of its size limit"},
+		{Storage{Used: 89, Limit: 100}, ""},
+		{Storage{Used: 95, Limit: 100, Pinned: 120}, "pinned requests alone hold more"},
+		{Storage{Used: 10, VolumeKnown: true, VolumeFree: 900 << 20, VolumeTotal: 100 << 30}, "only 900.0 MiB free of 100.0 GiB"},
+		{Storage{Used: 10, VolumeKnown: true, VolumeFree: 4 << 30, VolumeTotal: 100 << 30}, "only 4.0 GiB free"},
+		{Storage{Used: 10, VolumeKnown: true, VolumeFree: 6 << 30, VolumeTotal: 100 << 30}, ""},
+		{Storage{Used: 10}, ""},
+	} {
+		got := strings.Join(c.st.Warnings(), " | ")
+		if c.want == "" && got != "" || c.want != "" && !strings.Contains(got, c.want) {
+			t.Errorf("%+v: %q, want %q", c.st, got, c.want)
+		}
 	}
 }

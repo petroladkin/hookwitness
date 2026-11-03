@@ -47,6 +47,8 @@ type Options struct {
 	// Replay sends caught requests to targets; nil: a service with the
 	// default target policy and no -max-inflight budget (tests).
 	Replay *replay.Service
+	// MaxDBSize is the database size limit, in the storage answer; 0: none.
+	MaxDBSize int64
 }
 
 // Handler serves the API. Create it with New.
@@ -116,6 +118,7 @@ func (h *Handler) routes() []route {
 		{"GET", "/requests/{id}/image", h.getImage, needAny},
 		{"POST", "/requests/{id}/replays", h.replayRequest, needAdminRole},
 		{"GET", "/requests/{id}/forward", h.getForward, needAny},
+		{"GET", "/storage", h.storage, needAny},
 		{"GET", "/requests/{id}/forward/body", h.forwardBody, needAny},
 		{"GET", "/requests/{id}/replays", h.listReplays, needAny},
 		{"GET", "/replays/{id}", h.getReplay, needAny},

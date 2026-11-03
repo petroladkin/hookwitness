@@ -26,7 +26,10 @@ type Config struct {
 	LogFormat   string // "text" or "json"
 	MaxBody     int64  // largest request body kept, in bytes
 	MaxInFlight int64  // bytes of request bodies held at once; over it requests get 503
-	Retention   int    // normal requests kept per register by default
+	// MaxDBSize is the database size limit: over it the oldest bodies,
+	// then requests, are dropped (pinned never); 0: none.
+	MaxDBSize int64
+	Retention int // normal requests kept per register by default
 	// RetentionAnomalies is the anomalies kept per endpoint by default (not
 	// answered 2xx, a failed verdict, a redelivery), apart from the normal
 	// ones; 0: no anomaly lane, every request counts against Retention.
@@ -64,6 +67,8 @@ const (
 	MaxBodyLimit = 512 << 20
 	// minInFlight is the default -max-inflight unless twice -max-body is
 	// more.
+	// MinDBSize is the smallest -max-db-size: room for a few large bodies.
+	MinDBSize   = 64 << 20
 	minInFlight = 256 << 20
 )
 
@@ -76,13 +81,14 @@ type setting struct {
 // getenv. Usage and errors from the flag package go to out.
 func Parse(args []string, getenv func(string) string, out io.Writer) (Config, error) {
 	var c Config
-	var maxBody, maxInFlight, retention, anomalies, adminHosts, maxWait, proxies, replayAllow, mcpSessions string
+	var maxBody, maxInFlight, maxDBSize, retention, anomalies, adminHosts, maxWait, proxies, replayAllow, mcpSessions string
 	settings := []setting{
 		{"addr", "HOOKWITNESS_ADDR", DefaultAddr, "listen address (host:port)", &c.Addr},
 		{"db", "HOOKWITNESS_DB", DefaultDBPath, "path to the sqlite database file", &c.DBPath},
 		{"log-format", "HOOKWITNESS_LOG_FORMAT", DefaultLogFormat, "log format: text or json", &c.LogFormat},
 		{"max-body", "HOOKWITNESS_MAX_BODY", DefaultMaxBody, "largest request body to keep, in bytes or with KiB/MiB/GiB; a larger one is answered 413", &maxBody},
 		{"max-inflight", "HOOKWITNESS_MAX_INFLIGHT", "", "bytes of request bodies held at once, with KiB/MiB/GiB; over it a request is answered 503 (default: the larger of 256MiB and twice max-body)", &maxInFlight},
+		{"max-db-size", "HOOKWITNESS_MAX_DB_SIZE", "", "a size limit for the database, with MiB/GiB (at least 64MiB): over it the oldest bodies, then requests, are dropped at the minute tick, normal ones before anomalies, pinned never (default: none)", &maxDBSize},
 		{"retention", "HOOKWITNESS_RETENTION", DefaultRetention, "normal requests kept per endpoint (and in Unmatched) by default; the oldest are pruned; each endpoint can set its own", &retention},
 		{"retention-anomalies", "HOOKWITNESS_RETENTION_ANOMALIES", DefaultAnomalies, "anomalies (not answered 2xx, a failed verdict, a redelivery) kept per endpoint by default, apart from the normal requests; 0: no separate lane", &anomalies},
 		{"admin-addr", "HOOKWITNESS_ADMIN_ADDR", "", "listen address (host:port) of the web UI, REST API and MCP; empty: they live under -admin-prefix on -addr", &c.AdminAddr},
@@ -132,6 +138,14 @@ func Parse(args []string, getenv func(string) string, out io.Writer) (Config, er
 		}
 		if c.MaxInFlight < c.MaxBody {
 			return Config{}, fmt.Errorf("invalid max in-flight %q: want at least max body (%d bytes), or no body that size could be read", maxInFlight, c.MaxBody)
+		}
+	}
+	if maxDBSize != "" {
+		if c.MaxDBSize, err = parseSize(maxDBSize); err != nil {
+			return Config{}, fmt.Errorf("invalid max db size %q: %w", maxDBSize, err)
+		}
+		if c.MaxDBSize < MinDBSize {
+			return Config{}, fmt.Errorf("invalid max db size %q: want at least 64 MiB", maxDBSize)
 		}
 	}
 	n, err := strconv.Atoi(retention)
