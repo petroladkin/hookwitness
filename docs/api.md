@@ -328,7 +328,7 @@ $ curl -X PUT $API/endpoints/1/secrets/ORDERS_PASSWORD -H 'Content-Type: applica
 | `…/requests?event=<id>` | every kept attempt of an event (the endpoint's event source, below) |
 | `PUT /requests/{id}/pin`, `DELETE /requests/{id}/pin` | pin a request (retention never prunes it; clearing the register still does) or unpin it; send `Content-Type: application/json` (no body needed). `204` |
 | `GET /requests/{id}` | one request in full, Unmatched ones too |
-| `GET /requests/{id}/body` | the exact body as received, with the sender's `Content-Type`, always as a download (`attachment`, `nosniff`, a `sandbox` CSP): whatever a sender sent never runs as a page; `404 not_kept` when it was over the limit |
+| `GET /requests/{id}/body` | the exact body as received, with the sender's `Content-Type`, always as a download (`attachment`, `nosniff`, a `sandbox` CSP): whatever a sender sent never runs as a page; `404 not_kept` when it was over the limit or dropped |
 | `GET /requests/{id}/image?path=<pointer>` | the decoded bytes of an image in the body (`path=` empty for a body that is an image), typed by what they are; `404 not_found` without a value there, `422 not_an_image` when it is no image |
 
 A list item:
@@ -346,7 +346,10 @@ A list item:
   the server was busy reading other bodies (answered `503`), or the body was
   dropped later to stay under the database size limit: then `body_dropped`
   is true, `body_size` and the digest stay, its raw body and images answer
-  `404 not_kept`, and a replay is refused (`409 body_not_kept`).
+  `404 not_kept`, and a replay is refused (`409 body_not_kept`). The answer
+  bodies of its replays and of its receiver go with it: those answers say
+  `body_dropped` too, with no `body_text`, and their body routes answer
+  `404 not_kept`.
 - `body_cut` is true when only the start of the body was kept: the Unmatched
   register keeps 64 KiB; `body_size` is the whole.
 
@@ -449,7 +452,7 @@ answered ([Replaying a request](replay.md)).
 | `POST /requests/{id}/replays` `{"url": …}` | send it to `url` and wait for the answer (or the error). `201` with the replay; admins only (`403 forbidden` for a user or the machine token). Optional: `"host": "received"` sends the caught `Host` line (default `"target"`: the URL's host and port), `"insecure_tls": true` accepts any https certificate, `"timeout_ms"` (default 30000, at most `-max-wait`). A target that refuses, times out or resets is still a replay, with `status` 0 and `error` set |
 | `GET /requests/{id}/replays` | its replays, newest first (the newest 50 are kept); `include=body` adds the answers' bodies |
 | `GET /replays/{id}` | one replay with its answer body |
-| `GET /replays/{id}/body` | the answer body as the target sent it (never decompressed, at most 1 MiB), with its `Content-Type`, always as a download |
+| `GET /replays/{id}/body` | the answer body as the target sent it (never decompressed, at most 1 MiB), with its `Content-Type`, always as a download; `404 not_kept` when it was dropped |
 
 Refusals: `409 body_not_kept` when the body was not kept whole (over the
 limit, or cut in Unmatched); `422 invalid` (field `url`, `host` or
@@ -508,7 +511,7 @@ integration](recorder.md)).
 | Route | Does |
 |---|---|
 | `GET /requests/{id}/forward` | the request's exchange with the receiver: what was sent (`line`, `sent`, `notes`, `host`), the receiver's `status`, `reason`, `headers` (order and case kept) and body (its first 64 KiB), `duration_ms`, `ttfb_ms`, `by_rule`, `error` |
-| `GET /requests/{id}/forward/body` | the receiver's body as it sent it (never decompressed, at most 64 KiB), with its `Content-Type`, always as a download |
+| `GET /requests/{id}/forward/body` | the receiver's body as it sent it (never decompressed, at most 64 KiB), with its `Content-Type`, always as a download; `404 not_kept` when it was dropped |
 
 Requests carry `forward`, the receiver's side: `target`, `status`,
 `error_kind` (dial, tls, timeout, reset, write, answer, refused, too_large,
@@ -544,12 +547,12 @@ curl -s -o report.pdf -w '%{http_code}\n' "$API/endpoints/1/report?format=pdf&sc
 
 | Route | Does |
 |---|---|
-| `GET /storage` | the database's size against its limit: `used_bytes` (used pages), `limit_bytes` (`-max-db-size`, `null` without one), `pinned_bytes` (about what pinned requests hold, never dropped), `volume_free_bytes` and `volume_total_bytes` (`null` where the system does not tell), and `warnings` (at 90 % of the limit, pins over it, the volume under 1 GiB or 5 % free) |
+| `GET /storage` | the database's size against its limit: `used_bytes` (used pages), `limit_bytes` (`-max-db-size`, `null` without one), `pinned_bytes` (about what pinned requests hold, never dropped), `volume_free_bytes` and `volume_total_bytes` (`null` where the system does not tell), and `warnings` (at 90 % of the limit, pins over it or every request left pinned, the volume under 1 GiB or 5 % free) |
 
 <!-- docs-check: setup: api -->
 ```sh
-curl -s $API/storage | jq -c '{limit_bytes, warnings}'
-# {"limit_bytes":null,"warnings":[]}
+curl -s $API/storage | jq -c '{limit_bytes, measured: (.used_bytes > 0)}'
+# {"limit_bytes":null,"measured":true}
 ```
 
 See [Keeping requests](keeping.md#a-size-limit-for-the-database) for what

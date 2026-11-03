@@ -118,11 +118,14 @@ curl -s "$api/endpoints/$id/requests?pinned=true" | jq -c '[.requests[] | .no]'
 kept: dropped to stay under the database size limit». Його не можна
 повторити; повторна перевірка лишає його вердикти й зазначає, що його не
 перевіряли знову; сире тіло й зображення відповідають `404 not_kept`; API
-каже `body_dropped`, і звіти теж.
+каже `body_dropped`, і звіти теж. Тіла відповідей на його повтори і від
+його отримувача скидаються разом з ним: їхні сторінки кажуть «Answer body
+not kept», а завантаження відповідають `404 not_kept`.
 
 Ліміт м'який: між двома перевірками база може вирости понад нього приблизно
-на хвилину трафіку. Закріплені запити можуть займати більше за ліміт; тоді
-скинути більше нічого, і про це каже кожна сторінка.
+на хвилину трафіку. Закріплені запити можуть займати більшу частину ліміту
+чи й більше за нього; тоді скинути більше нічого, і про це каже кожна
+сторінка.
 
 Сторінка ендпоінтів називає розмір бази, ліміт, скільки займають закріплені
 запити, і вільне місце тому (на Linux і macOS). Кожна сторінка попереджає
@@ -141,7 +144,7 @@ H=http://127.0.0.1:18490; API=$H/admin/api/v1
 until curl -fs -o /dev/null $H/healthz; do sleep 0.2; done
 curl -s -o /dev/null -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/big"}'
 for i in $(seq 40); do curl -s -o /dev/null --data-binary @"$D/body" $H/big; done   # 80 MiB sent
-sleep 1
+until curl -s $API/storage | jq -e '.used_bytes < .limit_bytes' >/dev/null; do sleep 0.2; done
 curl -s $API/storage | jq -c '{under: (.used_bytes < .limit_bytes), limit_bytes}'
 # {"under":true,"limit_bytes":67108864}
 curl -s "$API/endpoints?path=/big" | jq '.endpoints[0].id' |

@@ -116,11 +116,13 @@ the answer and the verdicts; retries still group by it. Its page says
 "Body not kept: dropped to stay under the database size limit". It cannot
 be replayed; a re-check keeps its verdicts and notes that it was not
 checked again; its raw body and images answer `404 not_kept`; the API says
-`body_dropped`, and so do reports.
+`body_dropped`, and so do reports. The answer bodies of its replays and of
+its receiver go with it: their pages say "Answer body not kept", and their
+downloads answer `404 not_kept`.
 
 The limit is soft: between two checks the database can grow by about a
-minute of traffic past it. Pinned requests can hold more than the limit;
-then nothing more can be dropped, and every page says so.
+minute of traffic past it. Pinned requests can hold most of the limit, or
+more; then nothing more can be dropped, and every page says so.
 
 The endpoints page names the database's size, the limit, how much the
 pinned requests hold and the free space of the volume (on Linux and
@@ -140,7 +142,7 @@ H=http://127.0.0.1:18490; API=$H/admin/api/v1
 until curl -fs -o /dev/null $H/healthz; do sleep 0.2; done
 curl -s -o /dev/null -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/big"}'
 for i in $(seq 40); do curl -s -o /dev/null --data-binary @"$D/body" $H/big; done   # 80 MiB sent
-sleep 1
+until curl -s $API/storage | jq -e '.used_bytes < .limit_bytes' >/dev/null; do sleep 0.2; done
 curl -s $API/storage | jq -c '{under: (.used_bytes < .limit_bytes), limit_bytes}'
 # {"under":true,"limit_bytes":67108864}
 curl -s "$API/endpoints?path=/big" | jq '.endpoints[0].id' |
