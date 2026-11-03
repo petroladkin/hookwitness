@@ -606,7 +606,12 @@ func (h *Head) item(r store.Request) Item {
 		}
 	}
 	payload.MarkBad(it.Body.Tokens, bad)
-	if !r.TooLarge {
+	if r.BodyDropped {
+		// No body to look into: only the images the verdicts recorded.
+		for _, f := range picture.Find(nil, "", it.Verdicts) {
+			it.Images = append(it.Images, ItemImage{Found: f})
+		}
+	} else if !r.TooLarge {
 		ct := ""
 		for _, hd := range r.Headers {
 			if strings.EqualFold(hd.Name, "Content-Type") {

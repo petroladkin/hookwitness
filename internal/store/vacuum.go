@@ -120,7 +120,8 @@ type Housekeeping struct {
 	Report   func(freed int64, err error)
 	// MaxSize is the database size limit (-max-db-size); 0: none. Over it
 	// the tick, and a large body at once (Nudge), evict (evict.go);
-	// Evicted is told what an eviction did.
+	// Evicted is told what an eviction did (the feeds of e.Registers lost
+	// requests).
 	MaxSize int64
 	Evicted func(Evicted)
 }

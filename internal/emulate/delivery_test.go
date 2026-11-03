@@ -76,8 +76,14 @@ func TestDeliveryFactsAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := c.DeliveryFacts(Request{Headers: []Header{{"x-github-delivery", "d-1"}}, Body: []byte(`{"created":1730548800,"obj":"cus_1"}`)})
-	if f == nil || f.Event != "d-1" || f.Order == nil || *f.Order != 1730548800000 || f.Group != "cus_1" {
+	if f == nil || f.Event != "d-1" || f.Order == nil || *f.Order != 1730548800000 || f.Group != "cus_1" ||
+		f.OrderDef != "body /created as time by body /obj" {
 		t.Fatalf("facts %+v", f)
+	}
+	// Header names in a definition are compared without case.
+	h := Config{Default: Reply{Status: 200}, Checks: []Check{{Kind: KindOrder, Order: &OrderSpec{Source{FromHeader, "X-Seq"}, "number"}}}}
+	if f := h.DeliveryFacts(Request{Headers: []Header{{"x-seq", "3"}}}); f.OrderDef != "header x-seq as number" {
+		t.Fatalf("definition %q", f.OrderDef)
 	}
 	f = c.DeliveryFacts(Request{Body: []byte(`{"created":"2026-11-02T12:00:00Z"}`)})
 	if f.Missing == "" || f.Order == nil || *f.Order != float64(time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC).UnixMilli()) {

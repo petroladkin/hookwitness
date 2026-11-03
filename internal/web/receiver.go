@@ -147,6 +147,7 @@ type exchangeView struct {
 	Reason     string
 	Headers    []store.Header
 	Body       bodyView
+	Dropped    bool // the answer body was dropped with the request's (the size limit)
 	Size       int64
 	Cut        bool
 	Duration   time.Duration
@@ -173,8 +174,8 @@ func (h *Handler) exchange(ctx context.Context, req store.Request, o emulate.Out
 	}
 	json.Unmarshal([]byte(fw.Options), &opt)
 	v := &exchangeView{URL: fw.URL, Host: opt.Host, Insecure: opt.InsecureTLS, ByRule: opt.ByRule, Line: fw.Line, Sent: fw.Sent,
-		Notes: fw.Notes, Status: fw.Status, Reason: fw.Reason, Headers: fw.Headers, Body: viewBody(fw.Body), Size: fw.Size,
-		Cut: fw.Truncated, Duration: fw.Duration, TTFB: fw.TTFB, ErrorKind: fw.ErrorKind, Error: fw.Error,
+		Notes: fw.Notes, Status: fw.Status, Reason: fw.Reason, Headers: fw.Headers, Body: viewBody(fw.Body), Dropped: fw.BodyDropped,
+		Size: fw.Size, Cut: fw.Truncated, Duration: fw.Duration, TTFB: fw.TTFB, ErrorKind: fw.ErrorKind, Error: fw.Error,
 		Download: h.prefix + "/r/" + strconv.FormatInt(req.ID, 10) + "/forward/body"}
 	if o.Forward != nil {
 		v.SenderLeft = time.Duration(o.Forward.SenderLeftMs) * time.Millisecond
@@ -219,6 +220,10 @@ func (h *Handler) forwardBody(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		h.fail(w, "forward body", err)
+		return
+	}
+	if fw.BodyDropped {
+		http.Error(w, store.AnswerDropped, http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")

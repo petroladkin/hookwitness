@@ -121,7 +121,11 @@ func DraftRequests(ctx context.Context, st *store.Store, endpointID int64, ids [
 }
 
 // DiscriminatorValue is the value a request carries for the endpoint's
-// first discriminator check; "" without one, or when it lacks the value.
+// first discriminator check, to draft by; "" without one, when it lacks
+// the value, or when its body was not kept (nothing to draft from).
 func DiscriminatorValue(cfg emulate.Config, r store.Request) string {
+	if r.BodyDropped || r.TooLarge {
+		return ""
+	}
 	return cfg.DraftHint("", []emulate.Request{toEmulate(r)}).Value
 }

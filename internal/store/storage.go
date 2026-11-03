@@ -16,6 +16,9 @@ type Storage struct {
 	// the system tells (Linux, macOS).
 	VolumeFree, VolumeTotal int64
 	VolumeKnown             bool
+	// Stuck: the last eviction could not get under the limit's target,
+	// because what is left is pinned.
+	Stuck bool
 }
 
 // Storage reads the database's size and its volume's space, against limit.
@@ -29,6 +32,7 @@ func (s *Store) Storage(ctx context.Context, limit int64) (Storage, error) {
 		return st, err
 	}
 	st.VolumeFree, st.VolumeTotal, st.VolumeKnown = volumeSpace(s.path)
+	st.Stuck = limit > 0 && s.stuck.Load()
 	return st, nil
 }
 
@@ -46,6 +50,9 @@ func (st Storage) Warnings() []string {
 	if st.Limit > 0 && st.Pinned > st.Limit {
 		out = append(out, "pinned requests alone hold more than the database size limit ("+Size(st.Pinned)+" of "+Size(st.Limit)+
 			"): nothing more can be dropped; unpin some, or raise -max-db-size")
+	} else if st.Limit > 0 && st.Stuck {
+		out = append(out, "every request left is pinned, and the database cannot get under its size limit ("+Size(st.Used)+" of "+
+			Size(st.Limit)+", "+Size(st.Pinned)+" pinned): each new request is dropped at the next check; unpin some, or raise -max-db-size")
 	} else if st.Limit > 0 && st.Used*100 >= st.Limit*WarnShare {
 		out = append(out, fmt.Sprintf("the database is at %d %% of its size limit (%s of %s): the oldest bodies, then requests, are being dropped",
 			st.Used*100/st.Limit, Size(st.Used), Size(st.Limit)))

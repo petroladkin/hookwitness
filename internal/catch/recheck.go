@@ -21,15 +21,26 @@ func Recheck(ctx context.Context, st *store.Store, ep store.Endpoint, keys emula
 	if err != nil {
 		return 0, err
 	}
-	if err := st.ForgetOrderMarks(ctx, ep.ID); err != nil {
+	marks, err := st.ForgetOrderMarks(ctx, ep.ID)
+	if err != nil {
 		return 0, err
 	}
 	n := 0
 	err = st.EachRequest(ctx, ep.ID, func(req store.Request) error {
 		if req.BodyDropped {
 			// Checked again without its body it would read as empty: the
-			// verdicts it has stay, with a note.
-			return st.NoteVerdicts(ctx, req.ID, droppedNote(req.Verdicts))
+			// verdicts it has stay, with a note, and its order mark (given
+			// back when its body was dropped after the marks were dropped).
+			note := droppedNote(req.Verdicts)
+			mark, forgot := marks[req.ID]
+			if note == req.Verdicts && !forgot {
+				return nil
+			}
+			var back *float64
+			if forgot {
+				back = &mark
+			}
+			return st.NoteVerdicts(ctx, req.ID, note, back)
 		}
 		vs, _ := cfg.Verify(toEmulate(req), req.ReceivedAt, !req.TooLarge, keys)
 		n++
@@ -79,7 +90,7 @@ func delivery(cfg emulate.Config, er emulate.Request, vs []auth.Verdict, receive
 		return nil
 	}
 	return &store.Delivery{Event: f.Event, ByBody: f.ByBody, Missing: f.Missing != "", Order: f.Order, Group: f.Group,
-		Relate: func(rel store.Relation) (string, string) {
+		OrderDef: f.OrderDef, Relate: func(rel store.Relation) (string, string) {
 			r := emulate.Relation{Attempt: rel.Attempt}
 			if rel.Prev != nil {
 				r.Prev = &emulate.Attempt{No: rel.Prev.No, At: rel.Prev.At, Outcome: emulate.ParseOutcome(rel.Prev.Outcome, rel.Prev.Status)}

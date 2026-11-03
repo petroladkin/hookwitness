@@ -229,9 +229,12 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 			},
 			MaxSize: cfg.MaxDBSize,
 			Evicted: func(e store.Evicted) {
+				for reg := range e.Registers {
+					broker.Publish(reg)
+				}
 				attrs := []any{"bodies", e.Bodies, "requests", e.Rows, "used", e.After, "limit", cfg.MaxDBSize}
 				if e.Stuck {
-					log.Warn("size limit: what is left is pinned; nothing more can be dropped", attrs...)
+					log.Warn("size limit: every request left is pinned; nothing more can be dropped", attrs...)
 					return
 				}
 				log.Warn("size limit: the oldest bodies and requests dropped", attrs...)

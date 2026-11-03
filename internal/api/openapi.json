@@ -2289,7 +2289,7 @@
             }
           },
           "404": {
-            "description": "No such replay (`not_found`).",
+            "description": "No such replay (`not_found`), or its answer body was dropped with the request's body to stay under the database size limit (`not_kept`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2511,7 +2511,7 @@
             }
           },
           "404": {
-            "description": "No exchange (`not_found`).",
+            "description": "No exchange (`not_found`), or the answer body was dropped with the request's body to stay under the database size limit (`not_kept`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4139,6 +4139,10 @@
             "type": "boolean",
             "description": "Only the first 1 MiB (or what arrived) is kept."
           },
+          "body_dropped": {
+            "type": "boolean",
+            "description": "Present and true when the answer body was dropped with the request's body to stay under the database size limit (-max-db-size): no body_text or body_base64, and its body route answers 404 not_kept; body_size is what it was."
+          },
           "duration_ms": {
             "type": "integer",
             "description": "From the first byte written to the last byte read."
@@ -4602,6 +4606,10 @@
           "body_cut": {
             "type": "boolean",
             "description": "Only the first 64 KiB are kept."
+          },
+          "body_dropped": {
+            "type": "boolean",
+            "description": "Present and true when the answer body was dropped with the request's body to stay under the database size limit (-max-db-size): no body_text or body_base64, and its body route answers 404 not_kept; body_size is what it was."
           },
           "duration_ms": {
             "type": "integer",

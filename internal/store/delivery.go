@@ -19,7 +19,10 @@ type Delivery struct {
 	Missing bool     // an event source is set and the request has no id
 	Order   *float64 // the order check's value; nil: none
 	Group   string   // the order check's partition
-	Relate  func(Relation) (verdict, verdicts string)
+	// OrderDef is the order check's definition: marks recorded under
+	// another are not compared.
+	OrderDef string
+	Relate   func(Relation) (verdict, verdicts string)
 }
 
 // Relation is a request's place among the earlier kept requests.
@@ -82,8 +85,8 @@ func relate(ctx context.Context, tx *sql.Tx, endpoint, id int64, bodySHA []byte,
 	}
 	if d.Order != nil {
 		q := `SELECT e.order_value, r.no FROM event_seen e INDEXED BY event_seen_by_order JOIN requests r ON r.id = e.request_id
-			WHERE e.endpoint_id = ? AND e.order_group = ? AND e.order_value IS NOT NULL AND e.request_id < ?`
-		args := []any{endpoint, d.Group, id}
+			WHERE e.endpoint_id = ? AND e.order_group = ? AND e.order_value IS NOT NULL AND e.request_id < ? AND e.order_def IN ('', ?)`
+		args := []any{endpoint, d.Group, id, d.OrderDef}
 		// Retries of an earlier event are late by nature: other events only.
 		switch {
 		case d.ByBody && len(bodySHA) > 0:
@@ -106,8 +109,8 @@ func relate(ctx context.Context, tx *sql.Tx, endpoint, id int64, bodySHA []byte,
 	if d.Missing {
 		event = nil
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO event_seen (request_id, endpoint_id, event, attempt, order_value, order_group)
-		VALUES (?, ?, ?, ?, ?, ?)`, id, endpoint, event, rel.Attempt, d.Order, d.Group); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO event_seen (request_id, endpoint_id, event, attempt, order_value, order_group, order_def)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, id, endpoint, event, rel.Attempt, d.Order, d.Group, d.OrderDef); err != nil {
 		return fmt.Errorf("record event: %w", err)
 	}
 	if d.Relate == nil {

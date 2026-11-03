@@ -423,21 +423,55 @@ func (s *Store) SetVerdicts(ctx context.Context, id int64, verdict, verdicts str
 // mark is then found among the earlier ones alone, as when it was caught,
 // instead of past every later one (a re-check quadratic in the register).
 // A request caught during the re-check is judged against the marks
-// written again so far.
-func (s *Store) ForgetOrderMarks(ctx context.Context, endpoint int64) error {
+// written again so far. A request whose body was dropped is not checked
+// again: it keeps its mark. The marks dropped are returned by request, so
+// a request whose body is dropped during the re-check gets its own back
+// (NoteVerdicts).
+func (s *Store) ForgetOrderMarks(ctx context.Context, endpoint int64) (map[int64]float64, error) {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
-	// A request whose body was dropped is not checked again: it keeps its mark.
-	_, err := s.db.ExecContext(ctx, `UPDATE event_seen SET order_value = NULL WHERE endpoint_id = ? AND order_value IS NOT NULL
-		AND request_id NOT IN (SELECT id FROM requests WHERE endpoint_id = ? AND body_dropped = 1)`, endpoint, endpoint)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	const which = `endpoint_id = ? AND order_value IS NOT NULL
+		AND request_id NOT IN (SELECT id FROM requests WHERE endpoint_id = ? AND body_dropped = 1)`
+	rows, err := tx.QueryContext(ctx, `SELECT request_id, order_value FROM event_seen WHERE `+which, endpoint, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	marks := map[int64]float64{}
+	for rows.Next() {
+		var id int64
+		var v float64
+		if err := rows.Scan(&id, &v); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		marks[id] = v
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE event_seen SET order_value = NULL WHERE `+which, endpoint, endpoint); err != nil {
+		return nil, err
+	}
+	return marks, tx.Commit()
 }
 
 // NoteVerdicts replaces a request's verdicts JSON only, keeping its overall
 // verdict, signatures and delivery records: a re-check that cannot check a
-// request again (its body dropped) notes so.
-func (s *Store) NoteVerdicts(ctx context.Context, id int64, verdicts string) error {
+// request again (its body dropped) notes so. A mark gives the request its
+// order mark back when it has none.
+func (s *Store) NoteVerdicts(ctx context.Context, id int64, verdicts string, mark *float64) error {
 	return s.changeRequestTx(ctx, id, func(tx *sql.Tx, seq int64) error {
+		if mark != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE event_seen SET order_value = ? WHERE request_id = ? AND order_value IS NULL`, *mark, id); err != nil {
+				return err
+			}
+		}
 		_, err := tx.ExecContext(ctx, `UPDATE requests SET verdicts = ?, changed_at = ?, change_seq = ? WHERE id = ?`,
 			verdicts, millis(time.Now()), seq, id)
 		return err

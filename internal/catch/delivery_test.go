@@ -274,3 +274,61 @@ func TestDeliveryThroughTheHandler(t *testing.T) {
 		}
 	}
 }
+
+// A re-check keeps the order mark of a request whose body was dropped (it
+// cannot be read again), and compares with it only under the definition
+// it was recorded with.
+func TestRecheckWithDroppedBodies(t *testing.T) {
+	ctx := context.Background()
+	order := func(key string) emulate.Config {
+		return emulate.Config{Default: emulate.Reply{Status: 200}, Event: &emulate.Source{From: emulate.FromBody, Key: "/id"},
+			Checks: []emulate.Check{{Kind: emulate.KindOrder, Order: &emulate.OrderSpec{Source: emulate.Source{From: emulate.FromBody, Key: key}, As: "number"}}}}
+	}
+	cfg := order("/seq")
+	st, ep := openDeliveryStore(t, cfg)
+	var reqs []*store.Request
+	for i, seq := range []int{40, 41, 50, 42} {
+		reqs = append(reqs, stored(t, st, ep, cfg, t0.Add(time.Duration(i)*time.Second), 200,
+			fmt.Sprintf(`{"id":"evt_%d","seq":%d,"ts":%d}`, i, seq, i+1)))
+	}
+	if v := verdictOf(t, st, reqs[3].ID, 1); v.Result != auth.Fail || !strings.Contains(v.Reason, "42 after 50 (#3)") {
+		t.Fatalf("caught: %s %q", v.Result, v.Reason)
+	}
+	if err := st.DropBodies(ctx, reqs[2].ID); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := st.Endpoint(ctx, ep)
+	if n, err := Recheck(ctx, st, e, nil); err != nil || n != 3 {
+		t.Fatalf("re-checked %d: %v", n, err)
+	}
+	if v := verdictOf(t, st, reqs[3].ID, 1); v.Result != auth.Fail || !strings.Contains(v.Reason, "42 after 50 (#3)") {
+		t.Fatalf("the dropped request's mark lost: %s %q", v.Result, v.Reason)
+	}
+	if v := verdictOf(t, st, reqs[2].ID, 1); !strings.Contains(v.Note, DroppedNote) {
+		t.Fatalf("no note on the dropped request: %+v", v)
+	}
+	// Another order value: the old mark of the dropped request is not
+	// compared with the new values.
+	b, _ := json.Marshal(order("/ts"))
+	e.Config = string(b)
+	if _, err := Recheck(ctx, st, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if v := verdictOf(t, st, reqs[3].ID, 1); v.Result != auth.Pass {
+		t.Fatalf("compared with a mark of the old definition: %s %q", v.Result, v.Reason)
+	}
+}
+
+// Drafting by value takes no request whose body was not kept.
+func TestDiscriminatorSkipsUnkeptBodies(t *testing.T) {
+	cfg := emulate.Config{Default: emulate.Reply{Status: 200}, Checks: []emulate.Check{{Kind: emulate.KindSchema,
+		Select: &emulate.Select{From: emulate.FromHeader, Key: "X-Event"}}}}
+	r := store.Request{Headers: []store.Header{{Name: "X-Event", Value: "order.paid"}}, Body: []byte(`{}`), Size: 2}
+	if v := DiscriminatorValue(cfg, r); v != "order.paid" {
+		t.Fatalf("kept: %q", v)
+	}
+	r.Body, r.BodyDropped = nil, true
+	if v := DiscriminatorValue(cfg, r); v != "" {
+		t.Fatalf("dropped: %q", v)
+	}
+}

@@ -658,16 +658,18 @@ templ receiverSection(x exhibitView) {
 							</tbody>
 						</table>
 					</div>
-					switch e.Body.Kind {
-						case bodyEmpty:
+					switch  {
+						case e.Dropped:
+							<p class="note">Answer body not kept: dropped with the request's body to stay under the database size limit (<code>-max-db-size</code>). It was { size(e.Size) }.</p>
+						case e.Body.Kind == bodyEmpty:
 							<p class="note">No body.</p>
-						case bodyJSON, bodyText:
+						case e.Body.Kind == bodyJSON, e.Body.Kind == bodyText:
 							<pre class="body sent">{ e.Body.Text }</pre>
-						case bodyBinary:
+						case e.Body.Kind == bodyBinary:
 							<p class="note">Binary, { size(e.Size) }, kept as it arrived (never decompressed). The first bytes:</p>
 							<pre class="body hex">{ e.Body.Hex }</pre>
 					}
-					if e.Cut {
+					if e.Cut && !e.Dropped {
 						if e.Size < 0 {
 							<p class="note">The answer ended before its end; what arrived is kept.</p>
 						} else {
@@ -740,16 +742,18 @@ templ replays(x exhibitView) {
 									</tbody>
 								</table>
 							</div>
-							switch rp.Body.Kind {
-								case bodyEmpty:
+							switch  {
+								case rp.Dropped:
+									<p class="note">Answer body not kept: dropped with the request's body to stay under the database size limit (<code>-max-db-size</code>). It was { size(rp.Size) }.</p>
+								case rp.Body.Kind == bodyEmpty:
 									<p class="note">No body.</p>
-								case bodyJSON, bodyText:
+								case rp.Body.Kind == bodyJSON, rp.Body.Kind == bodyText:
 									<pre class="body sent">{ rp.Body.Text }</pre>
-								case bodyBinary:
+								case rp.Body.Kind == bodyBinary:
 									<p class="note">Binary, { size(rp.Size) }, kept as it arrived (never decompressed). The first bytes:</p>
 									<pre class="body hex">{ rp.Body.Hex }</pre>
 							}
-							if rp.Cut {
+							if rp.Cut && !rp.Dropped {
 								if rp.Size < 0 {
 									<p class="note">The answer ended before its end; what arrived is kept.</p>
 								} else {

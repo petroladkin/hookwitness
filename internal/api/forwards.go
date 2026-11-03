@@ -34,8 +34,9 @@ type forwardJSON struct {
 	Status      int         `json:"status"`
 	Reason      string      `json:"reason"`
 	Headers     [][2]string `json:"headers"`
-	BodySize    int64       `json:"body_size"` // -1 when the answer was cut before its end
-	BodyCut     bool        `json:"body_cut"`  // only the first 64 KiB are kept
+	BodySize    int64       `json:"body_size"`              // -1 when the answer was cut before its end
+	BodyCut     bool        `json:"body_cut"`               // only the first 64 KiB are kept
+	BodyDropped bool        `json:"body_dropped,omitempty"` // dropped with the request's body (the size limit)
 	DurationMS  int64       `json:"duration_ms"`
 	TTFBMS      int64       `json:"ttfb_ms"`
 	Error       *replayErr  `json:"error"`
@@ -46,7 +47,7 @@ type forwardJSON struct {
 func forwardView(fw store.Forward) forwardJSON {
 	v := forwardJSON{RequestID: fw.RequestID, CreatedAt: stamp(fw.CreatedAt), URL: fw.URL, Line: fw.Line, Sent: pairsOf(fw.Sent),
 		Notes: fw.Notes, Proto: fw.Proto, Status: fw.Status, Reason: fw.Reason, Headers: pairsOf(fw.Headers), BodySize: fw.Size,
-		BodyCut: fw.Truncated, DurationMS: fw.Duration.Milliseconds(), TTFBMS: fw.TTFB.Milliseconds()}
+		BodyCut: fw.Truncated, BodyDropped: fw.BodyDropped, DurationMS: fw.Duration.Milliseconds(), TTFBMS: fw.TTFB.Milliseconds()}
 	if v.Notes == nil {
 		v.Notes = []string{}
 	}
@@ -61,10 +62,12 @@ func forwardView(fw store.Forward) forwardJSON {
 	if fw.ErrorKind != "" {
 		v.Error = &replayErr{fw.ErrorKind, fw.Error}
 	}
-	if utf8.Valid(fw.Body) {
+	switch {
+	case fw.BodyDropped:
+	case utf8.Valid(fw.Body):
 		s := string(fw.Body)
 		v.BodyText = &s
-	} else {
+	default:
 		s := base64.StdEncoding.EncodeToString(fw.Body)
 		v.BodyBase64 = &s
 	}
@@ -102,6 +105,10 @@ func (h *Handler) getForward(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) forwardBody(w http.ResponseWriter, r *http.Request) {
 	fw, ok := h.loadForward(w, r)
 	if !ok {
+		return
+	}
+	if fw.BodyDropped {
+		WriteError(w, http.StatusNotFound, "not_kept", store.AnswerDropped, "")
 		return
 	}
 	ct := "application/octet-stream"

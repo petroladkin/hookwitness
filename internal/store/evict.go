@@ -57,6 +57,9 @@ func (s *Store) PinnedBytes(ctx context.Context) (int64, error) {
 // DroppedReason says why a kept request has no body.
 const DroppedReason = "the body was dropped to stay under the database size limit"
 
+// AnswerDropped says why a replay's or forward's answer body is gone.
+const AnswerDropped = "the answer body was dropped with the request's body, to stay under the database size limit"
+
 // Path is the database file's path.
 func (s *Store) Path() string { return s.path }
 
@@ -75,19 +78,22 @@ type Evicted struct {
 	Bodies        int           // request bodies dropped
 	Rows          int           // requests deleted
 	Registers     map[int64]int // requests deleted per register
-	// Stuck: the budget could not be reached: what is left is pinned (or
-	// there is nothing more to drop).
+	// Stuck: the budget could not be reached: every request left is
+	// pinned.
 	Stuck bool
 }
 
-// dropBodies drops the bodies of the requests ids (and their replays' and
-// forward's answer bodies); the rest of each request stays.
+// dropBodies drops the bodies of the requests ids that are not pinned, and
+// their replays' and forward's answer bodies; the rest of each stays. An
+// answer is marked dropped only when it had bytes.
 func dropBodies(ctx context.Context, tx *sql.Tx, ids []any) error {
 	in := "(?" + repeatString(",?", len(ids)-1) + ")"
+	unpinned := `(SELECT id FROM requests WHERE pinned = 0 AND id IN ` + in + `)`
 	for _, q := range []string{
+		// The answers first: the requests' pins are read before they change.
+		`UPDATE replays SET body = NULL, body_dropped = 1 WHERE length(body) > 0 AND request_id IN ` + unpinned,
+		`UPDATE forwards SET body = NULL, body_dropped = 1 WHERE length(body) > 0 AND request_id IN ` + unpinned,
 		`UPDATE requests SET body = NULL, body_dropped = 1 WHERE pinned = 0 AND id IN ` + in,
-		`UPDATE replays SET body = NULL WHERE request_id IN ` + in,
-		`UPDATE forwards SET body = NULL WHERE request_id IN ` + in,
 	} {
 		if _, err := tx.ExecContext(ctx, q, ids...); err != nil {
 			return fmt.Errorf("drop bodies: %w", err)
@@ -125,10 +131,8 @@ func (s *Store) evictFor(ctx context.Context, h Housekeeping) {
 		return
 	}
 	e, err := s.Evict(ctx, h.MaxSize)
-	if h.Pruned != nil {
-		for reg, n := range e.Registers {
-			h.Pruned(reg, n)
-		}
+	if err == nil {
+		s.stuck.Store(e.Stuck)
 	}
 	if (e.Bodies > 0 || e.Rows > 0 || e.Stuck) && h.Evicted != nil {
 		h.Evicted(e)
@@ -146,6 +150,19 @@ type evictStep struct {
 
 var evictOrder = []evictStep{{0, false}, {0, true}, {1, false}, {1, true}}
 
+// dropped is the body_dropped value of the requests the step works on.
+func (st evictStep) dropped() int {
+	if st.rows {
+		return 1
+	}
+	return 0
+}
+
+// evictRaises is how many times a pass moves its newest request up to take
+// in requests that arrived during it, before it leaves them to the next
+// pass.
+const evictRaises = 4
+
 // Evict brings the used size under EvictTarget % of budget when it is over
 // budget (see the order above); budget 0 does nothing.
 func (s *Store) Evict(ctx context.Context, budget int64) (Evicted, error) {
@@ -162,34 +179,74 @@ func (s *Store) Evict(ctx context.Context, budget int64) (Evicted, error) {
 		return e, nil
 	}
 	target := budget / 100 * EvictTarget
-	// Requests that arrive during the pass wait for the next one: a pass
-	// ends however fast traffic comes.
-	var last int64
-	if err := s.db.QueryRowContext(ctx, `SELECT ifnull(max(id), 0) FROM requests`).Scan(&last); err != nil {
+	// A pass works on the requests up to last: however fast traffic comes,
+	// it ends. A step runs only when the steps before it have nothing left,
+	// also among requests that arrived during the pass (no older row goes
+	// while a newer body of its class is kept): then last moves up, a few
+	// times, before the rest is left to the next pass.
+	last, err := s.newestID(ctx)
+	if err != nil {
 		return e, err
 	}
+	if s.evictStarted != nil {
+		s.evictStarted()
+	}
+	raises := 0
 	for used > target && ctx.Err() == nil {
-		done := false
+		acted, ahead := false, false
 		for _, st := range evictOrder {
 			n, err := s.evictBatch(ctx, st, last, used-target, &e)
 			if err != nil {
 				return e, err
 			}
 			if n > 0 {
-				done = true
-				break // from the first step again: new requests may have arrived
+				acted = true
+				break // from the first step again
 			}
+			if ahead, err = s.evictAhead(ctx, st, last); err != nil {
+				return e, err
+			}
+			if ahead {
+				break
+			}
+		}
+		if ahead {
+			if raises == evictRaises {
+				s.Nudge() // the next pass takes them in
+				break
+			}
+			raises++
+			if last, err = s.newestID(ctx); err != nil {
+				return e, err
+			}
+			continue
 		}
 		if used, err = s.Usage(ctx); err != nil {
 			return e, err
 		}
 		e.After = used
-		if !done {
-			e.Stuck = true
+		if !acted {
+			e.Stuck = true // nothing unpinned is left
 			break
 		}
 	}
 	return e, ctx.Err()
+}
+
+// newestID is the newest request's id.
+func (s *Store) newestID(ctx context.Context) (int64, error) {
+	var last int64
+	err := s.db.QueryRowContext(ctx, `SELECT ifnull(max(id), 0) FROM requests`).Scan(&last)
+	return last, err
+}
+
+// evictAhead reports whether a step has work among requests newer than
+// last.
+func (s *Store) evictAhead(ctx context.Context, st evictStep, last int64) (bool, error) {
+	var yes bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM requests INDEXED BY requests_evict
+		WHERE pinned = 0 AND anomaly = ? AND body_dropped = ? AND id > ?)`, st.anomaly, st.dropped(), last).Scan(&yes)
+	return yes, err
 }
 
 // evictBatch does one batch of a step under the writer's lock, over
@@ -203,12 +260,8 @@ func (s *Store) evictBatch(ctx context.Context, st evictStep, last, need int64, 
 		return 0, err
 	}
 	defer tx.Rollback()
-	dropped := 0
-	if st.rows {
-		dropped = 1
-	}
 	rows, err := tx.QueryContext(ctx, `SELECT id, ifnull(endpoint_id, 0), received_at, ifnull(length(body), 0) FROM requests INDEXED BY requests_evict
-		WHERE pinned = 0 AND anomaly = ? AND body_dropped = ? AND id <= ? ORDER BY id LIMIT ?`, st.anomaly, dropped, last, EvictBatch)
+		WHERE pinned = 0 AND anomaly = ? AND body_dropped = ? AND id <= ? ORDER BY id LIMIT ?`, st.anomaly, st.dropped(), last, EvictBatch)
 	if err != nil {
 		return 0, fmt.Errorf("evict: %w", err)
 	}
@@ -249,10 +302,6 @@ func (s *Store) evictBatch(ctx context.Context, st evictStep, last, need int64, 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM requests WHERE id IN `+in, ids...); err != nil {
 		return 0, fmt.Errorf("evict requests: %w", err)
 	}
-	l := laneNormal
-	if st.anomaly == 1 {
-		l = laneAnomaly
-	}
 	type acc struct {
 		n      int
 		newest int64
@@ -268,6 +317,15 @@ func (s *Store) evictBatch(ctx context.Context, st evictStep, last, need int64, 
 		a.newest = max(a.newest, r.at)
 	}
 	for reg, a := range byReg {
+		// The Unmatched register has no lanes: its mark covers every
+		// request, as retention's does.
+		l := laneNormal
+		switch {
+		case reg == Unmatched:
+			l = laneAll
+		case st.anomaly == 1:
+			l = laneAnomaly
+		}
 		if err := recordPruned(ctx, tx, reg, l, a.n, a.newest); err != nil {
 			return 0, err
 		}

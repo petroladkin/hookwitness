@@ -69,6 +69,14 @@ func (s Source) String() string {
 	return "body " + s.Key
 }
 
+// def is the source as it reads: header names in lower case.
+func (s Source) def() string {
+	if s.From == FromHeader {
+		return "header " + strings.ToLower(s.Key)
+	}
+	return "body " + s.Key
+}
+
 func (s Source) validate(what string) error {
 	switch s.From {
 	case FromHeader:
@@ -194,6 +202,10 @@ type Facts struct {
 	Order    *float64
 	OrderErr string // why there is no order value
 	Group    string // the order check's partition ("" without one)
+	// OrderDef names the order check's definition (the value's source and
+	// kind, the group's source): a request is compared only with marks
+	// recorded under the same one.
+	OrderDef string
 }
 
 // DeliveryFacts reads a request's facts; nil when the endpoint has neither
@@ -231,6 +243,10 @@ func (c Config) DeliveryFacts(r Request) *Facts {
 	}
 	if order != nil {
 		f.HasOrder = true
+		f.OrderDef = order.Order.def() + " as " + order.Order.As
+		if order.Group != nil {
+			f.OrderDef += " by " + order.Group.def()
+		}
 		v, ok, err := order.Order.read(r)
 		switch {
 		case err != nil:

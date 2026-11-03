@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"modernc.org/sqlite" // also registers the "sqlite" driver
@@ -44,6 +45,12 @@ type Store struct {
 	// nudge wakes the housekeeping for a size check after a large body
 	// (evict.go); full means one is already pending.
 	nudge chan struct{}
+	// stuck: the last eviction could not get under its target, because
+	// what is left is pinned (Storage warns of it).
+	stuck atomic.Bool
+	// evictStarted, in tests, runs once an eviction has read the newest
+	// request it works on.
+	evictStarted func()
 	// wmu serialises writes inside this process: SQLite has one writer at a
 	// time anyway, and queueing here is cheaper than retrying SQLITE_BUSY.
 	wmu sync.Mutex
@@ -151,19 +158,25 @@ func isBusy(err error) bool {
 // SQLite decodes the %XX escapes back.
 var uriPath = strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23")
 
+// WALLimit is the size the WAL file is cut back to after a checkpoint.
+const WALLimit = 64 << 20
+
 // dsn builds the modernc.org/sqlite connection string. The pragmas are set on
 // every new connection of the pool, not once, in this order: busy_timeout
 // first, so that switching to WAL waits for a lock instead of failing at once
 // when another process opens the same new file; auto_vacuum before WAL,
 // whose switch writes the file's first page: a new database gets
 // incremental auto-vacuum (space can go back to the file system, Reclaim),
-// an existing one keeps its mode (Compact converts it).
+// an existing one keeps its mode (Compact converts it); the WAL file is cut
+// back to WALLimit when it is reset, so one large body does not leave it at
+// its size.
 func dsn(dbPath string) string {
 	q := url.Values{}
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "auto_vacuum(INCREMENTAL)")
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "foreign_keys(1)")
+	q.Add("_pragma", "journal_size_limit("+strconv.Itoa(WALLimit)+")")
 	q.Add("_txlock", "immediate")
 	return "file:" + uriPath.Replace(dbPath) + "?" + q.Encode()
 }

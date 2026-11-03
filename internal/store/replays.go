@@ -27,17 +27,20 @@ type Replay struct {
 	Sent      []Header // the header lines written, in order
 	Notes     []string // where the request sent differs from the one received
 
-	Proto     string
-	Status    int
-	Reason    string
-	Headers   []Header // the answer's header lines: order, case, repeats
-	Body      []byte   // the answer's first bytes; nil in lists
-	Size      int64    // answer body bytes; -1 when cut before its end
-	Truncated bool
-	Duration  time.Duration
-	TTFB      time.Duration
-	ErrorKind string
-	Error     string
+	Proto   string
+	Status  int
+	Reason  string
+	Headers []Header // the answer's header lines: order, case, repeats
+	Body    []byte   // the answer's first bytes; nil in lists
+	// BodyDropped: the answer's bytes were dropped with the request's body
+	// (the size limit); Body is empty.
+	BodyDropped bool
+	Size        int64 // answer body bytes; -1 when cut before its end
+	Truncated   bool
+	Duration    time.Duration
+	TTFB        time.Duration
+	ErrorKind   string
+	Error       string
 }
 
 // AddReplay stores rp and sets its ID and Register; the request's oldest
@@ -109,14 +112,14 @@ func (s *Store) AddReplay(ctx context.Context, rp *Replay) error {
 }
 
 const replayColumns = `id, request_id, created_at, by_user, url, options, line, sent, notes, proto, status, reason, headers,
-	size, truncated, duration_ms, ttfb_ms, error_kind, error`
+	size, truncated, duration_ms, ttfb_ms, error_kind, error, body_dropped`
 
 func scanReplay(sc interface{ Scan(...any) error }, withBody bool) (Replay, error) {
 	var rp Replay
 	var at, dur, ttfb int64
 	var sent, notes, headers string
 	dst := []any{&rp.ID, &rp.RequestID, &at, &rp.By, &rp.URL, &rp.Options, &rp.Line, &sent, &notes, &rp.Proto, &rp.Status,
-		&rp.Reason, &headers, &rp.Size, &rp.Truncated, &dur, &ttfb, &rp.ErrorKind, &rp.Error}
+		&rp.Reason, &headers, &rp.Size, &rp.Truncated, &dur, &ttfb, &rp.ErrorKind, &rp.Error, &rp.BodyDropped}
 	if withBody {
 		dst = append(dst, &rp.Body)
 	}
