@@ -5,7 +5,8 @@
 # sender's retry and duplicate judged by event id; a request passed on to a
 # receiver (a second endpoint) and both sides kept. On a server it starts
 # itself (--binary, --image) it then turns login on: the first admin, a
-# login, a token, the API with and without it (docs/access.md).
+# login, a token, the API with and without it (docs/access.md); with
+# --binary, a sign-in through a test OpenID Connect provider (scripts/oidcmock).
 #
 # Usage:
 #   scripts/api-smoke.sh <base-url>            against a running hookwitness
@@ -233,7 +234,7 @@ if [ -n "$OWN" ]; then
   ok "login on: 401 without credentials, a token works, cannot make tokens, revoked 401"
 fi
 
-# 10. Sign-in through an OpenID Connect provider (with --binary): a second
+# 11. Sign-in through an OpenID Connect provider (with --binary): a second
 # server of the same binary, configured for the test provider
 # scripts/oidcmock, signed in to with curl walking the redirects.
 if [ -n "$BIN" ]; then
