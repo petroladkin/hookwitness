@@ -286,8 +286,10 @@ as a page of the UI when someone opens it in a browser. Webhook senders do not
 render pages, so they see no difference. A `Content-Security-Policy` of
 your own is sent as well, next to `sandbox` (the browser applies both);
 an `X-Content-Type-Options` of your own replaces `nosniff`. A reply never
-sets the admin's login cookie: a `Set-Cookie` of `hookwitness_session` is
-not sent. The request page lists the headers sent.
+sets the admin's cookies: a `Set-Cookie` of `hookwitness_session` (the
+login) or `hookwitness_oidc` (a sign-in through a provider) is not sent,
+whether the endpoint scripts it or its receiver answers with it. The
+request page lists the headers sent.
 
 ## Required headers
 

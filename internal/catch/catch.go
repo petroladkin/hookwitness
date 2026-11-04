@@ -352,7 +352,7 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 			Headers: []emulate.Header{{Name: "Content-Type", Value: "text/plain; charset=utf-8"}},
 			Body:    []byte("Hookwitness could not render this endpoint's reply: " + err.Error() + "\n")}
 	}
-	rendered = rendered.Protect(access.CookieName, access.FlowCookieName)
+	rendered = rendered.Protect(adminCookies...)
 	sent, withheld := rendered.AsSent(r.Method) // what net/http will send of it
 	pl.out.SetReply(sent)
 	pl.out.Withheld = withheld
@@ -603,6 +603,11 @@ func storeHeaders(r *http.Request, hs []wire.Header, ok bool) []store.Header {
 	}
 	return out
 }
+
+// adminCookies are the admin's cookies (its login, a provider sign-in's
+// flow): catch paths share the admin's origin, so no answer an endpoint
+// gives, scripted or its receiver's, may set them.
+var adminCookies = []string{access.CookieName, access.FlowCookieName}
 
 // SessionRedacted replaces the value of the admin's login cookie (or of a
 // provider sign-in's flow cookie) in a recorded Cookie header.

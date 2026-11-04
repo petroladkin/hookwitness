@@ -59,7 +59,7 @@ The receiver's answer: its status, its header lines and its body, up to
 `Content-Length`, `Transfer-Encoding`, `Connection` and the other
 connection lines are its own. As every answer on a catch path, it carries
 `Content-Security-Policy: sandbox` and `nosniff`, and never sets the admin's
-login cookie. Lines that would act on the whole origin the catch paths share
+cookies (the login's, a provider sign-in's). Lines that would act on the whole origin the catch paths share
 with the admin (`Clear-Site-Data`, `Strict-Transport-Security`, `Alt-Svc`)
 are not passed back.
 

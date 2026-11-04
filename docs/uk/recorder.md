@@ -59,7 +59,7 @@ curl -s "$H/admin/api/v1/endpoints?path=/live" | jq '.endpoints[0].id' |
 `Content-Length`, `Transfer-Encoding`, `Connection` та інші рядки
 з'єднання — його власні. Як і кожна відповідь на catch-шляху, вона несе
 `Content-Security-Policy: sandbox` і `nosniff` і ніколи не ставить cookie
-входу в адмінку. Рядки, що діяли б на весь origin, спільний для
+адмінки (входу, входу через провайдера). Рядки, що діяли б на весь origin, спільний для
 catch-шляхів і адмінки (`Clear-Site-Data`, `Strict-Transport-Security`,
 `Alt-Svc`), не передаються.
 

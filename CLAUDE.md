@@ -266,7 +266,8 @@ that makes it false.
   counter's transaction (exact under concurrency), then replies (with
   `Content-Security-Policy: sandbox` always, next to an endpoint's own
   policy, `nosniff` unless the endpoint sets it, and never a `Set-Cookie` of
-  the login cookie: catch paths share the UI's origin), delays, holds
+  the admin's cookies, the login's or a provider sign-in's, also from a
+  receiver: catch paths share the UI's origin), delays, holds
   (timeout) or
   resets (drop, SO_LINGER 0); holds end on shutdown. An endpoint with a
   receiver (`forward.go`): the request is stored pending, sent through
