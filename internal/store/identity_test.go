@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -15,8 +16,17 @@ func TestOIDCMigration(t *testing.T) {
 	p := tempDB(t)
 	old := fstest.MapFS{}
 	ms, _ := loadMigrations(migrationFS)
+	var oidc int
 	for _, m := range ms {
-		if m.version < 12 {
+		if strings.HasSuffix(m.name, "_oidc.sql") {
+			oidc = m.version
+		}
+	}
+	if oidc == 0 {
+		t.Fatal("no OIDC migration")
+	}
+	for _, m := range ms {
+		if m.version < oidc {
 			old["migrations/"+m.name] = &fstest.MapFile{Data: []byte(m.sql)}
 		}
 	}
