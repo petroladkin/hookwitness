@@ -5,7 +5,8 @@
 # sender's retry and duplicate judged by event id; a request passed on to a
 # receiver (a second endpoint) and both sides kept. On a server it starts
 # itself (--binary, --image) it then turns login on: the first admin, a
-# login, a token, the API with and without it (docs/access.md).
+# login, a token, the API with and without it (docs/access.md); with
+# --binary, a sign-in through a test OpenID Connect provider (scripts/oidcmock).
 #
 # Usage:
 #   scripts/api-smoke.sh <base-url>            against a running hookwitness
@@ -15,8 +16,10 @@
 set -euo pipefail
 PORT=${SMOKE_PORT:-18081}
 WORK=$(mktemp -d)
-PID= C=
+PID= C= PID2= MOCK= BIN=
 cleanup() {
+  [ -n "$PID2" ] && kill "$PID2" 2>/dev/null && wait "$PID2" 2>/dev/null
+  [ -n "$MOCK" ] && kill "$MOCK" 2>/dev/null && wait "$MOCK" 2>/dev/null
   [ -n "$PID" ] && kill "$PID" 2>/dev/null && wait "$PID" 2>/dev/null
   [ -n "$C" ] && docker rm -f "$C" >/dev/null 2>&1
   rm -rf "$WORK"
@@ -28,7 +31,8 @@ ok() { echo "ok: $*"; }
 OWN=
 case "${1:?usage: api-smoke.sh <base-url> | --binary <path> | --image <image>}" in
 --binary)
-  "${2:?binary}" serve -addr 127.0.0.1:$PORT -db "$WORK/hw.db" >"$WORK/log" 2>&1 &
+  BIN=${2:?binary}
+  "$BIN" serve -addr 127.0.0.1:$PORT -db "$WORK/hw.db" >"$WORK/log" 2>&1 &
   PID=$! OWN=1
   HW=http://127.0.0.1:$PORT ;;
 --image)
@@ -228,6 +232,53 @@ if [ -n "$OWN" ]; then
   expect 401 "a revoked token"
   ! grep -q "$TOKEN" "$WORK/body" || fail "an answer holds the token"
   ok "login on: 401 without credentials, a token works, cannot make tokens, revoked 401"
+fi
+
+# 11. Sign-in through an OpenID Connect provider (with --binary): a second
+# server of the same binary, configured for the test provider
+# scripts/oidcmock, signed in to with curl walking the redirects.
+if [ -n "$BIN" ]; then
+  go build -o "$WORK/oidcmock" ./scripts/oidcmock || fail "cannot build scripts/oidcmock"
+  printf 'smoke-client-secret-0123456789' > "$WORK/oidc-secret"
+  printf 'smoke-oidc-admin-password' > "$WORK/oidc-admin-pw"
+  "$WORK/oidcmock" -client-id smoke -client-secret-file "$WORK/oidc-secret" -sub smoke-sub-1 -email ann@example.test >"$WORK/mock.out" &
+  MOCK=$!
+  for _ in $(seq 40); do [ -s "$WORK/mock.out" ] && break; sleep 0.1; done
+  ISSUER=$(head -1 "$WORK/mock.out")
+  P2=$((PORT + 1)) H2=http://127.0.0.1:$((PORT + 1))
+  HOOKWITNESS_ADMIN_USER=ann HOOKWITNESS_ADMIN_PASSWORD_FILE="$WORK/oidc-admin-pw" HOOKWITNESS_ADMIN_EMAIL=ann@example.test \
+    HOOKWITNESS_ADMIN_URL=$H2 HOOKWITNESS_OIDC_PROVIDERS=mock HOOKWITNESS_OIDC_MOCK_ISSUER="$ISSUER" \
+    HOOKWITNESS_OIDC_MOCK_CLIENT_ID=smoke HOOKWITNESS_OIDC_MOCK_CLIENT_SECRET_FILE="$WORK/oidc-secret" \
+    "$BIN" serve -addr 127.0.0.1:$P2 -db "$WORK/oidc.db" >"$WORK/oidc.log" 2>&1 &
+  PID2=$!
+  for _ in $(seq 60); do curl -fsS -o /dev/null "$H2/healthz" 2>/dev/null && break; sleep 0.25; done
+  grep -q "redirect_uri=$H2/admin/oidc/mock/callback" "$WORK/oidc.log" || fail "no redirect URI in the start log: $(cat "$WORK/oidc.log")"
+  echo "\$ curl $H2/admin/api/v1/login/providers"
+  providers=$(curl -sS "$H2/admin/api/v1/login/providers")
+  echo "$(jq -c . <<<"$providers")"; echo
+  [ "$(jq -c 'map({name, label})' <<<"$providers")" = '[{"name":"mock","label":"Mock"}]' ] || fail "providers: $providers"
+  echo "\$ curl -c jar -d next=/admin/ $H2/admin/oidc/mock/start"
+  to_idp=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' -c "$WORK/jar" -b "$WORK/jar" -d next=/admin/ "$H2/admin/oidc/mock/start")
+  echo "${to_idp%%\?*}?…"; echo
+  [ "${to_idp%% *}" = 303 ] || fail "start: $to_idp"
+  echo "\$ curl <the provider's authorization endpoint>"
+  back=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' "${to_idp#* }")
+  echo "${back%%\?*}?code=…&state=…"; echo
+  [ "${back%% *}" = 302 ] || fail "the provider: $back"
+  CODE=$(sed -E 's/.*[?&]code=([^&]*).*/\1/' <<<"${back#* }")
+  echo "\$ curl -b jar <the callback>"
+  done_=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' -c "$WORK/jar" -b "$WORK/jar" "${back#* }")
+  echo "$done_"; echo
+  [ "$done_" = "303 $H2/admin/" ] || fail "callback: $done_"
+  echo "\$ curl -b jar $H2/admin/api/v1/me"
+  me=$(curl -sS -b "$WORK/jar" "$H2/admin/api/v1/me")
+  echo "$(jq -c '.identities |= map({provider, email})' <<<"$me")"; echo
+  [ "$(jq -r '.name + " " + .via + " " + .identities[0].provider' <<<"$me")" = "ann session mock" ] || fail "me: $me"
+  for s in smoke-client-secret-0123456789 "$CODE"; do
+    ! grep -q -- "$s" "$WORK/oidc.log" || fail "the server log holds the client secret or the code"
+  done
+  grep -q 'msg="oidc identity linked" user=ann provider=mock email=ann@example.test' "$WORK/oidc.log" || fail "no link in the log"
+  ok "provider sign-in: start, the provider, the callback, a session as ann linked to mock; no secret or code in the log"
 fi
 
 echo "api smoke: all passed"

@@ -16,7 +16,9 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +31,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/mcp"
+	"github.com/petroladkin/hookwitness/internal/oidc"
 	"github.com/petroladkin/hookwitness/internal/replay"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -73,8 +76,14 @@ type Handler struct {
 	auth      *access.Authenticator // nil: login is off for good (tests)
 	limiter   *access.Limiter       // failed logins per client address
 	proxies   access.Proxies        // reverse proxies whose X-Forwarded-For names the client
-	assets    map[string]string     // asset path -> content hash for cache busting
-	replay    *replay.Service       // sends caught requests to targets
+	// Provider sign-in: the providers, the flows in progress, and the
+	// admin's external origin (its host passes the host check).
+	oidc        []*oidc.Provider
+	flows       *oidc.Flows
+	adminOrigin string
+	adminHost   string
+	assets      map[string]string // asset path -> content hash for cache busting
+	replay      *replay.Service   // sends caught requests to targets
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -102,6 +111,10 @@ type Options struct {
 	// MaxDBSize is the database size limit, shown with the database's
 	// size; 0: none.
 	MaxDBSize int64
+	// OIDC are the providers people may sign in with; AdminURL the admin's
+	// external origin, which their redirect URIs use (config.AdminOrigin).
+	OIDC     []*oidc.Provider
+	AdminURL string
 }
 
 // New returns the UI.
@@ -113,6 +126,10 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	}
 	for _, name := range o.Hosts {
 		h.hosts[strings.ToLower(name)] = true
+	}
+	h.oidc, h.flows, h.adminOrigin = o.OIDC, oidc.NewFlows(nil), o.AdminURL
+	if u, err := url.Parse(o.AdminURL); o.AdminURL != "" && err == nil {
+		h.adminHost = hostName(u.Host)
 	}
 	prefix := o.Prefix
 	if !o.Separate {
@@ -156,16 +173,21 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("GET "+p+"/login", h.loginPage)
 	mux.HandleFunc("POST "+p+"/login", h.login)
 	mux.HandleFunc("POST "+p+"/logout", h.logout)
+	mux.HandleFunc("POST "+p+"/oidc/{name}/start", h.oidcStart)
+	mux.HandleFunc("GET "+p+"/oidc/{name}/callback", h.oidcCallback)
 	mux.HandleFunc("POST "+p+"/theme", h.setTheme)
 	mux.HandleFunc("GET "+p+"/account", h.accountPage)
 	mux.HandleFunc("POST "+p+"/account/password", h.changePassword)
 	mux.HandleFunc("POST "+p+"/account/tokens", h.createToken)
 	mux.HandleFunc("POST "+p+"/account/tokens/{id}/revoke", h.revokeOwnToken)
+	mux.HandleFunc("POST "+p+"/account/unlink", h.unlinkOwn)
 	mux.HandleFunc("GET "+p+"/users", h.usersPage)
 	mux.HandleFunc("POST "+p+"/users", h.addUser)
 	mux.HandleFunc("POST "+p+"/users/{name}/role", h.setRole)
 	mux.HandleFunc("POST "+p+"/users/{name}/password", h.resetPassword)
 	mux.HandleFunc("POST "+p+"/users/{name}/remove", h.removeUser)
+	mux.HandleFunc("POST "+p+"/users/{name}/email", h.setEmail)
+	mux.HandleFunc("POST "+p+"/users/{name}/unlink", h.unlinkUser)
 	mux.HandleFunc("POST "+p+"/tokens/{id}/revoke", h.revokeAnyToken)
 
 	// Browsers send Sec-Fetch-Site / Origin; a form posted from another site
@@ -179,6 +201,9 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	h.replay = o.Replay
 	ao := api.Options{Prefix: prefix, Keep: o.Retention, Reserved: h.reserve, Catch: h.catch, MaxWait: h.maxWait, Stop: h.stop, Version: version.String(),
 		Access: o.Access, Replay: o.Replay, MaxDBSize: o.MaxDBSize}
+	for _, p := range o.OIDC {
+		ao.Providers = append(ao.Providers, api.Provider{Name: p.Name, Label: p.Label, Issuer: p.Issuer})
+	}
 	if o.Keys != nil {
 		ao.Keys, ao.Keyring = o.Keys, o.Keys // a nil *secret.Key must stay a nil interface
 	}
@@ -200,6 +225,27 @@ func (h *Handler) StopStreams() {
 // csp allows nothing from other origins: the UI is self-contained.
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; " +
 	"connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+
+// csp is the page's policy. With providers, a sign-in's form is answered
+// with a redirect to the provider (or to the admin's own origin), and
+// browsers hold redirects after a form to form-action too: those origins
+// are added to it, nothing else.
+func (h *Handler) csp() string {
+	if len(h.oidc) == 0 {
+		return csp
+	}
+	targets := []string{"'self'"}
+	add := func(o string) {
+		if o != "" && !slices.Contains(targets, o) {
+			targets = append(targets, o)
+		}
+	}
+	add(h.adminOrigin)
+	for _, p := range h.oidc {
+		add(p.AuthOrigin())
+	}
+	return strings.Replace(csp, "form-action 'self'", "form-action "+strings.Join(targets, " "), 1)
+}
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isMCP := r.URL.Path == h.prefix+"/mcp"
@@ -226,7 +272,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(access.With(r.Context(), id))
 	}
 	hd := w.Header()
-	hd.Set("Content-Security-Policy", csp)
+	hd.Set("Content-Security-Policy", h.csp())
 	hd.Set("X-Content-Type-Options", "nosniff")
 	hd.Set("Referrer-Policy", "same-origin")
 	if isAPI {
@@ -271,7 +317,7 @@ func (h *Handler) allowedHost(host string) bool {
 	if _, err := netip.ParseAddr(name); err == nil {
 		return true
 	}
-	return name == "localhost" || strings.HasSuffix(name, ".localhost") || h.hosts[name]
+	return name == "localhost" || strings.HasSuffix(name, ".localhost") || h.hosts[name] || name != "" && name == h.adminHost
 }
 
 // regID reads the {reg} path value: an endpoint id, or "unmatched".

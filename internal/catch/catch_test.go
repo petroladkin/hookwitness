@@ -207,6 +207,9 @@ func TestSessionCookieNeverRecorded(t *testing.T) {
 		"a=hookwitness_session":                             "a=hookwitness_session",
 		"a=1;hookwitness_session=x;b":                       "a=1;hookwitness_session=[hookwitness session];b",
 		"a=1; hookwitness_session=x; hookwitness_session=y": "a=1; hookwitness_session=[hookwitness session]; hookwitness_session=[hookwitness session]",
+		// A provider sign-in's flow cookie too.
+		"hookwitness_oidc=flow-id; a=1": "hookwitness_oidc=[hookwitness session]; a=1",
+		"hookwitness_oidc_x=y":          "hookwitness_oidc_x=y",
 	} {
 		if got := RedactSession(in); got != want {
 			t.Errorf("RedactSession(%q) = %q, want %q", in, got, want)

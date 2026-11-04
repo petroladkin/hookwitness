@@ -35,6 +35,8 @@ type Authenticator struct {
 	// nothing; made on first use (a hash costs a few milliseconds).
 	dummy     string
 	dummyOnce sync.Once
+	// matchHook, when set (tests), sees the record each login checks.
+	matchHook func(record string)
 	// changed are told when a credential is revoked or changes here.
 	changedMu sync.Mutex
 	changed   []func()
@@ -88,25 +90,39 @@ func (a *Authenticator) HashPassword(pw string) string { return a.keys.HashToken
 
 // Login checks a name and password: the user, or ErrWrongLogin (one error
 // for both), or ErrBusy. An unknown name costs a hash too.
+//
+// A user without a password (provider sign-in only) is checked against a
+// dummy record too, so the time taken does not tell "no password" from a
+// wrong one.
 func (a *Authenticator) Login(ctx context.Context, name, pw string) (store.User, error) {
 	n := strings.ToLower(strings.TrimSpace(name))
 	u, err := a.store.UserByName(ctx, n)
 	record := u.Password
 	switch {
-	case errors.Is(err, store.ErrNotFound):
+	case err == nil && u.HasPassword():
+	case err == nil || errors.Is(err, store.ErrNotFound):
 		a.dummyOnce.Do(func() { a.dummy = a.keys.HashToken("not a password of anyone") })
 		record = a.dummy
-	case err != nil:
+	default:
 		return store.User{}, err
 	}
-	ok, err := a.keys.MatchToken(record, pw)
+	ok, err := a.match(record, pw)
 	if err != nil {
 		return store.User{}, err
 	}
-	if !ok || u.ID == 0 {
+	if !ok || u.ID == 0 || !u.HasPassword() {
 		return store.User{}, ErrWrongLogin
 	}
 	return u, nil
+}
+
+// match checks a password against a record (a seam: tests see which record
+// a login checked).
+func (a *Authenticator) match(record, pw string) (bool, error) {
+	if a.matchHook != nil {
+		a.matchHook(record)
+	}
+	return a.keys.MatchToken(record, pw)
 }
 
 // StartSession records a login for u and returns the cookie's id.
@@ -249,20 +265,32 @@ func (a *Authenticator) MintFor(ctx context.Context, userID int64, name string) 
 // container's secret mount often has to be: it is worth a log line, not a
 // refusal).
 func ReadMachineToken(path string) (tok, warn string, err error) {
+	tok, warn, err = ReadSecretFile("HOOKWITNESS_API_TOKEN_FILE", path, 32)
+	if warn != "" {
+		warn = "the machine token file is readable by everyone on this machine: chmod 600 it if the machine is shared"
+	}
+	return tok, warn, err
+}
+
+// ReadSecretFile reads a secret from a file named by the variable env: one
+// line of at least min characters without spaces around it. A file readable
+// by everyone gives a warning, not a refusal. Errors name env, never the
+// file's content.
+func ReadSecretFile(env, path string, min int) (secret, warn string, err error) {
 	st, err := os.Stat(path)
 	if err != nil {
-		return "", "", fmt.Errorf("HOOKWITNESS_API_TOKEN_FILE: %w", err)
+		return "", "", fmt.Errorf("%s: %w", env, err)
 	}
 	if st.Mode().Perm()&0o004 != 0 {
-		warn = "the machine token file is readable by everyone on this machine: chmod 600 it if the machine is shared"
+		warn = env + " names a file readable by everyone on this machine: chmod 600 it if the machine is shared"
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", fmt.Errorf("HOOKWITNESS_API_TOKEN_FILE: %w", err)
+		return "", "", fmt.Errorf("%s: %w", env, err)
 	}
-	tok = strings.TrimRight(string(b), "\r\n")
-	if strings.ContainsAny(tok, "\r\n") || len(tok) < 32 || strings.TrimSpace(tok) != tok {
-		return "", "", fmt.Errorf("HOOKWITNESS_API_TOKEN_FILE %s must hold one line of at least 32 characters without spaces around it", path)
+	secret = strings.TrimRight(string(b), "\r\n")
+	if strings.ContainsAny(secret, "\r\n") || len(secret) < min || strings.TrimSpace(secret) != secret {
+		return "", "", fmt.Errorf("%s %s must hold one line of at least %d characters without spaces around it", env, path, min)
 	}
-	return tok, warn, nil
+	return secret, warn, nil
 }

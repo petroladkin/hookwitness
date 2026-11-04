@@ -456,6 +456,12 @@ details.help summary{cursor:pointer;font:600 11px/1 var(--f-data);letter-spacing
 .sub{font:600 11px/1 var(--f-data);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:32px 0 6px}
 /* The login form stands alone, centred in the column. */
 .login>*{max-width:420px;margin-inline:auto}
+/* provider sign-in: a column of buttons above the password form */
+.login .providers{display:grid;gap:10px;margin-bottom:14px}
+.login .providers form{margin:0}
+.btn.provider{width:100%;justify-content:center}
+.login .divider{display:flex;align-items:center;gap:10px;margin:4px 0 0;color:var(--muted);font:600 11px/1 var(--f-data);letter-spacing:.1em;text-transform:uppercase}
+.login .divider::before,.login .divider::after{content:"";flex:1;border-top:1px solid var(--rule)}
 .secret-once{font-family:var(--f-data);width:100%}
 
 /* An endpoint's on/off switch, and an endpoint that is off. */

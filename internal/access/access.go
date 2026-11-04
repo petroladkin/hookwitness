@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -99,6 +100,43 @@ func CheckName(name string) (string, error) {
 		return "", &ErrInvalid{"name", "a name is 1 to 64 characters: letters, digits, . _ -"}
 	}
 	return n, nil
+}
+
+// CheckEmail returns an email address lower-cased when it is 3-254 bytes,
+// exactly one @, no spaces or control characters, and a domain with a dot.
+// Provider sign-in compares the whole address without case.
+func CheckEmail(email string) (string, error) {
+	e := strings.ToLower(strings.TrimSpace(email))
+	local, domain, ok := strings.Cut(e, "@")
+	if !ok || len(e) < 3 || len(e) > 254 || local == "" || strings.Contains(domain, "@") || !strings.Contains(domain, ".") ||
+		strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") ||
+		strings.ContainsFunc(e, func(r rune) bool { return r <= 0x20 || r == 0x7f || unicode.IsSpace(r) }) {
+		return "", &ErrInvalid{"email", "an email is an address such as ann@example.com"}
+	}
+	return e, nil
+}
+
+// NameFromEmail derives a user name from an email's local part: lower-case,
+// characters outside a-z 0-9 . _ - become -, at most 64 ("user" when
+// nothing is left). The store adds -2, -3... when it is taken.
+func NameFromEmail(email string) string {
+	local, _, _ := strings.Cut(strings.ToLower(email), "@")
+	var b strings.Builder
+	for _, r := range local {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	n := b.String()
+	if len(n) > 64 {
+		n = n[:64]
+	}
+	if strings.Trim(n, "-._") == "" {
+		return "user"
+	}
+	return n
 }
 
 // CheckTokenName validates the name of a personal token: 1-64 printable

@@ -247,6 +247,12 @@ func TestRouteMatrix(t *testing.T) {
 	for _, pat := range e.h.api.Patterns() {
 		method, p, _ := strings.Cut(pat, " ")
 		p = fill(p)
+		if p == "/admin/api/v1/login/providers" { // open: the login page's providers
+			if got := e.req(method, p, "", "", nil).Code; got != http.StatusOK {
+				t.Errorf("%s %s without credentials: %d, want 200", method, p, got)
+			}
+			continue
+		}
 		body := func() io.Reader { return strings.NewReader("{}") }
 		ct := []string{"Content-Type", "application/json"}
 		call := func(cookie, token string) int {

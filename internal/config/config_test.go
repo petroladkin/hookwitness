@@ -268,3 +268,88 @@ func TestMaxDBSize(t *testing.T) {
 		}
 	}
 }
+
+// OpenID Connect providers: one valid configuration, the admin origin
+// rules, and every invalid case naming its variable.
+func TestOIDCProviders(t *testing.T) {
+	base := map[string]string{
+		"HOOKWITNESS_ADMIN_URL":                      "https://hooks-admin.example.test/",
+		"HOOKWITNESS_OIDC_PROVIDERS":                 "google, entra",
+		"HOOKWITNESS_OIDC_GOOGLE_ISSUER":             "https://accounts.google.com",
+		"HOOKWITNESS_OIDC_GOOGLE_CLIENT_ID":          "gid.apps.example",
+		"HOOKWITNESS_OIDC_GOOGLE_CLIENT_SECRET_FILE": "/run/secrets/google",
+		"HOOKWITNESS_OIDC_GOOGLE_ALLOWED_DOMAINS":    "Example.TEST, corp.example.test",
+		"HOOKWITNESS_OIDC_ENTRA_ISSUER":              "https://login.microsoftonline.com/tenant-id/v2.0",
+		"HOOKWITNESS_OIDC_ENTRA_CLIENT_ID":           "eid",
+		"HOOKWITNESS_OIDC_ENTRA_CLIENT_SECRET_FILE":  "/run/secrets/entra",
+		"HOOKWITNESS_OIDC_ENTRA_LABEL":               "Microsoft",
+	}
+	with := func(changes map[string]string) map[string]string {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range changes {
+			if v == "<unset>" {
+				delete(m, k)
+			} else {
+				m[k] = v
+			}
+		}
+		return m
+	}
+	c, err := Parse(nil, env(base), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.OIDC) != 2 || c.OIDC[0].Name != "google" || c.OIDC[0].Label != "Google" || c.OIDC[1].Label != "Microsoft" ||
+		!reflect.DeepEqual(c.OIDC[0].AllowedDomains, []string{"example.test", "corp.example.test"}) || c.OIDC[1].AllowedDomains != nil {
+		t.Fatalf("providers %+v", c.OIDC)
+	}
+	if got := c.RedirectURI(c.OIDC[0]); got != "https://hooks-admin.example.test/admin/oidc/google/callback" {
+		t.Fatalf("redirect URI %q", got)
+	}
+	// The admin origin: -admin-url, else a path-less public URL on the shared
+	// listener, else refused.
+	c, err = Parse(nil, env(with(map[string]string{"HOOKWITNESS_ADMIN_URL": "<unset>", "HOOKWITNESS_PUBLIC_URL": "https://hooks.example.test"})), io.Discard)
+	if err != nil || c.RedirectURI(c.OIDC[0]) != "https://hooks.example.test/admin/oidc/google/callback" {
+		t.Fatalf("from the public URL: %v %+v", err, c)
+	}
+	c, err = Parse([]string{"-admin-addr", "127.0.0.1:8081", "-admin-prefix", "/"}, env(base), io.Discard)
+	if err != nil || c.RedirectURI(c.OIDC[0]) != "https://hooks-admin.example.test/oidc/google/callback" {
+		t.Fatalf("admin at the root of its own listener: %v %+v", err, c)
+	}
+	if c, err := Parse(nil, env(nil), io.Discard); err != nil || c.OIDC != nil {
+		t.Fatalf("no providers: %v %+v", err, c.OIDC)
+	}
+	for _, bad := range []struct {
+		name    string
+		changes map[string]string
+		args    []string
+		want    string
+	}{
+		{"no admin origin", map[string]string{"HOOKWITNESS_ADMIN_URL": "<unset>"}, nil, "OIDC needs the admin's address: set -admin-url / HOOKWITNESS_ADMIN_URL"},
+		{"a public URL with a path", map[string]string{"HOOKWITNESS_ADMIN_URL": "<unset>", "HOOKWITNESS_PUBLIC_URL": "https://example.test/hooks"}, nil, "OIDC needs the admin's address"},
+		{"a public URL with the admin on its own listener", map[string]string{"HOOKWITNESS_ADMIN_URL": "<unset>", "HOOKWITNESS_PUBLIC_URL": "https://example.test"}, []string{"-admin-addr", "127.0.0.1:8081"}, "OIDC needs the admin's address"},
+		{"an admin URL with a path", map[string]string{"HOOKWITNESS_ADMIN_URL": "https://example.test/admin"}, nil, "invalid admin URL"},
+		{"an admin URL with a query", map[string]string{"HOOKWITNESS_ADMIN_URL": "https://example.test?x=1"}, nil, "invalid admin URL"},
+		{"a bad name", map[string]string{"HOOKWITNESS_OIDC_PROVIDERS": "Google"}, nil, "HOOKWITNESS_OIDC_PROVIDERS: invalid name"},
+		{"a name twice", map[string]string{"HOOKWITNESS_OIDC_PROVIDERS": "google,google"}, nil, "HOOKWITNESS_OIDC_PROVIDERS: google is listed twice"},
+		{"no issuer", map[string]string{"HOOKWITNESS_OIDC_ENTRA_ISSUER": "<unset>"}, nil, "HOOKWITNESS_OIDC_ENTRA_ISSUER: want the issuer URL"},
+		{"an http issuer", map[string]string{"HOOKWITNESS_OIDC_GOOGLE_ISSUER": "http://accounts.example.test"}, nil, "HOOKWITNESS_OIDC_GOOGLE_ISSUER: want an https URL (http only on a loopback host)"},
+		{"an issuer with a query", map[string]string{"HOOKWITNESS_OIDC_GOOGLE_ISSUER": "https://idp.example.test/?x=1"}, nil, "HOOKWITNESS_OIDC_GOOGLE_ISSUER: want no query"},
+		{"no client id", map[string]string{"HOOKWITNESS_OIDC_GOOGLE_CLIENT_ID": "<unset>"}, nil, "HOOKWITNESS_OIDC_GOOGLE_CLIENT_ID"},
+		{"no secret file", map[string]string{"HOOKWITNESS_OIDC_ENTRA_CLIENT_SECRET_FILE": "<unset>"}, nil, "HOOKWITNESS_OIDC_ENTRA_CLIENT_SECRET_FILE"},
+		{"a long label", map[string]string{"HOOKWITNESS_OIDC_GOOGLE_LABEL": strings.Repeat("x", 33)}, nil, "HOOKWITNESS_OIDC_GOOGLE_LABEL"},
+		{"a wildcard domain", map[string]string{"HOOKWITNESS_OIDC_GOOGLE_ALLOWED_DOMAINS": "*.example.test"}, nil, "HOOKWITNESS_OIDC_GOOGLE_ALLOWED_DOMAINS: invalid domain"},
+		{"an address as a domain", map[string]string{"HOOKWITNESS_OIDC_GOOGLE_ALLOWED_DOMAINS": "ann@example.test"}, nil, "HOOKWITNESS_OIDC_GOOGLE_ALLOWED_DOMAINS: invalid domain"},
+	} {
+		if _, err := Parse(bad.args, env(with(bad.changes)), io.Discard); err == nil || !strings.Contains(err.Error(), bad.want) {
+			t.Errorf("%s: %v, want %q", bad.name, err, bad.want)
+		}
+	}
+	// A loopback http issuer is allowed (a local provider, tests).
+	if _, err := Parse(nil, env(with(map[string]string{"HOOKWITNESS_OIDC_GOOGLE_ISSUER": "http://127.0.0.1:9999"})), io.Discard); err != nil {
+		t.Fatalf("a loopback http issuer: %v", err)
+	}
+}

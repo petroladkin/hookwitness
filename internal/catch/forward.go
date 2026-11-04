@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/forward"
 	wsend "github.com/petroladkin/hookwitness/internal/send"
@@ -70,7 +69,7 @@ func (h *Handler) forwardOut(ctx context.Context, w http.ResponseWriter, r *http
 		note.Fallback = true
 		answer = h.failureAnswer(req, pl, ex.Kind)
 	}
-	answer = answer.Protect(access.CookieName).NoSniff()
+	answer = answer.Protect(adminCookies...).NoSniff()
 	sent, withheld := answer.AsSent(r.Method)
 	pl.out.SetReply(sent)
 	pl.out.Withheld = withheld

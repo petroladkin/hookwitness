@@ -51,6 +51,34 @@ func Expired(created, seen, now time.Time) bool {
 	return now.Sub(seen) > IdleLimit || now.Sub(created) > AbsoluteLimit
 }
 
+// FirstPasswordWindow is how young a session must be to set a first
+// password without a current one (a provider user): a stolen session
+// cookie must not become a lasting password. A variable: tests shorten it.
+var FirstPasswordWindow = 10 * time.Minute
+
+// FlowCookieName binds a provider sign-in to the browser that started it.
+const FlowCookieName = "hookwitness_oidc"
+
+// FlowCookie is the provider sign-in's cookie holding a flow id (an empty
+// id clears it): sent only to <prefix>/oidc/, for the flow's 10 minutes,
+// SameSite=Lax because the provider's redirect back is a cross-site
+// top-level GET (Strict would drop it).
+func FlowCookie(id, prefix string, secure bool) *http.Cookie {
+	c := &http.Cookie{
+		Name:     FlowCookieName,
+		Value:    id,
+		Path:     prefix + "/oidc/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   600,
+	}
+	if id == "" {
+		c.MaxAge = -1
+	}
+	return c
+}
+
 // CookiePath is the cookie's Path for an admin prefix: the browser then
 // sends it only to the admin ("/" when the admin is at the root of its own
 // listener).

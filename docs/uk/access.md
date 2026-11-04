@@ -130,7 +130,7 @@ TOKEN=$(curl -s -b hw.cookies -X POST http://127.0.0.1:8080/admin/api/v1/me/toke
   -H 'Content-Type: application/json' -d '{"name":"ci"}' | jq -r .token)
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/admin/api/v1/endpoints
 # 401
-curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/admin/api/v1/me | jq -c .
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/admin/api/v1/me | jq -c '{login, name, role, via}'
 # {"login":true,"name":"ann","role":"admin","via":"token"}
 ```
 
@@ -163,6 +163,97 @@ claude mcp add hookwitness -- hookwitness mcp -url http://127.0.0.1:8080 -token-
 user. Він закриває API і MCP навіть тоді, коли користувачів ще немає (пускає
 лише токен); вебінтерфейс тоді лишається відкритим, з рядком «no login»,
 доки не з'явиться перший користувач.
+
+## Вхід через Google, Microsoft Entra ID чи іншого провайдера
+
+Люди можуть входити через провайдера OpenID Connect (Google Workspace,
+Microsoft Entra ID, Keycloak, Authentik, GitLab, будь-якого провайдера з
+discovery), поруч зі своїми паролями.
+
+**Хто входить.** Типово лише ті, кого додав адміністратор: дайте їм email на
+сторінці Users (або `hookwitness user add pat -email pat@example.com
+-no-password`). Під час першого входу підтверджена провайдером адреса
+пов'язує людину з цим користувачем; далі вирішує ідентичність у провайдера
+(її issuer і subject), тож змінена в провайдера адреса лишається тим самим
+акаунтом. Провайдер може також впускати будь-кого з ваших поштових доменів
+(`_ALLOWED_DOMAINS`): нова адреса такого домену стає користувачем із роллю
+`user`, названим за адресою, без пароля. Ролі лишаються локальними: їх
+змінює адміністратор на сторінці Users. Вхід через провайдера починає
+працювати лише тоді, коли вже є перший адміністратор.
+
+Перевіряйте email, коли вписуєте: провайдер, що підтвердив адресу, віддає
+акаунт із цією адресою її власникові. Дозволяйте лише домени, якими керуєте
+(ніколи `gmail.com`), і лише в провайдерах, що перевіряють адреси.
+
+**Налаштування.** По одній назві на провайдера в
+`HOOKWITNESS_OIDC_PROVIDERS`, далі для кожної назви (великими літерами) її
+issuer, client id і файл із секретом клієнта; це лише змінні середовища:
+
+<!-- docs-check: skip: needs an OpenID Connect provider -->
+```sh
+docker run -d --name hookwitness -p 127.0.0.1:8080:8080 -v hookwitness:/data \
+  -v ./google-secret.txt:/run/secrets/google:ro \
+  -e HOOKWITNESS_ADMIN_URL=https://hooks.example.com \
+  -e HOOKWITNESS_OIDC_PROVIDERS=google \
+  -e HOOKWITNESS_OIDC_GOOGLE_ISSUER=https://accounts.google.com \
+  -e HOOKWITNESS_OIDC_GOOGLE_CLIENT_ID=1234-abc.apps.googleusercontent.com \
+  -e HOOKWITNESS_OIDC_GOOGLE_CLIENT_SECRET_FILE=/run/secrets/google \
+  -e HOOKWITNESS_OIDC_GOOGLE_ALLOWED_DOMAINS=example.com \
+  ghcr.io/petroladkin/hookwitness:0.2
+```
+
+| Змінна | Значення |
+|---|---|
+| `HOOKWITNESS_OIDC_PROVIDERS` | назви через кому, кожна з `a-z0-9`, напр. `google,entra` |
+| `HOOKWITNESS_OIDC_<NAME>_ISSUER` | issuer, точно як у документі discovery провайдера (`https://`; `http://` лише на loopback-хості) |
+| `HOOKWITNESS_OIDC_<NAME>_CLIENT_ID` | client id, який дав провайдер |
+| `HOOKWITNESS_OIDC_<NAME>_CLIENT_SECRET_FILE` | файл із секретом клієнта, один рядок; читається раз на старті, ніде не зберігається й не логується |
+| `HOOKWITNESS_OIDC_<NAME>_LABEL` | текст кнопки після "Sign in with" (типово: назва з великої літери) |
+| `HOOKWITNESS_OIDC_<NAME>_ALLOWED_DOMAINS` | поштові домени, нові люди з яких стають користувачами, через кому; без них — лише користувачі, яких додав адміністратор |
+
+**Redirect URI.** Провайдер повертає людей на
+`<адреса адмінки><префікс>/oidc/<name>/callback`. Адреса адмінки — це
+`-admin-url` (`HOOKWITNESS_ADMIN_URL`) або `-public-url`, коли адмінка ділить
+із ендпоінтами порт і ця адреса без шляху; без жодної з них сервер із
+провайдерами не стартує. Лог старту друкує точний redirect URI кожного
+провайдера: вставте його в консоль провайдера. Вхід починається на цій
+адресі: кнопка, натиснута на іншій адресі сервера, спершу веде туди.
+
+**Google.** У консолі Google Cloud створіть OAuth-клієнт типу *Web
+application* з redirect URI з логу старту; для Workspace поставте екран
+згоди *Internal*, щоб входили лише акаунти вашої організації. Issuer:
+`https://accounts.google.com`.
+
+**Microsoft Entra ID.** Зареєструйте застосунок *лише для цього каталогу
+організації* (single tenant), додайте *Web* redirect URI з логу старту,
+створіть секрет клієнта, а в *Token configuration* додайте необов'язкові
+claims `email` і `xms_edov` (Entra не надсилає `email_verified`; `xms_edov`
+каже, що адреса належить домену). Issuer:
+`https://login.microsoftonline.com/<tenant id>/v2.0`, ніколи не `common`.
+Нова реєстрація застосунку дає всім нові ідентичності: спершу відв'яжіть
+старі, інакше їхні входи відхилятимуться як прив'язані деінде.
+
+**Інший провайдер.** Keycloak (`https://<host>/realms/<realm>`), Authentik
+(`https://<host>/application/o/<slug>/`), GitLab (`https://gitlab.com`) або
+будь-який провайдер з discovery: конфіденційний клієнт з authorization code
+flow і PKCE, scopes `openid email profile` і redirect URI з логу старту.
+Налаштовуйте лише провайдерів, що підтверджують поштові адреси.
+
+**Користувачі без пароля** входять лише через провайдера; сторінка Users це
+показує. Перший пароль можна задати на сторінці акаунта протягом 10 хвилин
+після входу; адміністратор може задати його будь-коли, як і
+`hookwitness user passwd` на сервері. Ідентичності користувача видно на його
+сторінці акаунта і на сторінці Users; **Unlink** прибирає одну з них і
+завершує всі входи цього користувача (власний останній спосіб входу
+відв'язати не можна).
+
+**Вихід** завершує вхід лише тут: наступний вхід може пройти через
+провайдера без запиту. Людина, яку вимкнули в провайдера, лишається
+залогіненою, доки вхід не скінчиться (доба без дій, щонайбільше тиждень):
+видаліть або відв'яжіть її тут, щоб завершити одразу. Коли провайдер
+недоступний, паролі працюють; тримайте для цього пароль першого
+адміністратора (`HOOKWITNESS_ADMIN_USER` разом із `HOOKWITNESS_ADMIN_EMAIL`
+дає йому й email).
 
 ## За зворотним проксі
 
@@ -198,8 +289,11 @@ hookwitness user list
 (`-db` / `HOOKWITNESS_DB`, `HOOKWITNESS_SECRET_KEY` або файл `.key` поруч із
 базою). Коди виходу, для скриптів: `0` готово, `1` збій (база, ключ), `2`
 неправильний виклик (погане ім'я, короткий пароль), `3` немає такого
-користувача, `4` відмовлено (ім'я зайняте або це останній адміністратор).
-`user add` без `--admin` не може створити першого користувача.
+користувача, `4` відмовлено (ім'я чи email зайняті або це останній
+адміністратор). `user add` без `--admin` не може створити першого
+користувача. З провайдерами: `user add <name> -email <адреса> [-no-password]`,
+`user email <name> [<адреса>]` (без адреси очищує), `user unlink <name>
+<провайдер чи issuer>`; `user list` показує email і способи входу кожного.
 
 ## Чого ніколи не видно
 
@@ -211,8 +305,10 @@ hookwitness user list
 Cookie не зважають на порти, тож браузер, який увійшов в адмінку на іншому
 порту того самого хоста, надсилає cookie входу й на шляхи ендпоінтів.
 Hookwitness його ніколи не зберігає: у заголовку `Cookie` упійманого запиту
-значення `hookwitness_session` читається як `[hookwitness session]`, а більше
-нічого не змінено.
+значення `hookwitness_session` (і `hookwitness_oidc` входу через провайдера)
+читається як `[hookwitness session]`, а більше нічого не змінено. Нічого з
+того, що видає провайдер (коди, токени), не зберігається й не логується;
+секрет клієнта провайдера читається з файлу й тримається лише в пам'яті.
 
 ## Як знову вимкнути вхід
 

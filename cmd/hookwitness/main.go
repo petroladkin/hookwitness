@@ -25,6 +25,7 @@ import (
 	"github.com/petroladkin/hookwitness/internal/forward"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/mcp"
+	"github.com/petroladkin/hookwitness/internal/oidc"
 	"github.com/petroladkin/hookwitness/internal/replay"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/send"
@@ -96,6 +97,20 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	if err != nil {
 		fmt.Fprintln(stderr, "hookwitness:", err)
 		return 2
+	}
+	// The providers' client secrets: read once, kept in memory only.
+	secrets := map[string]string{}
+	var secretWarns []string
+	for _, p := range cfg.OIDC {
+		s, warn, err := access.ReadSecretFile(p.Env+"CLIENT_SECRET_FILE", p.SecretFile, 1)
+		if err != nil {
+			fmt.Fprintln(stderr, "hookwitness:", err)
+			return 2
+		}
+		secrets[p.Name] = s
+		if warn != "" {
+			secretWarns = append(secretWarns, warn)
+		}
 	}
 	log := newLogger(cfg.LogFormat, stderr)
 
@@ -194,12 +209,31 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	if machine != "" {
 		attrs = append(attrs, "machine_token", "on")
 	}
+	if len(cfg.OIDC) > 0 {
+		var names []string
+		for _, p := range cfg.OIDC {
+			names = append(names, p.Name)
+		}
+		attrs = append(attrs, "oidc", strings.Join(names, ","))
+	}
 	log.Info("hookwitness started", attrs...)
 	if boot != nil {
 		log.Info(boot[0].(string), boot[1:]...)
 	}
 	if machineWarn != "" {
 		log.Warn(machineWarn)
+	}
+	// The redirect URI to register at each provider; the client id, never
+	// the secret.
+	for _, p := range cfg.OIDC {
+		log.Info("oidc provider configured", "name", p.Name, "issuer", p.Issuer, "client_id", p.ClientID,
+			"redirect_uri", cfg.RedirectURI(p), "allowed_domains", strings.Join(p.AllowedDomains, ","))
+	}
+	for _, w := range secretWarns {
+		log.Warn(w)
+	}
+	if len(cfg.OIDC) > 0 && len(users) == 0 {
+		log.Warn("OIDC providers are configured but login is off: add the first admin (HOOKWITNESS_ADMIN_USER, hookwitness user add, or the Users page); until then nobody signs in through a provider")
 	}
 	if len(users) == 0 && !loopback(adminLn.Addr()) {
 		log.Warn("the admin is open without login on this address: if it is reachable, anyone can read every caught request and change every endpoint; "+
@@ -262,11 +296,18 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 			log.Info(line[0].(string), line[1:]...)
 		}
 	}
+	var providers []*oidc.Provider
+	for _, p := range cfg.OIDC {
+		providers = append(providers, oidc.NewProvider(oidc.Config{Name: p.Name, Label: p.Label, Issuer: p.Issuer, ClientID: p.ClientID,
+			ClientSecret: secrets[p.Name], RedirectURI: cfg.RedirectURI(p), AllowedDomains: p.AllowedDomains}))
+	}
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, Separate: separate, PublicURL: cfg.PublicURL, CatchAddr: ln.Addr().String(),
 		MaxBody: cfg.MaxBody, Retention: keep, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
 		Access: auth, Proxies: cfg.TrustedProxies, Replay: replays, MCPMaxSessions: cfg.MCPMaxSessions, MaxDBSize: cfg.MaxDBSize,
+		OIDC: providers, AdminURL: cfg.AdminOrigin(),
 	})
+	ui.DiscoverProviders(ctx)
 	o := server.Options{DB: st, Log: log, AdminPrefix: cfg.AdminPrefix, Admin: ui, Catch: catcher}
 	if !separate {
 		err = server.Serve(ctx, ln, server.New(o), log, ui.StopStreams, catcher.Stop)
@@ -344,12 +385,18 @@ func bootstrap(ctx context.Context, st *store.Store, auth *access.Authenticator,
 	if err := access.CheckPassword(pw); err != nil {
 		return nil, fmt.Errorf("HOOKWITNESS_ADMIN_PASSWORD_FILE: %w", err)
 	}
+	email := ""
+	if e := getenv("HOOKWITNESS_ADMIN_EMAIL"); e != "" {
+		if email, err = access.CheckEmail(e); err != nil {
+			return nil, fmt.Errorf("HOOKWITNESS_ADMIN_EMAIL: %w", err)
+		}
+	}
 	if on, err := st.HasUsers(ctx); err != nil {
 		return nil, err
 	} else if on {
 		return []any{"admin bootstrap skipped: the database already has users (the password file is read only then)", "user", n}, nil
 	}
-	if _, err := st.AddUser(ctx, n, store.RoleAdmin, auth.HashPassword(pw)); err != nil {
+	if _, err := st.AddUserWithEmail(ctx, n, store.RoleAdmin, auth.HashPassword(pw), email); err != nil {
 		return nil, err
 	}
 	return []any{"admin user created from HOOKWITNESS_ADMIN_USER: login is on", "user", n}, nil

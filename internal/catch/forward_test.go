@@ -112,7 +112,7 @@ func final(t *testing.T, st *store.Store, ep int64, n int) []store.Request {
 func TestForwardThroughTheCatcher(t *testing.T) {
 	gz := "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff"
 	fr := newFakeReceiver(t, answering("HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nSet-Cookie: "+access.CookieName+"=stolen\r\n"+
-		"Set-Cookie: app=1\r\nContent-Security-Policy: default-src 'self'\r\nContent-Encoding: gzip\r\nConnection: close\r\n"+
+		"Set-Cookie: "+access.FlowCookieName+"=planted; Path=/admin/\r\nSet-Cookie: app=1\r\nContent-Security-Policy: default-src 'self'\r\nContent-Encoding: gzip\r\nConnection: close\r\n"+
 		"Content-Length: 10\r\n\r\n"+gz))
 	h, st, _ := setup(t, 1<<20)
 	url := serve(t, h)
@@ -158,7 +158,7 @@ func TestForwardThroughTheCatcher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.Status != 302 || row.Reason != "Found" || len(row.Headers) != 7 || row.Headers[2].Value != "app=1" || string(row.Body) != gz ||
+	if row.Status != 302 || row.Reason != "Found" || len(row.Headers) != 8 || row.Headers[3].Value != "app=1" || string(row.Body) != gz ||
 		row.Line != "POST /in/hooks?b=2&a=1 HTTP/1.1" || row.ErrorKind != "" {
 		t.Fatalf("exchange %+v", row)
 	}

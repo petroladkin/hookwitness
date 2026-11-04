@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -21,11 +22,13 @@ const (
 )
 
 // User is a person who may use the admin once login is on. Password is the
-// stored hash record; it never leaves the server.
+// stored hash record ("" : none, provider sign-in only); it never leaves the
+// server.
 type User struct {
 	ID                int64
 	Name              string
 	Role              string
+	Email             string // lower-case; "" when not set
 	Password          string
 	CreatedAt         time.Time
 	PasswordChangedAt time.Time
@@ -55,6 +58,9 @@ type Token struct {
 	LastUsedAt time.Time // zero when never used
 }
 
+// HasPassword reports whether the user can log in with a password.
+func (u User) HasPassword() bool { return u.Password != "" }
+
 // HasUsers reports whether any user exists: login is on.
 func (s *Store) HasUsers(ctx context.Context) (bool, error) {
 	var n int
@@ -64,12 +70,35 @@ func (s *Store) HasUsers(ctx context.Context) (bool, error) {
 
 // AddUser creates a user; name is already lower-case and valid.
 func (s *Store) AddUser(ctx context.Context, name, role, password string) (User, error) {
+	return s.AddUserWithEmail(ctx, name, role, password, "")
+}
+
+// AddUserWithEmail creates a user with an email ("" : none, a valid
+// address otherwise, stored lower-case) and a password record ("" : none).
+// A taken name is ErrExists, a taken email ErrEmailTaken.
+func (s *Store) AddUserWithEmail(ctx context.Context, name, role, password, email string) (User, error) {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
-	now := time.Now().UTC()
-	res, err := s.db.ExecContext(ctx, `INSERT INTO users (name, role, password, created_at, password_changed_at) VALUES (?, ?, ?, ?, ?)`,
-		name, role, password, millis(now), millis(now))
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+	u, err := addUser(ctx, tx, name, role, password, email, time.Now())
+	if err != nil {
+		return User{}, err
+	}
+	return u, tx.Commit()
+}
+
+func addUser(ctx context.Context, tx *sql.Tx, name, role, password, email string, now time.Time) (User, error) {
+	email = strings.ToLower(email)
+	res, err := tx.ExecContext(ctx, `INSERT INTO users (name, role, password, created_at, password_changed_at, email) VALUES (?, ?, ?, ?, ?, ?)`,
+		name, role, password, millis(now), millis(now), nullable(email))
+	if err != nil {
+		if isUnique(err) && strings.Contains(err.Error(), "email") {
+			return User{}, ErrEmailTaken
+		}
 		if isUnique(err) {
 			return User{}, ErrExists
 		}
@@ -80,15 +109,22 @@ func (s *Store) AddUser(ctx context.Context, name, role, password string) (User,
 		return User{}, err
 	}
 	t := fromMillis(millis(now))
-	return User{ID: id, Name: name, Role: role, Password: password, CreatedAt: t, PasswordChangedAt: t}, nil
+	return User{ID: id, Name: name, Role: role, Email: email, Password: password, CreatedAt: t, PasswordChangedAt: t}, nil
 }
 
-const userCols = `id, name, role, password, created_at, password_changed_at`
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+const userCols = `id, name, role, COALESCE(email, ''), password, created_at, password_changed_at`
 
 func scanUser(sc interface{ Scan(...any) error }) (User, error) {
 	var u User
 	var created, changed int64
-	err := sc.Scan(&u.ID, &u.Name, &u.Role, &u.Password, &created, &changed)
+	err := sc.Scan(&u.ID, &u.Name, &u.Role, &u.Email, &u.Password, &created, &changed)
 	u.CreatedAt, u.PasswordChangedAt = fromMillis(created), fromMillis(changed)
 	return u, err
 }
@@ -123,7 +159,7 @@ func (s *Store) Users(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var u User
 		var created, changed int64
-		if err := rows.Scan(&u.ID, &u.Name, &u.Role, &u.Password, &created, &changed, &u.Tokens); err != nil {
+		if err := rows.Scan(&u.ID, &u.Name, &u.Role, &u.Email, &u.Password, &created, &changed, &u.Tokens); err != nil {
 			return nil, err
 		}
 		u.CreatedAt, u.PasswordChangedAt = fromMillis(created), fromMillis(changed)
