@@ -263,7 +263,8 @@ that makes it false.
   a rendered page.
 - `internal/catch` — records and answers caught requests (body limit, 413,
   404 + Unmatched keeping a body's first 64 KiB; bodies held at once bounded
-  by `-max-inflight`, over it 503 "busy" without the body); runs checks, lets the store decide the rule inside the
+  by `-max-inflight`, over it 503 "busy" without the body; a request the
+  store cannot keep 503 with `Retry-After`, the error logged); runs checks, lets the store decide the rule inside the
   counter's transaction (exact under concurrency), then replies (with
   `Content-Security-Policy: sandbox` always, next to an endpoint's own
   policy, `nosniff` unless the endpoint sets it, and never a `Set-Cookie` of

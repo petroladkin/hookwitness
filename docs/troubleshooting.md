@@ -101,6 +101,15 @@ without its body, and the register says **Busy**; a sender that retries gets
 through. If this happens under normal load, raise the limit
 (`HOOKWITNESS_MAX_INFLIGHT=1GiB`).
 
+## A request got 503 "could not be stored"
+
+The database did not take the request, and nothing of it is kept. The
+answer is `503` with `Retry-After: 5`, so a sender that retries gets it
+kept once the database works again. The server's log says why, on a line
+`catch: request not stored` or `catch: endpoint lookup failed`: a full
+disk, a volume that fails, or another program holding the database file
+locked.
+
 ## My requests land in Unmatched with 404
 
 The path does not match an endpoint exactly. Compare them in the Unmatched

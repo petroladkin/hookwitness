@@ -3,6 +3,7 @@ package catch
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"io"
 	"log/slog"
 	"net/http"
@@ -170,6 +171,43 @@ func TestUnreadableBodyIsNotKept(t *testing.T) {
 	}
 	if e, _ := st.Endpoint(context.Background(), ep.ID); e.Count != 0 {
 		t.Fatal("a request whose body could not be read must not be kept as evidence")
+	}
+}
+
+// TestNotKeptAnswers503: a request the store cannot keep, at the endpoint's
+// lookup or when it is stored, is answered 503 with Retry-After (senders
+// retry it), and the log says why.
+func TestNotKeptAnswers503(t *testing.T) {
+	for _, c := range []struct{ name, broken, logged string }{
+		{"lookup", `ALTER TABLE endpoints RENAME TO gone`, "endpoint lookup failed"},
+		{"store", `ALTER TABLE requests RENAME TO gone`, "request not stored"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "hw.db")
+			st, err := store.Open(context.Background(), p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			var logs bytes.Buffer
+			h := &Handler{Store: st, Live: live.New(), Log: slog.New(slog.NewTextHandler(&logs, nil)), MaxBody: 1 << 20, Retention: store.Keep{Normal: 1000}}
+			st.CreateEndpoint(context.Background(), "/x")
+			db, err := sql.Open("sqlite", p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err := db.Exec(c.broken); err != nil {
+				t.Fatal(err)
+			}
+			rec := send(h, "POST", "/x", strings.NewReader(`{"a":1}`))
+			if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != retryAfter {
+				t.Fatalf("status %d, Retry-After %q; want 503 and %s", rec.Code, rec.Header().Get("Retry-After"), retryAfter)
+			}
+			if l := logs.String(); !strings.Contains(l, c.logged) || !strings.Contains(l, "no such table") {
+				t.Fatalf("the log does not say why: %s", l)
+			}
+		})
 	}
 }
 
