@@ -118,8 +118,8 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	case errors.Is(err, store.ErrNotFound) || off:
 		endpointID = store.Unmatched
 	case err != nil:
-		h.Log.Error("catch: endpoint lookup failed", "path", p, "err", err)
-		http.Error(w, "storage error", http.StatusInternalServerError)
+		h.Log.Error("catch: endpoint lookup failed; request not kept, answered 503", "method", r.Method, "path", p, "err", err)
+		notKept(w)
 		return
 	}
 
@@ -159,8 +159,8 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 		err = h.Store.AddRequest(ctx, req, h.Retention, nil)
 	}
 	if err != nil {
-		h.Log.Error("catch: request not stored", "method", r.Method, "path", p, "err", err)
-		http.Error(w, "storage error", http.StatusInternalServerError)
+		h.Log.Error("catch: request not stored; answered 503", "method", r.Method, "path", p, "err", err)
+		notKept(w)
 		return
 	}
 	h.Live.Publish(req.EndpointID)
@@ -441,6 +441,14 @@ const unmatchedHead = 64 << 10
 
 // retryAfter is what a busy answer asks the sender to wait, in seconds.
 const retryAfter = "5"
+
+// notKept answers a request the store could not keep (the caller logs
+// why): 503 with Retry-After, which senders retry, so the delivery is not
+// lost with it.
+func notKept(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", retryAfter)
+	http.Error(w, "the request could not be stored; retry later", http.StatusServiceUnavailable)
+}
 
 func busyOutcome() emulate.Outcome {
 	return emulate.Outcome{Source: emulate.FromBusy, Action: emulate.ActReply, Status: http.StatusServiceUnavailable,
