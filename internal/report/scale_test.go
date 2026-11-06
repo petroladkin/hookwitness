@@ -42,7 +42,7 @@ func bigRegister(tb testing.TB, n int) (*store.Store, int64) {
 			Verdict:  "pass",
 			Verdicts: `[{"check":1,"label":"GitHub signature","result":"pass","reason":"signature matches","at":"2026-10-11T12:00:00Z"}]`,
 		}
-		if err := st.AddRequest(ctx, r, n+1, nil); err != nil {
+		if err := st.AddRequest(ctx, r, store.Keep{Normal: n + 1}, nil); err != nil {
 			tb.Fatal(err)
 		}
 	}

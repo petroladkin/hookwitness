@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -351,5 +352,68 @@ func TestLazy(t *testing.T) {
 	l.Write([]byte("b"))
 	if !l.Written() || started != 1 || buf.String() != "ab" {
 		t.Fatalf("written %v, started %d, %q", l.Written(), started, buf.String())
+	}
+}
+
+// TestPrunedAndPinned: a register that lost requests to retention says so
+// when the range reaches back to them, in every format; a pinned request
+// is marked.
+func TestPrunedAndPinned(t *testing.T) {
+	rs := fixture(t)
+	rs[0].Pinned = true
+	o := goldenOptions()
+	until := rs[len(rs)-1].ReceivedAt // within or before the reported range
+	o.Pruned = &Pruned{NormalUntil: until, Pinned: 1}
+	for _, f := range []Format{Markdown, HTML, PDF} {
+		got := render(t, f, o, rs)
+		if f == PDF {
+			if len(got) < 1000 {
+				t.Fatalf("PDF of %d bytes", len(got))
+			}
+			continue
+		}
+		for _, want := range []string{"Retention removed normal requests up to " + stamp(until), "1 pinned request(s)", "never pruned by retention"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: no %q", f, want)
+			}
+		}
+	}
+	// A range that starts after the watermark lost nothing.
+	o.From = until.Add(time.Hour)
+	if got := render(t, Markdown, o, rs); strings.Contains(got, "Retention removed") {
+		t.Errorf("a later range says requests were pruned")
+	}
+	if prunedLine(&Pruned{NormalUntil: until, AnomaliesUntil: until}, time.Time{}) != "Retention removed every request up to "+stamp(until)+"; the range may miss them." {
+		t.Errorf("both lanes at once: %q", prunedLine(&Pruned{NormalUntil: until, AnomaliesUntil: until}, time.Time{}))
+	}
+	if prunedLine(nil, time.Time{}) != "" || prunedLine(&Pruned{Pinned: 3}, time.Time{}) != "" {
+		t.Error("a line without anything pruned")
+	}
+}
+
+// TestRetriesByEvent: with an event recorded, the retry groups follow it,
+// not the body (a sender that changes a field on every attempt).
+func TestRetriesByEvent(t *testing.T) {
+	rs := fixture(t)
+	ev := "evt_7"
+	for i := range rs[:2] {
+		rs[i].Event, rs[i].Attempt = &ev, i+1
+		rs[i].BodySHA256 = []byte(fmt.Sprintf("%032d", i)) // different bodies
+	}
+	md := render(t, Markdown, goldenOptions(), rs)
+	if !strings.Contains(md, "event `evt_7`") {
+		t.Fatalf("no retry group by event:\n%s", md)
+	}
+	html := render(t, HTML, goldenOptions(), rs)
+	if !strings.Contains(html, "event <code>evt_7</code>") {
+		t.Fatal("HTML: no retry group by event")
+	}
+	// The PDF's text is glyph-encoded: its label comes from the same
+	// summary, through pdfRetryKey.
+	if pdf := render(t, PDF, goldenOptions(), rs); len(pdf) < 1000 {
+		t.Fatalf("PDF of %d bytes", len(pdf))
+	}
+	if got := pdfRetryKey(Retry{Event: "evt_7", SHA256: strings.Repeat("ab", 32)}); got != "event evt_7" {
+		t.Fatalf("PDF retry label %q", got)
 	}
 }

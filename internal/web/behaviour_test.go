@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -157,21 +159,93 @@ func TestBehaviourRefusesInvalid(t *testing.T) {
 func TestCounterReset(t *testing.T) {
 	e := newEnv(t)
 	ep, _ := e.st.CreateEndpoint(context.Background(), "/c")
-	for range 3 {
-		e.st.AddRequest(context.Background(), &store.Request{EndpointID: ep.ID, Method: "POST", Path: "/c", Status: 200}, 1000,
-			func(int64) (int, string) { return 200, "" })
+	if page := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour", nil).Body.String(); !strings.Contains(page, "the clock starts at the next request") ||
+		!strings.Contains(page, "Reset counter and clock") {
+		t.Fatal("a new endpoint's clock is not shown as waiting")
 	}
-	if !strings.Contains(e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour", nil).Body.String(), `<b class="big">3</b>`) {
-		t.Fatal("counter not shown")
+	started := time.Now().Add(-3*time.Minute - time.Second).UTC()
+	for range 3 {
+		e.st.AddRequest(context.Background(), &store.Request{EndpointID: ep.ID, Method: "POST", Path: "/c", Status: 200}, store.Keep{Normal: 1000},
+			func(store.DecideIn) (int, string, string) {
+				return 200, "", `{"start":` + strconv.FormatInt(started.UnixMilli(), 10) + `}`
+			})
+	}
+	page := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour", nil).Body.String()
+	if !strings.Contains(page, `<b class="big">3</b> counted since the reset · clock started `+started.Format("15:04:05")+` UTC (3 min ago)`) {
+		t.Fatal("counter and clock not shown")
 	}
 	if rec := e.edit(ep.ID, url.Values{"op": {"counter-reset"}}); rec.Code != http.StatusSeeOther {
 		t.Fatalf("reset: %d", rec.Code)
 	}
-	if got, _ := e.st.Endpoint(context.Background(), ep.ID); got.Counter != 0 {
-		t.Fatalf("counter %d after reset", got.Counter)
+	if got, _ := e.st.Endpoint(context.Background(), ep.ID); got.Counter != 0 || !got.StartedAt.IsZero() {
+		t.Fatalf("counter %d, clock %v after reset", got.Counter, got.StartedAt)
+	}
+	if page := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?saved=counter", nil).Body.String(); !strings.Contains(page, "Counter and clock reset") {
+		t.Fatal("the reset is not confirmed")
 	}
 	if rec := e.do("GET", "/admin/e/unmatched/behaviour", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("Unmatched has no behaviour: %d", rec.Code)
+	}
+}
+
+// TestClockRuleEditor: the rule editor saves each condition by time or
+// state, refuses an impossible one with the reason and what was typed, and
+// a reply that sends Retry-After leads to a backoff check.
+func TestClockRuleEditor(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/clock")
+	for _, c := range []struct {
+		form url.Values
+		want emulate.Condition
+	}{
+		{url.Values{"when": {"window"}, "from_s": {""}, "to_s": {"1.5"}}, emulate.Condition{Kind: emulate.WhenWindow, ToS: 1.5}},
+		{url.Values{"when": {"window"}, "from_s": {"60"}, "to_s": {""}}, emulate.Condition{Kind: emulate.WhenWindow, FromS: 60}},
+		{url.Values{"when": {"flap"}, "down": {"1"}, "up": {"2"}, "unit": {"requests"}}, emulate.Condition{Kind: emulate.WhenFlap, Down: 1, Up: 2, Unit: "requests"}},
+		{url.Values{"when": {"rate"}, "n": {"5"}, "per_s": {"10"}, "block_s": {"30"}}, emulate.Condition{Kind: emulate.WhenRate, N: 5, PerS: 10, BlockS: 30}},
+		{url.Values{"when": {"attempts"}, "n": {"2"}}, emulate.Condition{Kind: emulate.WhenAttempts, N: 2}},
+	} {
+		form := c.form
+		form.Set("op", "rule-save")
+		form.Set("i", "new")
+		form.Set("do", "reply")
+		form.Set("status", "429")
+		form.Set("headers", "Retry-After: {{.RetryAfter}}")
+		if rec := e.edit(ep.ID, form); rec.Code != http.StatusSeeOther {
+			t.Fatalf("%v: %d %s", form, rec.Code, errorOf(rec.Body.String()))
+		}
+		rules := e.config(t, ep.ID).Rules
+		if got := rules[len(rules)-1].When; got != c.want {
+			t.Fatalf("saved %+v, want %+v", got, c.want)
+		}
+	}
+	page := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour", nil).Body.String()
+	for _, label := range []string{"first 1.5 s", "from 60 s on", "down 1 of every 3 requests", "over 5 in 10 s: 30 s", "first 2 attempts of each event"} {
+		if !strings.Contains(page, "<b>"+label+"</b>") {
+			t.Errorf("rule %q not listed", label)
+		}
+	}
+	link := "/admin/e/" + id(ep.ID) + "/behaviour?tab=checks&amp;edit=check-new&amp;kind=backoff"
+	if !strings.Contains(page, link) {
+		t.Fatal("no link to a backoff check")
+	}
+	if page := e.do("GET", strings.ReplaceAll(link, "&amp;", "&"), nil).Body.String(); !strings.Contains(page, `<option value="backoff" selected>`) {
+		t.Fatal("the check editor does not start as a backoff check")
+	}
+	before := e.config(t, ep.ID).String()
+	rec := e.edit(ep.ID, url.Values{"op": {"rule-save"}, "i": {"new"}, "when": {"window"}, "from_s": {"30"}, "to_s": {"10"}, "do": {"drop"}})
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(errorOf(rec.Body.String()), "to_s must be above from_s") ||
+		!strings.Contains(rec.Body.String(), `name="to_s" value="10"`) {
+		t.Fatalf("an empty window: %d %q", rec.Code, errorOf(rec.Body.String()))
+	}
+	if rec := e.edit(ep.ID, url.Values{"op": {"rule-save"}, "i": {"new"}, "when": {"rate"}, "n": {"5"}, "per_s": {"ten"}, "block_s": {"1"}, "do": {"drop"}}); !strings.Contains(errorOf(rec.Body.String()), "Per must be a number") {
+		t.Fatalf("a rate per words: %q", errorOf(rec.Body.String()))
+	}
+	if e.config(t, ep.ID).String() != before {
+		t.Fatal("a refused rule changed the stored behaviour")
+	}
+	e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"backoff"}, "retry_after": {"on"}})
+	if page := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour", nil).Body.String(); strings.Contains(page, "Add a check that the sender waits") {
+		t.Fatal("the link stays with a backoff check")
 	}
 }
 
@@ -502,5 +576,62 @@ func TestCheckFormKeepsTheFirstError(t *testing.T) {
 	}
 	if e.config(t, ep.ID).String() != before {
 		t.Fatal("a check with a bad tolerance was saved")
+	}
+}
+
+// TestDeliveryEditors: the event id from a preset or one's own, and the
+// delivery checks from the check editor; the Checks tab names the source.
+func TestDeliveryEditors(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/gh")
+	page := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=checks", nil).Body.String()
+	if !strings.Contains(page, "Event id: <b>none: attempts are counted per body</b>") {
+		t.Fatalf("no event line")
+	}
+	dlg := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=checks&edit=event", nil).Body.String()
+	if !strings.Contains(dlg, `<h2 id="dialog-title">Event id</h2>`) || !strings.Contains(dlg, "GitHub: header X-GitHub-Delivery") {
+		t.Fatalf("event dialog")
+	}
+	e.edit(ep.ID, url.Values{"op": {"secret-save"}, "i": {"new"}, "name": {"GH"}, "secret_kind": {"key"}, "value": {"gh_test_secret"}})
+	e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"github"}, "secret": {"GH"}})
+	dlg = e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=checks&edit=event", nil).Body.String()
+	if !strings.Contains(dlg, `<option value="GitHub" selected>`) || !strings.Contains(dlg, "None is set yet. GitHub's is chosen below") {
+		t.Fatalf("the GitHub signature check does not suggest GitHub's event id:\n%s", dlg)
+	}
+	if strings.Contains(dlg, `id="templates"`) {
+		t.Fatal("the event dialog explains templates, which it has none of")
+	}
+	if e.config(t, ep.ID).Event != nil {
+		t.Fatal("a suggestion was saved without a save")
+	}
+	e.edit(ep.ID, url.Values{"op": {"event"}, "preset": {"GitHub"}})
+	if dlg := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=checks&edit=event", nil).Body.String(); strings.Contains(dlg, "None is set yet") {
+		t.Fatal("a saved source is still called a suggestion")
+	}
+	e.edit(ep.ID, url.Values{"op": {"check-del"}, "i": {"0"}})
+	cfg := e.config(t, ep.ID)
+	if cfg.Event == nil || cfg.Event.Key != "X-GitHub-Delivery" {
+		t.Fatalf("preset: %+v", cfg.Event)
+	}
+	e.edit(ep.ID, url.Values{"op": {"event"}, "preset": {"custom"}, "event_from": {"body"}, "event_key": {"/event_id"}})
+	if cfg := e.config(t, ep.ID); cfg.Event == nil || cfg.Event.From != "body" || cfg.Event.Key != "/event_id" {
+		t.Fatalf("custom: %+v", cfg.Event)
+	}
+	if rec := e.edit(ep.ID, url.Values{"op": {"event"}, "preset": {"custom"}, "event_from": {"body"}, "event_key": {"event_id"}}); !strings.Contains(errorOf(rec.Body.String()), "JSON pointer") {
+		t.Fatalf("a bad pointer was saved")
+	}
+	e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"backoff"}, "first_s": {"5"}, "max_s": {"3600"}, "max_attempts": {"8"}, "enforce": {"on"}})
+	e.edit(ep.ID, url.Values{"op": {"check-save"}, "i": {"new"}, "kind": {"order"}, "order_from": {"body"}, "order_key": {"/seq"}, "order_as": {"number"}})
+	cfg = e.config(t, ep.ID)
+	if len(cfg.Checks) != 2 || cfg.Checks[0].FirstS != 5 || cfg.Checks[0].Enforce || cfg.Checks[0].RetryAfter == nil || *cfg.Checks[0].RetryAfter ||
+		cfg.Checks[1].Order == nil || cfg.Checks[1].Order.Key != "/seq" {
+		t.Fatalf("checks %+v", cfg.Checks)
+	}
+	if page := e.do("GET", "/admin/e/"+id(ep.ID)+"/behaviour?tab=checks", nil).Body.String(); !strings.Contains(page, "5 s × 2, at most 3600 s, 8 attempts") {
+		t.Fatal("no backoff summary")
+	}
+	e.edit(ep.ID, url.Values{"op": {"event"}, "preset": {""}})
+	if e.config(t, ep.ID).Event != nil {
+		t.Fatal("none kept the source")
 	}
 }

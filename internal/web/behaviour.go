@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -25,14 +26,18 @@ type behaviourView struct {
 	Path    string
 	Base    string // the endpoint's register URL
 	Counter int64
-	Config  emulate.Config // as stored
-	MaxWait time.Duration
-	Version string // of the stored configuration; every form sends it back
-	Tab     string // checks, rules, default or vars
-	Saved   string // the section the last edit saved ("rule-2", "counter", ...)
-	Error   string // the last edit was refused: why
-	NoDraft string // a schema draft was asked for and none could be made: why
-	Editor  *editor
+	// StartedAt is the rules' clock start, zero before it; Now is when the
+	// page was made, for "3 min ago".
+	StartedAt, Now time.Time
+	Config         emulate.Config // as stored
+	MayForward     bool           // the viewer may change the receiver (an admin, or login off)
+	MaxWait        time.Duration
+	Version        string // of the stored configuration; every form sends it back
+	Tab            string // checks, rules, default or vars
+	Saved          string // the section the last edit saved ("rule-2", "counter", ...)
+	Error          string // the last edit was refused: why
+	NoDraft        string // a schema draft was asked for and none could be made: why
+	Editor         *editor
 }
 
 // editor is the dialog that creates or edits one item.
@@ -44,18 +49,25 @@ type editor struct {
 	Var    emulate.Var
 	Secret emulate.Secret // never with a value: secrets are write-only
 	Schema emulate.Schema
-	Draft  *draftView    // the schema was drafted from requests
-	Reply  emulate.Reply // the default reply
+	Draft  *draftView     // the schema was drafted from requests
+	Reply  emulate.Reply  // the default reply
+	Event  emulate.Source // the event id source ({} for none)
+	// Suggested names the preset Event holds when the endpoint has no
+	// source yet and one of its signature checks is that provider's.
+	Suggested string
+	Forward   emulate.Forward // the receiver ({} for none yet)
 }
 
 // behaviourTabs in the order a request meets them.
-var behaviourTabs = []string{"checks", "rules", "default", "vars", "secrets", "schemas"}
+var behaviourTabs = []string{"checks", "rules", "receiver", "default", "vars", "secrets", "schemas"}
 
 // tabOf is the tab that holds a section ("rule-2", "checks", "var-new",
 // ...); rules when unknown.
 func tabOf(section string) string {
 	switch {
-	case strings.HasPrefix(section, "check"):
+	case strings.HasPrefix(section, "receiver"):
+		return "receiver"
+	case strings.HasPrefix(section, "check"), section == "event":
 		return "checks"
 	case strings.HasPrefix(section, "var"):
 		return "vars"
@@ -74,6 +86,29 @@ func tabOf(section string) string {
 func openEditor(cfg emulate.Config, which string) *editor {
 	if which == "default" {
 		return &editor{Kind: "default", Reply: cfg.Default}
+	}
+	if which == "receiver" {
+		e := &editor{Kind: "receiver"}
+		if cfg.Forward != nil {
+			e.Forward = *cfg.Forward
+		}
+		return e
+	}
+	if which == "event" {
+		e := &editor{Kind: "event"}
+		if cfg.Event != nil {
+			e.Event = *cfg.Event
+			return e
+		}
+		for _, c := range cfg.Checks {
+			for _, p := range emulate.EventPresets {
+				if p.Kind != "" && c.Kind == p.Kind {
+					e.Event, e.Suggested = p.Source, p.Name
+					return e
+				}
+			}
+		}
+		return e
 	}
 	kind, i, _ := strings.Cut(which, "-")
 	e := &editor{Kind: kind, I: i}
@@ -173,6 +208,9 @@ func (h *Handler) behaviourPage(w http.ResponseWriter, r *http.Request) {
 			if name := q.Get("schema"); name != "" {
 				e.Check = emulate.Check{Kind: emulate.KindSchema, Schema: name}
 			}
+			if q.Get("kind") == emulate.KindBackoff {
+				e.Check = emulate.Check{Kind: emulate.KindBackoff}
+			}
 		}
 	}
 	v.Tab = q.Get("tab")
@@ -189,6 +227,7 @@ func (h *Handler) behaviourPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) showBehaviour(w http.ResponseWriter, r *http.Request, status int, v behaviourView) {
+	v.MayForward = h.mayForwardView(r.Context())
 	nav, err := h.nav(r, v.ID, false)
 	if err != nil {
 		h.fail(w, "behaviour", err)
@@ -199,7 +238,7 @@ func (h *Handler) showBehaviour(w http.ResponseWriter, r *http.Request, status i
 
 func (h *Handler) behaviourView(ep store.Endpoint, cfg emulate.Config) behaviourView {
 	return behaviourView{
-		ID: ep.ID, Path: ep.Path, Base: h.regPath(ep.ID), Counter: ep.Counter,
+		ID: ep.ID, Path: ep.Path, Base: h.regPath(ep.ID), Counter: ep.Counter, StartedAt: ep.StartedAt, Now: time.Now(),
 		Config: cfg, MaxWait: h.maxWait, Version: configVersion(ep.Config),
 	}
 }
@@ -249,12 +288,20 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, _ := emulate.Parse(ep.Config) // a copy to edit
 	section, err := applyEdit(&cfg, op, r, h.keys)
+	changed := forwardChanged(stored.Forward, cfg.Forward)
+	if changed && !h.mayReplay(ctx) {
+		refuse(http.StatusForbidden, "receiver", forwardAdminOnly, nil)
+		return
+	}
 	if err == nil {
 		err = cfg.Validate(h.maxWait)
 	}
+	if err == nil && changed {
+		err = h.checkTarget(cfg.Forward)
+	}
 	if err != nil {
 		var ed *editor
-		if strings.HasSuffix(op, "-save") || op == "default" {
+		if strings.HasSuffix(op, "-save") || op == "default" || op == "receiver" {
 			// Reopen the editor on what was typed (applied to the copy).
 			if ed = openEditor(cfg, section); ed != nil && ed.Kind != "default" {
 				ed.I = r.PostFormValue("i")
@@ -295,6 +342,13 @@ func (h *Handler) editBehaviour(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("endpoint behaviour changed", append([]any{"path", ep.Path, "op", op}, who(r)...)...)
+	if changed {
+		receiver := "none"
+		if cfg.Forward != nil {
+			receiver = cfg.Forward.Origin()
+		}
+		h.log.Warn("endpoint receiver changed", append([]any{"path", ep.Path, "receiver", receiver}, who(r)...)...)
+	}
 	http.Redirect(w, r, savedURL(h.regPath(id), section), http.StatusSeeOther)
 }
 
@@ -326,10 +380,32 @@ func applyEdit(cfg *emulate.Config, op string, r *http.Request, keys *secret.Key
 		return i, nil
 	}
 	switch op {
+	case "event":
+		switch preset := r.PostFormValue("preset"); preset {
+		case "":
+			cfg.Event = nil
+		case "custom":
+			cfg.Event = &emulate.Source{From: r.PostFormValue("event_from"), Key: strings.TrimSpace(r.PostFormValue("event_key"))}
+		default:
+			for _, p := range emulate.EventPresets {
+				if p.Name == preset {
+					src := p.Source
+					cfg.Event = &src
+				}
+			}
+		}
+		return "checks", nil
 	case "default":
 		reply, err := formReply(r, "")
 		cfg.Default = reply
 		return "default", err
+	case "receiver":
+		f, err := formForward(r)
+		cfg.Forward = &f
+		return "receiver", err
+	case "receiver-del":
+		cfg.Forward = nil
+		return "receiver", nil
 	case "rule-save", "rule-up", "rule-down", "rule-del":
 		i, err := at(len(cfg.Rules), act == "save")
 		if err != nil {
@@ -467,7 +543,33 @@ func formCheck(r *http.Request) (emulate.Check, error) {
 	ch.Enforce = r.PostFormValue("enforce") == "on"
 	ch.Secret = v("secret")
 	var err error
+	if ch.IsDelivery() {
+		ch.Enforce, ch.Secret = false, ""
+	}
+	num := func(name string) float64 {
+		s := v(name)
+		if s == "" || err != nil {
+			return 0
+		}
+		f, perr := strconv.ParseFloat(s, 64)
+		if perr != nil {
+			err = fmt.Errorf("%s must be a number", strings.ReplaceAll(name, "_", " "))
+		}
+		return f
+	}
 	switch ch.Kind {
+	case emulate.KindOrder:
+		ch.Order = &emulate.OrderSpec{Source: emulate.Source{From: v("order_from"), Key: v("order_key")}, As: v("order_as")}
+		if from := v("group_from"); from != "" {
+			ch.Group = &emulate.Source{From: from, Key: v("group_key")}
+		}
+	case emulate.KindBackoff:
+		ch.FirstS, ch.Factor, ch.MaxS = num("first_s"), num("factor"), num("max_s")
+		ch.MaxAttempts, ch.TolerancePct = int(num("max_attempts")), int(num("tolerance_pct"))
+		if r.PostFormValue("retry_after") != "on" {
+			no := false
+			ch.RetryAfter = &no
+		}
 	case emulate.KindHMAC:
 		ch.Header, ch.Algo, ch.Encoding = v("header"), v("algo"), v("encoding")
 		ch.Prefix, ch.Content = r.PostFormValue("prefix"), r.PostFormValue("content")
@@ -607,10 +709,23 @@ func formReply(r *http.Request, prefix string) (emulate.Reply, error) {
 
 func formRule(r *http.Request) (emulate.Rule, error) {
 	rule := emulate.Rule{
-		When: emulate.Condition{Kind: r.PostFormValue("when")},
-		Do:   r.PostFormValue("do"),
+		When:    emulate.Condition{Kind: r.PostFormValue("when")},
+		Do:      r.PostFormValue("do"),
+		Forward: r.PostFormValue("forward") == "on",
 	}
 	var errs []string
+	// seconds reads a number field; blank is 0 where allowed.
+	seconds := func(name, what string, blankOK bool) float64 {
+		s := strings.TrimSpace(r.PostFormValue(name))
+		if s == "" && blankOK {
+			return 0
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			errs = append(errs, what+" must be a number")
+		}
+		return f
+	}
 	switch rule.When.Kind {
 	case emulate.WhenRandom:
 		p, err := strconv.ParseFloat(strings.TrimSpace(r.PostFormValue("percent")), 64)
@@ -618,6 +733,21 @@ func formRule(r *http.Request) (emulate.Rule, error) {
 			errs = append(errs, "the percentage must be a number")
 		}
 		rule.When.Percent = p
+	case emulate.WhenWindow:
+		rule.When.FromS = seconds("from_s", "From", true)
+		rule.When.ToS = seconds("to_s", "Until", true)
+	case emulate.WhenFlap:
+		rule.When.Down = seconds("down", "Down", false)
+		rule.When.Up = seconds("up", "Up", false)
+		rule.When.Unit = r.PostFormValue("unit")
+	case emulate.WhenRate:
+		n, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue("n")), 10, 64)
+		if err != nil {
+			errs = append(errs, "the count N must be a whole number")
+		}
+		rule.When.N = n
+		rule.When.PerS = seconds("per_s", "Per", false)
+		rule.When.BlockS = seconds("block_s", "Block", false)
 	default:
 		n, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue("n")), 10, 64)
 		if err != nil {
@@ -644,6 +774,8 @@ func tabTitle(tab string) string {
 	switch tab {
 	case "checks":
 		return "Checks"
+	case "receiver":
+		return "Receiver"
 	case "default":
 		return "Default"
 	case "vars":
@@ -669,6 +801,11 @@ func tabCount(c emulate.Config, tab string) string {
 		return strconv.Itoa(len(c.Secrets))
 	case "schemas":
 		return strconv.Itoa(len(c.Schemas))
+	case "receiver":
+		if c.Forward != nil {
+			return "on"
+		}
+		return "off"
 	}
 	return ""
 }
@@ -677,6 +814,10 @@ func editorTitle(e *editor) string {
 	switch e.Kind {
 	case "default":
 		return "Default reply"
+	case "receiver":
+		return "Receiver"
+	case "event":
+		return "Event id"
 	case "var":
 		if e.I == "new" {
 			return "New variable"
@@ -704,6 +845,8 @@ func editorSave(e *editor) string {
 	switch e.Kind {
 	case "default":
 		return "Save default reply"
+	case "receiver":
+		return "Save receiver"
 	case "var":
 		return "Save variable"
 	case "secret":
@@ -815,7 +958,7 @@ func tabCurrent(on bool) string {
 func savedText(section string) string {
 	switch {
 	case section == "counter":
-		return "Counter reset: the next request is number 1."
+		return "Counter and clock reset: the next request is number 1, at 0 s."
 	case section == "default":
 		return "Default reply saved. It applies to the next request."
 	case section == "rules", section == "checks", section == "vars":
@@ -900,6 +1043,25 @@ Echo a verification challenge:  {"challenge":"{{.JSON "challenge"}}"}`
 // answerText says in a sentence what was done with a request.
 func answerText(o emulate.Outcome) string {
 	var s string
+	switch {
+	case o.Action == emulate.ActForward && o.Forward != nil && o.Forward.Pending:
+		s = "Being forwarded to the receiver"
+	case o.Action == emulate.ActForward && o.Forward != nil && o.Forward.ErrorKind == "":
+		s = "The receiver's " + strconv.Itoa(o.Status) + " was passed back"
+	case o.Action == emulate.ActForward && o.Forward != nil:
+		s = strconv.Itoa(o.Status) + " sent instead of the receiver's answer"
+	case o.Action == emulate.ActAbandoned && o.Forward != nil:
+		s = "The sender left after " + emulate.Duration(o.WaitedMs) + ", before the receiver answered, so nothing was sent; it would have got " + strconv.Itoa(o.Would)
+	}
+	if s != "" {
+		if w := o.Why(); w != "" {
+			s += " · " + w
+		}
+		if o.Counter > 0 {
+			s += " · request " + i64(o.Counter) + " since the counter reset"
+		}
+		return s + "."
+	}
 	switch o.Action {
 	case emulate.ActTimeout:
 		s = "Held without an answer"
@@ -959,4 +1121,82 @@ func replyBodyText(r emulate.Reply) string {
 // rawSize is how many bytes a base64 text holds.
 func rawSize(b64 string) int64 {
 	return int64(base64.StdEncoding.DecodedLen(len(b64)) - strings.Count(b64, "="))
+}
+
+func orderKey(ch emulate.Check) string {
+	if ch.Order == nil {
+		return ""
+	}
+	return ch.Order.Key
+}
+
+func groupKey(ch emulate.Check) string {
+	if ch.Group == nil {
+		return ""
+	}
+	return ch.Group.Key
+}
+
+// asksToWait reports a reply that sends Retry-After on an endpoint with no
+// backoff check to judge whether senders wait for it.
+func asksToWait(c emulate.Config) bool {
+	for _, ch := range c.Checks {
+		if ch.Kind == emulate.KindBackoff {
+			return false
+		}
+	}
+	replies := []emulate.Reply{c.Default}
+	for _, r := range c.Rules {
+		if r.Do == emulate.ActReply {
+			replies = append(replies, r.Reply)
+		}
+	}
+	for _, r := range replies {
+		for _, h := range r.Headers {
+			if strings.EqualFold(h.Name, "Retry-After") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// clockText says when the rules' clock started: "clock started 14:02:11 UTC
+// (3 min ago)", or that the next request starts it.
+func clockText(started, now time.Time) string {
+	if started.IsZero() {
+		return "the clock starts at the next request"
+	}
+	d := now.Sub(started)
+	var ago string
+	switch {
+	case d < 5*time.Second:
+		ago = "just now"
+	case d < time.Minute:
+		ago = strconv.Itoa(int(d.Seconds())) + " s ago"
+	case d < time.Hour:
+		ago = strconv.Itoa(int(d.Minutes())) + " min ago"
+	case d < 48*time.Hour:
+		ago = strconv.Itoa(int(d.Hours())) + " h ago"
+	default:
+		ago = strconv.Itoa(int(d.Hours()/24)) + " days ago"
+	}
+	return "clock started " + started.UTC().Format("15:04:05") + " UTC (" + ago + ")"
+}
+
+// blankF writes a number, or nothing for zero (the default shows instead).
+func blankF(f float64) string {
+	if f == 0 {
+		return ""
+	}
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+func isPreset(src emulate.Source) bool {
+	for _, p := range emulate.EventPresets {
+		if p.Source == src {
+			return true
+		}
+	}
+	return false
 }

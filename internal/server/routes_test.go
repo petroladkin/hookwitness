@@ -2,10 +2,12 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -64,6 +66,12 @@ func serveReal(t *testing.T) (addr string, st *store.Store) {
 
 func serveRealWith(t *testing.T, bodyTimeout time.Duration) (addr string, st *store.Store) {
 	t.Helper()
+	return serveRealLog(t, bodyTimeout, quiet)
+}
+
+// serveRealLog is serveRealWith with the server's logger.
+func serveRealLog(t *testing.T, bodyTimeout time.Duration, log *slog.Logger) (addr string, st *store.Store) {
+	t.Helper()
 	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "hw.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -73,11 +81,11 @@ func serveRealWith(t *testing.T, bodyTimeout time.Duration) (addr string, st *st
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := New(Options{DB: st, Log: quiet, AdminPrefix: "/admin",
-		Catch: &catch.Handler{Store: st, Live: live.New(), Log: quiet, MaxBody: 1 << 20, Retention: 1000, BodyTimeout: bodyTimeout}})
+	h := New(Options{DB: st, Log: log, AdminPrefix: "/admin",
+		Catch: &catch.Handler{Store: st, Live: live.New(), Log: log, MaxBody: 1 << 20, Retention: store.Keep{Normal: 1000}, BodyTimeout: bodyTimeout}})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, ln, h, quiet) }()
+	go func() { done <- Serve(ctx, ln, h, log) }()
 	t.Cleanup(func() { cancel(); <-done })
 	return ln.Addr().String(), st
 }
@@ -129,9 +137,16 @@ func TestHeadersKeepReceivedOrder(t *testing.T) {
 }
 
 // TestConcurrentRequestsAllKept is AC-9: 100 concurrent requests to one
-// endpoint over HTTP, every one stored.
+// endpoint over HTTP, every one stored. A failure names each answer that
+// was not 200 and shows the server's warnings and errors (why).
 func TestConcurrentRequestsAllKept(t *testing.T) {
-	addr, st := serveReal(t)
+	var logs lockedBuffer
+	addr, st := serveRealLog(t, 0, slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer func() {
+		if t.Failed() {
+			t.Logf("server log:\n%s", logs.String())
+		}
+	}()
 	ep, _ := st.CreateEndpoint(context.Background(), "/burst")
 	client := &http.Client{Timeout: 10 * time.Second}
 	var wg sync.WaitGroup
@@ -143,9 +158,10 @@ func TestConcurrentRequestsAllKept(t *testing.T) {
 				errs <- err
 				return
 			}
+			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode != 200 {
-				errs <- fmt.Errorf("status %d", resp.StatusCode)
+				errs <- fmt.Errorf("request %d: status %d, Retry-After %q, body %q", i, resp.StatusCode, resp.Header.Get("Retry-After"), body)
 			}
 		})
 	}
@@ -163,6 +179,24 @@ func TestConcurrentRequestsAllKept(t *testing.T) {
 	if len(rs) != 100 || len(bodies) != 100 {
 		t.Fatalf("%d stored with %d distinct bodies, want 100 and 100", len(rs), len(bodies))
 	}
+}
+
+// lockedBuffer is a bytes.Buffer the server's goroutines can log into.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 func TestOnShutdownRuns(t *testing.T) {

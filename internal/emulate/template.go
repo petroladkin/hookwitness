@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,17 +94,23 @@ func first(a, b string) string {
 // Data is what a template sees, e.g.
 //
 //	{{.Header "X-Request-Id"}}  {{.Query "challenge"}}  {{.JSON "event.id"}}
-//	{{.Var.TOKEN}}  {{.N}}  {{.Method}}  {{.Path}}
+//	{{.Var.TOKEN}}  {{.N}}  {{.Method}}  {{.Path}}  {{.RetryAfter}}
 type Data struct {
 	Method string
 	Path   string
 	Body   string
 	Var    map[string]string
 	N      int64 // the request's number since the counter was reset; 0 when refused
-	req    Request
-	query  url.Values
-	json   any
-	parsed sync.Once // a render cut off by its deadline may still be running
+	// RetryAfter is whole seconds (at least 1) until the matched rule's
+	// condition stops holding (a window with an end, a flap's down part in
+	// seconds, a rate block), else 0.
+	RetryAfter int
+	Elapsed    float64 // seconds since the endpoint's clock started
+	Attempt    int     // the request's attempt of its event (or body); 1 without one
+	req        Request
+	query      url.Values
+	json       any
+	parsed     sync.Once // a render cut off by its deadline may still be running
 }
 
 // NewData prepares the template data of a request.
@@ -173,11 +180,14 @@ func (d *Data) JSON(path string) string {
 // therefore always adds "Content-Security-Policy: sandbox" (an endpoint's
 // own policy is sent too: several policies only narrow each other), adds
 // "X-Content-Type-Options: nosniff" unless the endpoint sets it, and drops
-// any Set-Cookie of sessionCookie, the admin's login cookie.
-func (r Rendered) Protect(sessionCookie string) Rendered {
+// any Set-Cookie that a browser could read as one of adminCookies, the
+// admin's cookies (its login, a provider sign-in's): by its name, or a
+// cookie without a name whose value holds "<name>=" (browsers send a
+// nameless cookie back as its value).
+func (r Rendered) Protect(adminCookies ...string) Rendered {
 	hs := make([]Header, 0, len(r.Headers)+2)
 	for _, h := range r.Headers {
-		if strings.EqualFold(h.Name, "Set-Cookie") && cookieName(h.Value) == sessionCookie {
+		if strings.EqualFold(h.Name, "Set-Cookie") && slices.ContainsFunc(adminCookies, func(c string) bool { return setsCookie(h.Value, c) }) {
 			continue
 		}
 		hs = append(hs, h)
@@ -189,6 +199,27 @@ func (r Rendered) Protect(sessionCookie string) Rendered {
 		hs = append(hs, Header{"X-Content-Type-Options", "nosniff"})
 	}
 	r.Headers = hs
+	return r
+}
+
+// setsCookie reports whether a Set-Cookie value may set the cookie name:
+// its name, or a nameless cookie carrying "name=".
+func setsCookie(v, name string) bool {
+	pair, _, _ := strings.Cut(v, ";")
+	n := cookieName(pair)
+	return n == name || n == "" && strings.Contains(pair, name+"=")
+}
+
+// NoSniff makes the reply say "X-Content-Type-Options: nosniff" whatever
+// it said: for an answer a third party wrote (a receiver's).
+func (r Rendered) NoSniff() Rendered {
+	hs := make([]Header, 0, len(r.Headers)+1)
+	for _, h := range r.Headers {
+		if !strings.EqualFold(h.Name, "X-Content-Type-Options") {
+			hs = append(hs, h)
+		}
+	}
+	r.Headers = append(hs, Header{"X-Content-Type-Options", "nosniff"})
 	return r
 }
 

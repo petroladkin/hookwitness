@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -90,6 +91,46 @@ type Options struct {
 	// Fonts holds the UI's woff2 files (vendor/<family>/<file>.woff2) that
 	// an HTML report embeds; nil writes the HTML with system fonts only.
 	Fonts fs.FS
+	// Pruned is what the register's retention removed; nil: nothing.
+	Pruned *Pruned
+	// Exchange loads a forwarded request's exchange with the receiver, to
+	// show the receiver's answer; nil shows only its summary.
+	Exchange func(ctx context.Context, requestID int64) (store.Forward, error)
+}
+
+// Pruned is what a register lost to retention: up to when each lane lost
+// requests (zero: never) and how many requests are pinned.
+type Pruned struct {
+	NormalUntil, AnomaliesUntil time.Time
+	Pinned                      int
+}
+
+// prunedLine says what retention removed before or inside a range that
+// starts at from (zero: the whole register).
+func prunedLine(p *Pruned, from time.Time) string {
+	if p == nil {
+		return ""
+	}
+	var parts []string
+	for _, l := range []struct {
+		what  string
+		until time.Time
+	}{{"normal requests", p.NormalUntil}, {"anomalies", p.AnomaliesUntil}} {
+		if !l.until.IsZero() && (from.IsZero() || !l.until.Before(from)) {
+			parts = append(parts, l.what+" up to "+stamp(l.until))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	if len(parts) == 2 && p.NormalUntil.Equal(p.AnomaliesUntil) {
+		parts = []string{"every request up to " + stamp(p.NormalUntil)}
+	}
+	line := "Retention removed " + strings.Join(parts, " and ") + "; the range may miss them."
+	if p.Pinned > 0 {
+		line += fmt.Sprintf(" %d pinned request(s) are kept whatever their age.", p.Pinned)
+	}
+	return line
 }
 
 // FileName is hookwitness-<endpoint>-<UTC timestamp>.<ext>, the endpoint
@@ -165,7 +206,15 @@ func Write(ctx context.Context, w io.Writer, f Format, o Options, src Source) er
 	}
 	if h.Count > 0 { // through 0 would mean no bound
 		err = src(ctx, true, h.lastID, func(r store.Request) error {
-			return wr.item(h.item(r))
+			it := h.item(r)
+			if it.Receiver != "" && o.Exchange != nil {
+				if fw, err := o.Exchange(ctx, r.ID); err == nil {
+					h.receiverAnswer(&it, fw)
+				} else if !errors.Is(err, store.ErrNotFound) {
+					return err
+				}
+			}
+			return wr.item(it)
 		})
 		if err != nil {
 			return err
@@ -190,6 +239,12 @@ type Head struct {
 	Version   string
 	Masked    []string // the masked header names, as given, sorted
 	Setup     *Setup   // the endpoint's setup when asked for; nil otherwise
+	// PrunedLine says what retention removed from the reported range; ""
+	// when the range lost nothing.
+	PrunedLine string
+	// ReceiverLine sums up the receiver's side of the requests on an
+	// endpoint that forwards; "" when none was forwarded or kept from it.
+	ReceiverLine string
 
 	Count    int
 	Outcomes []Count // answers by class, in a fixed order
@@ -220,7 +275,8 @@ type CheckCount struct {
 // Retry is one body delivered more than once: the request numbers in order
 // and the gaps between consecutive deliveries.
 type Retry struct {
-	SHA256 string
+	SHA256 string // the body's digest, when retries are grouped by body
+	Event  string // the event id, when the endpoint names one
 	Nos    []int64
 	Gaps   []time.Duration
 }
@@ -284,6 +340,7 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 	if h.Endpoint == "" {
 		h.Endpoint = "Unmatched"
 	}
+	h.PrunedLine = prunedLine(o.Pruned, h.From)
 	for _, m := range o.Mask {
 		if k := strings.ToLower(strings.TrimSpace(m)); k != "" && !h.mask[k] {
 			h.mask[k] = true
@@ -297,11 +354,13 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 
 	classes := map[string]int{}
 	checks := map[int]*CheckCount{}
+	var rcv receiverCounts
 	type delivery struct {
 		no int64
 		at time.Time
 	}
 	bySHA := map[string][]delivery{}
+	events := map[string]string{} // group key → event id, for groups by event
 	var shaOrder []string
 	var markSHA []string // per mark, the body digest
 	var first, last time.Time
@@ -314,6 +373,7 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 		last = r.ReceivedAt
 		out := emulate.ParseOutcome(r.Outcome, r.Status)
 		classes[classify(r, out)]++
+		rcv.count(out)
 		m := Mark{At: r.ReceivedAt.UTC(), Size: r.Size, Kind: markKind(r, out)}
 		for _, v := range parseVerdicts(r.Verdicts) {
 			c := checks[v.Check]
@@ -335,10 +395,13 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 			}
 		}
 		k := ""
-		if len(r.BodySHA256) > 0 {
-			k = hex.EncodeToString(r.BodySHA256)
+		if key, byEvent := r.RetryGroup(); len(key) > 0 {
+			k = hex.EncodeToString(key)
 			if _, ok := bySHA[k]; !ok {
 				shaOrder = append(shaOrder, k)
+				if byEvent {
+					events[k] = *r.Event
+				}
 			}
 			bySHA[k] = append(bySHA[k], delivery{r.No, r.ReceivedAt})
 			if n := len(bySHA[k]); n > 1 {
@@ -373,7 +436,10 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 		if len(ds) < 2 {
 			continue
 		}
-		rt := Retry{SHA256: k}
+		rt := Retry{SHA256: k, Event: events[k]}
+		if rt.Event != "" {
+			rt.SHA256 = ""
+		}
 		for i, d := range ds {
 			rt.Nos = append(rt.Nos, d.no)
 			if i > 0 {
@@ -386,18 +452,23 @@ func summarize(ctx context.Context, o Options, src Source) (*Head, error) {
 	for i, k := range markSHA {
 		h.Marks[i].Group = group[k]
 	}
+	h.ReceiverLine = rcv.line()
 	return h, nil
 }
 
 // markKind is how the strip draws a request, as in the UI.
 func markKind(r store.Request, o emulate.Outcome) string {
 	switch {
+	case o.Pending():
+		return "ok" // still forwarding: judged when it ends
 	case o.HeldUp():
 		return "timeout"
 	case o.Action == emulate.ActDrop:
 		return "drop"
 	case r.TooLarge || !o.Good():
 		return "bad"
+	case o.Forward != nil && o.Forward.Fallback:
+		return "bad" // the receiver failed; the sender got the default reply
 	}
 	return "ok"
 }
@@ -425,8 +496,16 @@ type Item struct {
 	Body     Body
 	Answer   Answer
 	Verdicts []auth.Verdict
-	Delivery int // 2 for the first retry of a body, 3 for the next…; 0 otherwise
+	Delivery int  // 2 for the first retry of a body, 3 for the next…; 0 otherwise
+	Pinned   bool // never pruned by retention
 	Images   []ItemImage
+	// Receiver is the receiver's side in one line ("" when the endpoint
+	// does not forward); with the exchange loaded, the receiver's answer
+	// lines (masked like the request's) and body.
+	Receiver        string
+	ReceiverHeaders []Header
+	ReceiverBody    *Body
+	ReceiverCut     bool // only the first 64 KiB of the receiver's body were kept
 }
 
 // ItemImage is an image the request carries; Data holds its decoded bytes
@@ -463,6 +542,9 @@ type Body struct {
 	Shown  int   // the limit a cut body was cut at
 	Kept   int64 // bytes kept: less than Size when only the head was (Unmatched)
 	Busy   bool  // not kept: the server was busy (503)
+	// Dropped: kept when caught, dropped later to stay under the database
+	// size limit.
+	Dropped bool
 }
 
 // Answer is what Hookwitness did.
@@ -487,6 +569,7 @@ func (h *Head) item(r store.Request) Item {
 		Proto:    r.Proto,
 		Remote:   r.RemoteAddr,
 		Delivery: h.deliveries[r.ID],
+		Pinned:   r.Pinned,
 	}
 	var masked []string
 	for _, hd := range r.Headers {
@@ -499,6 +582,9 @@ func (h *Head) item(r store.Request) Item {
 	}
 	it.Body = viewBody(r, h.bodyLimit)
 	o := emulate.ParseOutcome(r.Outcome, r.Status)
+	if o.Forward != nil {
+		o.Forward.Target = site(o.Forward.Target) // never the receiver's path in a report
+	}
 	it.Answer = Answer{Stamp: o.Stamp(), Why: o.Why(), DelayMs: o.DelayMs, WaitedMs: o.WaitedMs, Error: o.Error}
 	if o.Action == emulate.ActAbandoned {
 		it.Answer.Would = o.Would
@@ -506,6 +592,7 @@ func (h *Head) item(r store.Request) Item {
 	if o.Action == emulate.ActReply && r.Status == 0 && !r.TooLarge {
 		it.Answer.Stamp = "nothing sent"
 	}
+	it.Receiver = receiverLine(o)
 	it.Verdicts = parseVerdicts(r.Verdicts)
 	bad := map[string]bool{}
 	for _, v := range it.Verdicts {
@@ -519,7 +606,12 @@ func (h *Head) item(r store.Request) Item {
 		}
 	}
 	payload.MarkBad(it.Body.Tokens, bad)
-	if !r.TooLarge {
+	if r.BodyDropped {
+		// No body to look into: only the images the verdicts recorded.
+		for _, f := range picture.Find(nil, "", it.Verdicts) {
+			it.Images = append(it.Images, ItemImage{Found: f})
+		}
+	} else if !r.TooLarge {
 		ct := ""
 		for _, hd := range r.Headers {
 			if strings.EqualFold(hd.Name, "Content-Type") {
@@ -580,6 +672,9 @@ func viewBody(r store.Request, limit int) Body {
 		b.SHA256 = hex.EncodeToString(r.BodySHA256)
 	}
 	switch {
+	case r.BodyDropped:
+		b.Kind, b.Dropped, b.Kept = BodyNotKept, true, 0
+		return b
 	case r.TooLarge:
 		b.Kind = BodyNotKept
 		b.Busy = emulate.ParseOutcome(r.Outcome, r.Status).Source == emulate.FromBusy
@@ -655,6 +750,13 @@ func bodyNote(b Body) string {
 	case BodyEmpty:
 		return "no body"
 	case BodyNotKept:
+		if b.Dropped {
+			s := size(b.Size) + " · not kept: " + store.DroppedReason
+			if b.SHA256 != "" {
+				s += " · sha256 " + b.SHA256
+			}
+			return s
+		}
 		if b.Busy {
 			return size(b.Size) + " declared · not kept: the server was busy (503)"
 		}
@@ -683,6 +785,8 @@ func answerLine(a Answer) string {
 		parts = append(parts, a.Why)
 	}
 	switch {
+	case a.Would > 0 && a.DelayMs == 0:
+		parts = append(parts, "left after "+ms(a.WaitedMs)+", before the answer; nothing sent, would have been "+strconv.Itoa(a.Would))
 	case a.Would > 0:
 		parts = append(parts, "left after "+ms(a.WaitedMs)+" of a "+ms(a.DelayMs)+" delay; nothing sent, would have been "+strconv.Itoa(a.Would))
 	default:
@@ -765,4 +869,13 @@ func imageNote(f picture.Found) string {
 		parts = append(parts, "not checked: "+f.NotChecked)
 	}
 	return strings.Join(parts, " · ")
+}
+
+// retryKey names a retry group: its event id, or its body digest cut short;
+// code formats the value.
+func retryKey(r Retry, code func(string) string) string {
+	if r.Event != "" {
+		return "event " + code(r.Event)
+	}
+	return code(r.SHA256[:16] + "…")
 }

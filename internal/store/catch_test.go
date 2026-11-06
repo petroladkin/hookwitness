@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func openTemp(t *testing.T) *Store {
+func openTemp(t testing.TB) *Store {
 	t.Helper()
 	s, err := Open(context.Background(), tempDB(t))
 	if err != nil {
@@ -59,7 +59,7 @@ func TestEndpointLifecycle(t *testing.T) {
 	}
 
 	for range 3 {
-		if err := s.AddRequest(ctx, sample(a.ID, "{}"), 1000, nil); err != nil {
+		if err := s.AddRequest(ctx, sample(a.ID, "{}"), Keep{Normal: 1000}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -79,7 +79,7 @@ func TestEndpointLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := sample(a.ID, "{}")
-	if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+	if err := s.AddRequest(ctx, r, Keep{Normal: 1000}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if r.No != 4 {
@@ -95,7 +95,7 @@ func TestEndpointLifecycle(t *testing.T) {
 	if err := s.DeleteEndpoint(ctx, a.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete: %v", err)
 	}
-	if err := s.AddRequest(ctx, sample(a.ID, ""), 1000, nil); !errors.Is(err, ErrNotFound) {
+	if err := s.AddRequest(ctx, sample(a.ID, ""), Keep{Normal: 1000}, nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("request to a deleted endpoint: %v, want ErrNotFound", err)
 	}
 }
@@ -106,7 +106,7 @@ func TestRequestRoundTrip(t *testing.T) {
 	ep, _ := s.CreateEndpoint(ctx, "/b")
 	binary := []byte{0, 1, 2, 0xff, 0xfe, '\r', '\n', 0}
 	in := sample(ep.ID, string(binary))
-	if err := s.AddRequest(ctx, in, 1000, nil); err != nil {
+	if err := s.AddRequest(ctx, in, Keep{Normal: 1000}, nil); err != nil {
 		t.Fatal(err)
 	}
 	out, err := s.Request(ctx, in.ID)
@@ -129,7 +129,7 @@ func TestRequestRoundTrip(t *testing.T) {
 
 	empty := sample(ep.ID, "")
 	empty.Body = nil // as io.ReadAll never returns, but a caller might
-	if err := s.AddRequest(ctx, empty, 1000, nil); err != nil {
+	if err := s.AddRequest(ctx, empty, Keep{Normal: 1000}, nil); err != nil {
 		t.Fatal(err)
 	}
 	var isNull bool
@@ -147,7 +147,7 @@ func TestTooLargeKeepsNoBody(t *testing.T) {
 	ep, _ := s.CreateEndpoint(ctx, "/big")
 	r := sample(ep.ID, "partial bytes that must not be kept")
 	r.TooLarge, r.Size, r.Status = true, 20<<20, 413
-	if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+	if err := s.AddRequest(ctx, r, Keep{Normal: 1000}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Request(ctx, r.ID)
@@ -161,11 +161,11 @@ func TestRetentionPrunesOldest(t *testing.T) {
 	s := openTemp(t)
 	ep, _ := s.CreateEndpoint(ctx, "/r")
 	other, _ := s.CreateEndpoint(ctx, "/other")
-	if err := s.AddRequest(ctx, sample(other.ID, "x"), 3, nil); err != nil {
+	if err := s.AddRequest(ctx, sample(other.ID, "x"), Keep{Normal: 3}, nil); err != nil {
 		t.Fatal(err)
 	}
 	for range 5 {
-		if err := s.AddRequest(ctx, sample(ep.ID, "x"), 3, nil); err != nil {
+		if err := s.AddRequest(ctx, sample(ep.ID, "x"), Keep{Normal: 3}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -189,13 +189,13 @@ func TestUnmatchedRegister(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t)
 	ep, _ := s.CreateEndpoint(ctx, "/known")
-	if err := s.AddRequest(ctx, sample(ep.ID, "x"), 1000, nil); err != nil {
+	if err := s.AddRequest(ctx, sample(ep.ID, "x"), Keep{Normal: 1000}, nil); err != nil {
 		t.Fatal(err)
 	}
 	for range 4 {
 		r := sample(Unmatched, "y")
 		r.Status = 404
-		if err := s.AddRequest(ctx, r, 3, nil); err != nil {
+		if err := s.AddRequest(ctx, r, Keep{Normal: 3}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -231,7 +231,7 @@ func TestPagingAndAfter(t *testing.T) {
 	var ids []int64
 	for range 5 {
 		r := sample(ep.ID, "x")
-		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+		if err := s.AddRequest(ctx, r, Keep{Normal: 1000}, nil); err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, r.ID)
@@ -256,7 +256,7 @@ func TestDeliveries(t *testing.T) {
 	var rs []*Request
 	for _, b := range []string{"evt-1", "evt-2", "evt-1", "", "evt-1"} {
 		r := sample(ep.ID, b)
-		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+		if err := s.AddRequest(ctx, r, Keep{Normal: 1000}, nil); err != nil {
 			t.Fatal(err)
 		}
 		rs = append(rs, r)
@@ -291,7 +291,7 @@ func TestDeliveryNumbers(t *testing.T) {
 			reg = Unmatched
 		}
 		r := sample(reg, []string{"evt-1", "evt-2", "", "evt-3", "evt-1", "evt-1"}[i%6])
-		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+		if err := s.AddRequest(ctx, r, Keep{Normal: 1000}, nil); err != nil {
 			t.Fatal(err)
 		}
 		rs = append(rs, *r)
@@ -321,13 +321,13 @@ func TestEachSelectedPagesByBytes(t *testing.T) {
 	var ids []int64
 	for i := range 10 {
 		r := sample(ep.ID, strings.Repeat(string(rune('a'+i)), 400))
-		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+		if err := s.AddRequest(ctx, r, Keep{Normal: 1000}, nil); err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, r.ID)
 	}
 	big := sample(ep.ID, strings.Repeat("z", 5000)) // over the budget alone
-	if err := s.AddRequest(ctx, big, 1000, nil); err != nil {
+	if err := s.AddRequest(ctx, big, Keep{Normal: 1000}, nil); err != nil {
 		t.Fatal(err)
 	}
 	ids = append(ids, big.ID)
@@ -366,7 +366,7 @@ func TestConcurrentAdds(t *testing.T) {
 	errs := make(chan error, 100)
 	for range 100 {
 		wg.Go(func() {
-			if err := s.AddRequest(ctx, sample(ep.ID, "x"), 1000, nil); err != nil {
+			if err := s.AddRequest(ctx, sample(ep.ID, "x"), Keep{Normal: 1000}, nil); err != nil {
 				errs <- err
 			}
 		})
@@ -401,15 +401,18 @@ func TestConfigAndCounter(t *testing.T) {
 	}
 
 	var seen []int64
-	decide := func(n int64) (int, string) { seen = append(seen, n); return 500, fmt.Sprintf(`{"counter":%d}`, n) }
+	decide := func(in DecideIn) (int, string, string) {
+		seen = append(seen, in.Counter)
+		return 500, fmt.Sprintf(`{"counter":%d}`, in.Counter), ""
+	}
 	for range 3 {
-		if err := s.AddRequest(ctx, sample(ep.ID, "x"), 1000, decide); err != nil {
+		if err := s.AddRequest(ctx, sample(ep.ID, "x"), Keep{Normal: 1000}, decide); err != nil {
 			t.Fatal(err)
 		}
 	}
 	refused := sample(ep.ID, "x")
 	refused.Status, refused.Outcome = 400, `{"action":"refused"}`
-	if err := s.AddRequest(ctx, refused, 1000, nil); err != nil {
+	if err := s.AddRequest(ctx, refused, Keep{Normal: 1000}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if e, _ := s.Endpoint(ctx, ep.ID); e.Counter != 3 {
@@ -419,7 +422,7 @@ func TestConfigAndCounter(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := sample(ep.ID, "x")
-	if err := s.AddRequest(ctx, r, 1000, decide); err != nil {
+	if err := s.AddRequest(ctx, r, Keep{Normal: 1000}, decide); err != nil {
 		t.Fatal(err)
 	}
 	if fmt.Sprint(seen) != "[1 2 3 1]" || r.Status != 500 || r.Outcome != `{"counter":1}` {
@@ -452,12 +455,13 @@ func TestDecideIsExactUnderConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 99 {
 		wg.Go(func() {
-			err := s.AddRequest(ctx, sample(ep.ID, "x"), 1000, func(n int64) (int, string) {
-				if n%3 == 0 {
-					return 500, "rule"
+			err := s.AddRequest(ctx, sample(ep.ID, "x"), Keep{Normal: 1000}, func(in DecideIn) (int, string, string) {
+				if in.Counter%3 == 0 {
+					return 500, "rule", ""
 				}
-				return 200, "default"
+				return 200, "default", ""
 			})
+
 			if err != nil {
 				t.Error(err)
 			}
@@ -508,13 +512,13 @@ func TestEachSelected(t *testing.T) {
 	for i := range 450 { // more than two pages
 		r := sample(ep.ID, fmt.Sprint(i))
 		r.ReceivedAt = base.Add(time.Duration(i) * time.Second)
-		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+		if err := s.AddRequest(ctx, r, Keep{Normal: 1000}, nil); err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, r.ID)
 		nos = append(nos, r.No)
 	}
-	s.AddRequest(ctx, sample(other.ID, "x"), 1000, nil)
+	s.AddRequest(ctx, sample(other.ID, "x"), Keep{Normal: 1000}, nil)
 	collect := func(sel Selection, withBody bool) (got []Request) {
 		t.Helper()
 		if err := s.EachSelected(ctx, ep.ID, sel, withBody, func(r Request) error { got = append(got, r); return nil }); err != nil {
@@ -552,7 +556,7 @@ func TestListFiltersAndSetPath(t *testing.T) {
 	}{{"pass", 200}, {"fail", 401}, {"pass", 500}, {"n/v", 413}, {"fail", 200}} {
 		r := sample(ep.ID, fmt.Sprint(i))
 		r.Verdict, r.Status = v.verdict, v.status
-		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+		if err := s.AddRequest(ctx, r, Keep{Normal: 1000}, nil); err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, r.ID)
@@ -609,14 +613,14 @@ func TestListByContent(t *testing.T) {
 	var ids []int64
 	for _, body := range []string{`{"task":"A-1"}`, `{"task":"a-1"}`, "\xff\xfeA-1", `{"task":"A-1","n":2}`, ""} {
 		r := sample(ep.ID, body)
-		if err := s.AddRequest(ctx, r, 1000, nil); err != nil {
+		if err := s.AddRequest(ctx, r, Keep{Normal: 1000}, nil); err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, r.ID)
 	}
 	big := sample(ep.ID, "")
 	big.Body, big.TooLarge, big.Size = nil, true, 1<<30
-	if err := s.AddRequest(ctx, big, 1000, nil); err != nil {
+	if err := s.AddRequest(ctx, big, Keep{Normal: 1000}, nil); err != nil {
 		t.Fatal(err)
 	}
 	ids = append(ids, big.ID)
@@ -661,53 +665,5 @@ func TestListByContent(t *testing.T) {
 	}
 	if _, err := s.List(ctx, ep.ID, ListQuery{Match: counting, Limit: 1}); err != nil || asked != 1 {
 		t.Fatalf("Match asked %d times for a limit of 1 (%v)", asked, err)
-	}
-}
-
-// KeptFrom is where a register's kept requests begin when older ones are
-// gone (pruned past the retention, or cleared): the strip shades the time
-// before it as not kept.
-func TestKeptFrom(t *testing.T) {
-	ctx := context.Background()
-	s := openTemp(t)
-	ep, err := s.CreateEndpoint(ctx, "/a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, err := s.KeptFrom(ctx, ep.ID); err != nil || ok {
-		t.Fatalf("empty register: %v %v", ok, err)
-	}
-	at := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
-	add := func(reg int64, i int) {
-		r := sample(reg, "x")
-		r.ReceivedAt = at.Add(time.Duration(i) * time.Minute)
-		if err := s.AddRequest(ctx, r, 3, nil); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for i := range 3 {
-		add(ep.ID, i)
-	}
-	if _, ok, _ := s.KeptFrom(ctx, ep.ID); ok {
-		t.Fatal("nothing pruned yet")
-	}
-	add(ep.ID, 3) // the 4th prunes the 1st
-	from, ok, err := s.KeptFrom(ctx, ep.ID)
-	if err != nil || !ok || !from.Equal(at.Add(time.Minute)) {
-		t.Fatalf("after pruning: %v %v %v", from, ok, err)
-	}
-	if err := s.ClearRequests(ctx, ep.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, _ := s.KeptFrom(ctx, ep.ID); ok {
-		t.Fatal("a cleared register has no kept requests to begin")
-	}
-	add(ep.ID, 10)
-	if from, ok, _ := s.KeptFrom(ctx, ep.ID); !ok || !from.Equal(at.Add(10*time.Minute)) {
-		t.Fatalf("after a clear: %v %v", from, ok)
-	}
-	add(Unmatched, 0)
-	if _, ok, _ := s.KeptFrom(ctx, Unmatched); ok {
-		t.Fatal("Unmatched: its first request")
 	}
 }

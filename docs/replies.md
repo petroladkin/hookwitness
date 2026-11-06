@@ -27,14 +27,33 @@ sender waited for a timeout.
 
 On the **Rules** tab, click **New rule**, then choose:
 
-- **When**: `every Nth request`, `the first N requests` (since the counter
-  was reset) or `at random, p%`.
+- **When**, by count: `every Nth request`, `the first N requests` (since the
+  counter was reset) or `at random, p%`.
+- **When**, by time and state:
+  - `within a time after the start`: from **From** to **Until** seconds after
+    the endpoint's clock started; with **Until** blank it never ends;
+  - `flapping: down, then up, again`: a cycle that starts with its **Down**
+    part, when the rule takes the requests, then its **Up** part, counted in
+    seconds or in requests;
+  - `over a rate, then blocked`: more than **N** requests within **Per**
+    seconds trip it, and it then takes every request for **Block** seconds;
+    it counts every request the rules see, also those an earlier rule
+    takes;
+  - `the first N attempts of each event`: attempts of the same event, by the
+    endpoint's [event id](delivery.md), or of the same body without one.
 - **Do**: `reply as below` (a status, headers, a body, a delay with random
   jitter), `time out: hold, never answer` or `drop: reset the connection`.
 
 The arrows move a rule up or down, because order matters. The counter on the
-Rules tab counts the requests the rules have seen. **Reset counter** starts
-it again, so "the first 2 requests" can be replayed.
+Rules tab counts the requests the rules have seen. The endpoint's clock
+starts at the first of them, and the Rules tab shows when. **Reset counter
+and clock** starts both again, so "the first 2 requests" or "the first 30
+seconds" can be replayed. A rate limit's count and block are cleared with
+them. Turning the endpoint off and on keeps them, and so does a change to a
+rule, except to that rule's own rate limit.
+
+The request page and the reports name the rule that answered. A rule by
+time also says when, as `rule 1 · first 30 s · at 12.4 s`.
 
 ### Fail every 3rd delivery
 
@@ -55,8 +74,8 @@ curl -s -d '{"invoice":"in_3"}' $H   # 500 from rule 1
 On `/billing/retry`, add a rule: the first 2 requests, reply `503` with the
 header `Retry-After: 2`. A sender with retries and backoff should deliver on
 its third try. The request page then shows `delivery 3 of this body`, and
-the report shows the gaps between the deliveries. Click **Reset counter** to
-run it again.
+the report shows the gaps between the deliveries. Click **Reset counter and
+clock** to run it again.
 
 ![The Rule 1 dialog: the first 2 requests, reply 503 with Retry-After: 2](images/behaviour-rule-edit.webp)
 
@@ -66,6 +85,84 @@ H=http://127.0.0.1:8080/billing/retry
 curl -s -d '{"invoice":"in_7"}' $H   # 503
 curl -s -d '{"invoice":"in_7"}' $H   # 503
 curl -s -d '{"invoice":"in_7"}' $H   # 200
+```
+
+### Down for the first seconds after a deploy
+
+A receiver that is restarting answers `503` for a while, then works. On
+`/deploy/hook`, add a rule: `within a time after the start`, **Until** `2`
+seconds (30 or more in a real test), reply `503` with the header
+`Retry-After: {{.RetryAfter}}`. The clock starts with the first request,
+so the sender meets the outage however late it starts.
+`{{.RetryAfter}}` counts down the seconds until the window ends.
+
+![The Rule 1 dialog: within a time after the start, until 2 s, reply 503 with Retry-After](images/behaviour-rule-window.webp)
+
+<!-- docs-check: setup: deploy_window -->
+```sh
+H=http://127.0.0.1:8080/deploy/hook
+curl -s -d '{"n":1}' $H   # 503 at 0 s
+sleep 2
+curl -s -d '{"n":2}' $H   # 200 the window is over
+```
+
+### Rate limited, with Retry-After
+
+An API that allows 2 requests in 10 seconds answers the third `429` and
+blocks for a while. On `/api/limited`, add a rule: `over a rate, then
+blocked`, **N** `2`, **Per** `10` seconds, **Block** `2` seconds, reply `429`
+with the header `Retry-After: {{.RetryAfter}}`. After the block the count
+starts again.
+
+![The Rules tab of /api/limited: 3 counted, the clock's start, the rule over 2 in 10 s: 2 s → 429](images/behaviour-rules-clock.webp)
+
+<!-- docs-check: setup: rate_limited -->
+```sh
+H=http://127.0.0.1:8080/api/limited
+curl -s -d '{}' $H   # 200
+curl -s -d '{}' $H   # 200
+curl -s -o /dev/null -w '%{http_code} Retry-After: %header{retry-after}\n' -d '{}' $H
+# 429 Retry-After: 2
+sleep 2
+curl -s -d '{}' $H   # 200 the block is over
+```
+
+Whether the sender waited as asked is a verdict of its own: add a
+[backoff check](delivery.md#retry-backoff) and a retry that comes
+before the `Retry-After` fails it. The Rules tab offers the check when a
+reply sends `Retry-After`.
+
+### Flapping
+
+An instance that goes down and up again: on `/flaky/hook`, add a rule:
+`flapping: down, then up, again`, **Down** `1`, **Up** `1`, counted in
+seconds, reply `503`. The cycle starts with the down part at the first
+request, then repeats: down from 0 to 1 s, up from 1 to 2 s, down again.
+Counted in requests, **Down** `1` and **Up** `2` fail every third request
+starting with the first.
+
+<!-- docs-check: setup: flapping -->
+```sh
+H=http://127.0.0.1:8080/flaky/hook
+curl -s -d '{}' $H   # 503 down
+sleep 1.5
+curl -s -d '{}' $H   # 200 up
+sleep 1
+curl -s -d '{}' $H   # 503 down again
+```
+
+### Gone after a while
+
+A resource that is deleted answers `410` from then on. On `/legacy/gone`,
+add a rule: `within a time after the start`, **From** `2` seconds, **Until**
+blank, reply `410`.
+
+<!-- docs-check: setup: gone_after -->
+```sh
+H=http://127.0.0.1:8080/legacy/gone
+curl -s -d '{}' $H   # 200
+sleep 2
+curl -s -d '{}' $H   # 410 gone from now on
 ```
 
 ### A slow receiver
@@ -160,6 +257,9 @@ Header values and bodies of replies are Go templates over the request:
 | `{{.JSON "event.items.0.id"}}` | a field of a JSON body, by a dotted path |
 | `{{.Var.TOKEN}}` | a variable from the **Variables** tab |
 | `{{.N}}` | the request's number since the counter was reset |
+| `{{.RetryAfter}}` | whole seconds until the matching rule's condition ends (a window with an end, a flap's down part in seconds, a rate block), at least 1; else 0 |
+| `{{.Elapsed}}` | seconds since the endpoint's clock started, such as `12.4` |
+| `{{.Attempt}}` | the request's attempt of its event (by the event id, else the body); 1 without one |
 | `{{.Method}}`, `{{.Path}}`, `{{.Body}}` | the request itself |
 
 `if`, `with` and the standard functions work; `range` and sub-templates do
@@ -186,8 +286,10 @@ as a page of the UI when someone opens it in a browser. Webhook senders do not
 render pages, so they see no difference. A `Content-Security-Policy` of
 your own is sent as well, next to `sandbox` (the browser applies both);
 an `X-Content-Type-Options` of your own replaces `nosniff`. A reply never
-sets the admin's login cookie: a `Set-Cookie` of `hookwitness_session` is
-not sent. The request page lists the headers sent.
+sets the admin's cookies: a `Set-Cookie` of `hookwitness_session` (the
+login) or `hookwitness_oidc` (a sign-in through a provider) is not sent,
+whether the endpoint scripts it or its receiver answers with it. The
+request page lists the headers sent.
 
 ## Required headers
 
@@ -205,6 +307,12 @@ H=http://127.0.0.1:8080/partner/hooks
 curl -s -d '{}' -H 'X-Api-Key: key_test' $H   # 200
 curl -s -d '{}' -H 'X-Api-Key: nope' $H       # 401 refused by the check
 ```
+
+## A real receiver behind it
+
+An endpoint can also pass requests on to a real receiver and answer with
+its answer, rules still taking some for faults: see [Recording a live
+integration](recorder.md).
 
 ## With the API
 

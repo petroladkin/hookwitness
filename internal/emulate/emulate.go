@@ -54,8 +54,18 @@ const (
 // Condition says which requests a rule takes.
 type Condition struct {
 	Kind    string  `json:"kind"`
-	N       int64   `json:"n,omitempty"`
+	N       int64   `json:"n,omitempty"` // every, first; rate's requests; attempts
 	Percent float64 `json:"percent,omitempty"`
+	// window (clock.go): seconds since the start; ToS 0: for ever.
+	FromS float64 `json:"from_s,omitempty"`
+	ToS   float64 `json:"to_s,omitempty"`
+	// flap: Down then Up, repeating, in Unit "s" or "requests".
+	Down float64 `json:"down,omitempty"`
+	Up   float64 `json:"up,omitempty"`
+	Unit string  `json:"unit,omitempty"`
+	// rate: more than N within PerS seconds, then for BlockS seconds.
+	PerS   float64 `json:"per_s,omitempty"`
+	BlockS float64 `json:"block_s,omitempty"`
 }
 
 // Rule is a condition and what to do when it holds.
@@ -63,6 +73,10 @@ type Rule struct {
 	When  Condition `json:"when"`
 	Do    string    `json:"do"`              // ActReply, ActTimeout or ActDrop
 	Reply Reply     `json:"reply,omitempty"` // for ActReply
+	// Forward: on an endpoint that forwards, the receiver gets the request
+	// too, while the sender gets this rule's answer. Off: the receiver
+	// never sees the requests this rule takes.
+	Forward bool `json:"forward,omitempty"`
 }
 
 // Check match kinds.
@@ -96,6 +110,15 @@ type Check struct {
 	Schema  string   `json:"schema,omitempty"`  // KindSchema: the schema's name, when there is no Select
 	Schemas []string `json:"schemas,omitempty"` // KindSchema: instead of Schema, several: the body must match one of them
 	Select  *Select  `json:"select,omitempty"`  // KindSchema: pick the schema by a value of the request
+
+	Order        *OrderSpec `json:"order,omitempty"`         // KindOrder: the value to order by
+	Group        *Source    `json:"group,omitempty"`         // KindOrder: order within each value of this
+	FirstS       float64    `json:"first_s,omitempty"`       // KindBackoff: the gap before attempt 2, s
+	Factor       float64    `json:"factor,omitempty"`        // KindBackoff: each gap is this times the last; 0 = 2
+	MaxS         float64    `json:"max_s,omitempty"`         // KindBackoff: the longest gap, s; 0 = none
+	MaxAttempts  int        `json:"max_attempts,omitempty"`  // KindBackoff: 0 = no limit
+	TolerancePct int        `json:"tolerance_pct,omitempty"` // KindBackoff: 0 = 25
+	RetryAfter   *bool      `json:"retry_after,omitempty"`   // KindBackoff: judge Retry-After; nil = true
 }
 
 // Var is an endpoint variable: a test value in plain text, never a secret.
@@ -112,6 +135,12 @@ type Config struct {
 	Vars    []Var    `json:"vars,omitempty"`
 	Secrets []Secret `json:"secrets,omitempty"` // sealed or hashed; never template data
 	Schemas []Schema `json:"schemas,omitempty"` // JSON Schemas for schema checks
+	// Event is where the sender puts an event's id, the same on every
+	// retry; nil: attempts are counted per body (delivery.go).
+	Event *Source `json:"event,omitempty"`
+	// Forward makes the endpoint pass requests through to a receiver
+	// (forward.go); nil: it answers them itself.
+	Forward *Forward `json:"forward,omitempty"`
 }
 
 // DefaultConfig is what a new endpoint does: 200 with an empty body.
@@ -162,6 +191,16 @@ func (c Config) Validate(maxWait time.Duration) error {
 	}
 	if err := c.validateSecrets(); err != nil {
 		return err
+	}
+	if c.Event != nil {
+		if err := c.Event.validate("event id"); err != nil {
+			return err
+		}
+	}
+	if c.Forward != nil {
+		if err := c.Forward.validate(maxWait); err != nil {
+			return fmt.Errorf("receiver: %w", err)
+		}
 	}
 	if len(c.Schemas) > 0 {
 		if _, err := c.compiled(); err != nil {
@@ -247,6 +286,10 @@ func (r Rule) validate(maxWait time.Duration) error {
 		if r.When.Percent <= 0 || r.When.Percent > 100 {
 			return errors.New("the percentage must be above 0 and at most 100")
 		}
+	case WhenWindow, WhenFlap, WhenRate, WhenAttempts:
+		if err := validateClock(r.When); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unknown condition %q", r.When.Kind)
 	}
@@ -300,6 +343,8 @@ func (c Condition) Label() string {
 		return "first " + strconv.FormatInt(c.N, 10)
 	case WhenRandom:
 		return strconv.FormatFloat(c.Percent, 'f', -1, 64) + "%"
+	case WhenWindow, WhenFlap, WhenRate, WhenAttempts:
+		return clockLabel(c)
 	}
 	return c.Kind
 }
@@ -422,17 +467,23 @@ type Choice struct {
 	Label string // the rule's condition, empty for the default
 	Do    string
 	Reply Reply // for ActReply
+	// By the clock (Decide): the time since the start; whole seconds until
+	// the matched condition stops holding (0: it does not end by time); a
+	// rate rule's block end (unix ms).
+	Elapsed    time.Duration
+	RetryAfter int
+	BlockUntil int64
+	// Forward: the receiver gets the request (Do is ActForward, or a rule
+	// with its forward switch on an endpoint that forwards).
+	Forward bool
 }
 
 // Choose picks the first rule whose condition holds for the request
-// numbered n, else the default reply.
+// numbered n, else the default reply, for conditions that need no clock
+// (Decide reads the clock and the state).
 func (c Config) Choose(n int64) Choice {
-	for i, r := range c.Rules {
-		if r.When.holds(n) {
-			return Choice{Rule: i + 1, Label: r.When.Label(), Do: r.Do, Reply: r.Reply}
-		}
-	}
-	return Choice{Do: ActReply, Reply: c.Default}
+	ch, _ := c.Decide(ChooseIn{Counter: n, At: time.Now()})
+	return ch
 }
 
 // Refusal is the reply to a request that failed a check.

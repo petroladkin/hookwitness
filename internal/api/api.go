@@ -38,6 +38,7 @@ type Options struct {
 	Keyring  emulate.Keyring // opens secrets for re-checks; nil: checks needing one are n/v
 	Stop     <-chan struct{} // closed on shutdown: waiting calls answer at once
 	Version  string          // the build, named in reports
+	Keep     store.Keep      // the server's default retention per register
 	Fonts    fs.FS           // the UI's fonts, embedded in HTML reports
 	// Access checks passwords and makes tokens; nil: login is off for good
 	// (tests). The caller's identity comes in the request's context
@@ -46,6 +47,11 @@ type Options struct {
 	// Replay sends caught requests to targets; nil: a service with the
 	// default target policy and no -max-inflight budget (tests).
 	Replay *replay.Service
+	// MaxDBSize is the database size limit, in the storage answer; 0: none.
+	MaxDBSize int64
+	// Providers are the OpenID Connect providers configured: names, labels
+	// and issuers, nothing secret (GET /login/providers, identities).
+	Providers []Provider
 }
 
 // Handler serves the API. Create it with New.
@@ -69,7 +75,7 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 		o.MaxWait = 5 * time.Minute
 	}
 	if o.Replay == nil {
-		o.Replay = replay.New(st, log, replay.Options{MaxWait: o.MaxWait})
+		o.Replay = replay.New(st, log, replay.Options{MaxWait: o.MaxWait, Live: broker})
 	}
 	h := &Handler{store: st, live: broker, log: log, o: o, base: Base(o.Prefix), mux: http.NewServeMux(), replay: o.Replay}
 	b := h.base
@@ -109,17 +115,27 @@ func (h *Handler) routes() []route {
 		{"GET", "/endpoints/{id}/requests", h.listRequests, needAny},
 		{"DELETE", "/endpoints/{id}/requests", h.clearRequests, needAny},
 		{"GET", "/requests/{id}", h.getRequest, needAny},
+		{"PUT", "/requests/{id}/pin", h.pin(true), needAny},
+		{"DELETE", "/requests/{id}/pin", h.pin(false), needAny},
 		{"GET", "/requests/{id}/body", h.rawBody, needAny},
 		{"GET", "/requests/{id}/image", h.getImage, needAny},
 		{"POST", "/requests/{id}/replays", h.replayRequest, needAdminRole},
+		{"GET", "/requests/{id}/forward", h.getForward, needAny},
+		{"GET", "/storage", h.storage, needAny},
+		{"GET", "/requests/{id}/forward/body", h.forwardBody, needAny},
 		{"GET", "/requests/{id}/replays", h.listReplays, needAny},
 		{"GET", "/replays/{id}", h.getReplay, needAny},
 		{"GET", "/replays/{id}/body", h.replayBody, needAny},
 		{"GET", "/setup", h.exportSetup, needAny},
 		{"POST", "/setup", h.importSetup, needAny},
+		{"GET", "/unmatched", h.getUnmatched, needAny},
+		{"PATCH", "/unmatched", h.patchUnmatched, needAny},
 		{"GET", "/unmatched/requests", h.listUnmatched, needAny},
 		{"GET", "/unmatched/report", h.unmatchedReport, needAny},
 		{"GET", "/me", h.me, needAny},
+		{"GET", "/login/providers", h.loginProviders, needNobody},
+		{"DELETE", "/me/identities/{provider}", h.unlinkOwn, needSession},
+		{"DELETE", "/users/{name}/identities/{provider}", h.unlinkUser, needAdmin},
 		{"PUT", "/me/password", h.changeOwnPassword, needSession},
 		{"GET", "/me/tokens", h.listTokens(ownID), needSession},
 		{"POST", "/me/tokens", h.createToken, needSession},

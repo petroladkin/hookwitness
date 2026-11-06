@@ -13,6 +13,9 @@ import (
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/petroladkin/hookwitness/internal/access"
+	"github.com/petroladkin/hookwitness/internal/store"
 )
 
 // MaxBody is how much of a request body a tool result carries; the result
@@ -25,9 +28,10 @@ const (
 	MaxWait     = 300 * time.Second
 )
 
-// apiWait is one long-poll of a chain: the API's longest. Tests shorten it
-// to see the chain.
-var apiWait = 60 * time.Second
+// apiWait is one long-poll of a chain: half the API's longest, so that a
+// revoked token ends a wait within 30 s (each round checks it). Tests
+// shorten it to see the chain.
+var apiWait = 30 * time.Second
 
 // result is what every tool answers: a summary line, then compact JSON.
 // The structured content (which some clients show instead of the text)
@@ -59,6 +63,9 @@ type Filters struct {
 	Status  *int     `json:"status,omitempty" jsonschema:"only requests answered with this status (0: nothing sent, e.g. a timeout)"`
 	Text    string   `json:"text,omitempty" jsonschema:"only requests whose body contains this text (case-sensitive)"`
 	JSON    []string `json:"json,omitempty" jsonschema:"only requests whose JSON body has these values, each as pointer=value, e.g. /type=order.paid; all must match"`
+	Pinned  bool     `json:"pinned,omitempty" jsonschema:"only pinned requests (never pruned by retention)"`
+	Anomaly bool     `json:"anomaly,omitempty" jsonschema:"only anomalies: not answered 2xx, a failed verdict, or a redelivery"`
+	Event   string   `json:"event,omitempty" jsonschema:"only the attempts of this event id (the endpoint's event source)"`
 }
 
 func (f Filters) query(q url.Values) url.Values {
@@ -73,6 +80,15 @@ func (f Filters) query(q url.Values) url.Values {
 	}
 	for _, j := range f.JSON {
 		q.Add("json", j)
+	}
+	if f.Event != "" {
+		q.Set("event", f.Event)
+	}
+	if f.Pinned {
+		q.Set("pinned", "true")
+	}
+	if f.Anomaly {
+		q.Set("anomaly", "true")
 	}
 	return q
 }
@@ -89,6 +105,15 @@ func (f Filters) String() string {
 		parts = append(parts, "text="+strconv.Quote(f.Text))
 	}
 	parts = append(parts, f.JSON...)
+	if f.Event != "" {
+		parts = append(parts, "event="+f.Event)
+	}
+	if f.Pinned {
+		parts = append(parts, "pinned")
+	}
+	if f.Anomaly {
+		parts = append(parts, "anomaly")
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -105,14 +130,22 @@ func (s *tools) register(srv *sdk.Server) {
 		Description: "List the endpoints with their catch URLs and how many requests each keeps."},
 		s.listEndpoints)
 	sdk.AddTool(srv, &sdk.Tool{Name: "get_endpoint", Annotations: readOnly,
-		Description: "One endpoint and its behaviour: checks, rules, the default reply, variables, schemas, and its secrets (names, kinds and fingerprints; values are never shown)."},
+		Description: "One endpoint and its behaviour: checks, rules, the default reply, variables, schemas, and its secrets (names, kinds and fingerprints; values are never shown); " +
+			"counter and started_at: the requests the rules counted and when their clock started, since the last reset."},
 		s.getEndpoint)
 	sdk.AddTool(srv, &sdk.Tool{Name: "configure_endpoint", Annotations: idempotent,
 		Description: "Set parts of an endpoint's behaviour; the parts given replace those parts, the others stay. " +
+			"forward: a receiver ({url, keep_host, insecure_tls, timeout_ms, on_failure: gateway|default}) makes the endpoint a recorder in the middle: requests no rule takes are sent there byte for byte, live traffic leaving the server, and its answer goes back to the sender; false removes it; admin only once login is on. " +
 			"default: the reply {status, headers:[{name,value}], body (a Go template) or body_base64 (exact bytes), delay_ms, jitter_ms}. " +
-			"rules: in order, the first whose condition holds decides: {when:{kind: every|first|random, n | percent}, do: reply|timeout|drop, reply}. " +
+			"rules: in order, the first whose condition holds decides: {when: condition, do: reply|timeout|drop, reply, forward: true lets an endpoint's receiver get the request too}; conditions: {kind: every|first, n}, {kind: random, percent}, " +
+			"and by the clock, which starts at the first request after a reset: {kind: window, from_s, to_s (none: for ever)}, {kind: flap, down, up, unit: s|requests} (down first, repeating), " +
+			"{kind: rate, n, per_s, block_s} (more than n within per_s seconds: then for block_s), {kind: attempts, n} (the first n attempts of each event). " +
+			"Reply templates may say {{.RetryAfter}} (seconds until the matched condition ends), {{.Elapsed}} (seconds since the start), {{.Attempt}}. " +
 			"checks: run first: a required header {header, match: present|equals|regex, value}, an authorization check " +
-			"{kind: github|stripe|standard|hmac|bearer|basic, secret, user (basic), enforce} or a JSON Schema check {kind: schema, schema | schemas | select}. " +
+			"{kind: github|stripe|standard|hmac|bearer|basic, secret, user (basic), enforce}, a JSON Schema check {kind: schema, schema | schemas | select}, " +
+			"or a delivery check, judged against the earlier requests: {kind: duplicates} (a repeat of an event after a 2xx answer fails), " +
+			"{kind: order, order: {from, key, as: number|time}, group} or {kind: backoff, first_s, factor, max_s, max_attempts, tolerance_pct, retry_after}. " +
+			"event: {from: header|body, key}, where the sender puts an event's id (attempts and retry groups follow it). " +
 			"vars: [{name, value}] for templates. schemas: [{name, text}] JSON Schemas. Secrets are set with set_secret."},
 		s.configureEndpoint)
 	sdk.AddTool(srv, &sdk.Tool{Name: "set_secret", Annotations: idempotent,
@@ -138,7 +171,7 @@ func (s *tools) register(srv *sdk.Server) {
 			"Returns pass with the matching requests, or fail with what arrived instead and the reasons of their verdicts."},
 		s.expect)
 	sdk.AddTool(srv, &sdk.Tool{Name: "reset_endpoint", Annotations: destructive,
-		Description: "Reset an endpoint: counter starts the rules' count again (\"the first 2\" counts anew); requests deletes its kept requests."},
+		Description: "Reset an endpoint: counter starts the rules' count and clock again (\"the first 2\" counts anew, \"first 30 s\" starts at the next request) and clears rate limits; requests deletes its kept requests."},
 		s.resetEndpoint)
 	sdk.AddTool(srv, &sdk.Tool{Name: "recheck", Annotations: idempotent,
 		Description: "Verify an endpoint's kept requests again with its current checks, secrets and schemas, e.g. after fixing a secret. Only verdicts change."},
@@ -147,14 +180,26 @@ func (s *tools) register(srv *sdk.Server) {
 		Description: "Turn an endpoint off (enabled false) or on (enabled true). Off keeps its path, behaviour, secrets, requests and counter; " +
 			"requests to its path are answered 404 and kept in the Unmatched register until it is on again."},
 		s.switchEndpoint)
+	sdk.AddTool(srv, &sdk.Tool{Name: "pin_request", Annotations: idempotent,
+		Description: "Pin a request (pinned true, the default) so retention never prunes it, e.g. the one failure that matters in a long capture; pinned false returns it to its lane. " +
+			"Clearing the register or deleting the endpoint still removes it."},
+		s.pinRequest)
+	sdk.AddTool(srv, &sdk.Tool{Name: "set_retention", Annotations: destructive,
+		Description: "Set what an endpoint (or the Unmatched register: endpoint \"unmatched\") keeps. Two lanes, pruned oldest first on their own: normal requests, and anomalies " +
+			"(not answered 2xx, a failed verdict, a redelivery), so a flood of good requests never pushes out a failure; pinned requests are never pruned. " +
+			"Each lane: count (keep the newest this many; anomalies 0 = no separate lane) and max_age such as 90m, 36h or 7d; a field left out takes the server's default. " +
+			"defaults true goes back to the server's defaults. A lowered limit deletes requests at once: the result says how many."},
+		s.setRetention)
 	sdk.AddTool(srv, &sdk.Tool{Name: "export_endpoint", Annotations: readOnly,
 		Description: "Export endpoints' setup as a hookwitness setup file: path, default reply, rules, checks, variables, schemas and the names and kinds of secrets (never their values). " +
-			"Save the setup object as the named .hookwitness.json file; import_endpoints, the UI, the API or hookwitness apply recreate the endpoints from it on any instance."},
+			"Save the setup object as the named .hookwitness.json file; import_endpoints, the UI, the API or hookwitness apply recreate the endpoints from it on any instance. " +
+			"A setup over 4 MiB is an error naming the API's address to download it from instead."},
 		s.exportEndpoint)
 	sdk.AddTool(srv, &sdk.Tool{Name: "import_endpoints", Annotations: replacing,
 		Description: "Create endpoints from a hookwitness setup file (the object export_endpoint gives, or a .hookwitness.json file's content), all or none. " +
 			"Their secrets are created without values: checks that use them give n/v until set_secret gives each value. " +
-			"A path that is already an endpoint is refused unless on_conflict is replace, which replaces its behaviour (its requests, counter and on/off state stay; secrets of the same name and kind keep their values). Importing the same file again changes nothing."},
+			"A path that is already an endpoint is refused unless on_conflict is replace, which replaces its behaviour (its requests, counter and on/off state stay; secrets of the same name and kind keep their values). Importing the same file again changes nothing. " +
+			"A setup file is at most 16 MiB."},
 		s.importEndpoints)
 	sdk.AddTool(srv, &sdk.Tool{Name: "delete_endpoint", Annotations: destructive,
 		Description: "Delete an endpoint with its behaviour, secrets and requests."},
@@ -163,7 +208,8 @@ func (s *tools) register(srv *sdk.Server) {
 
 type tools struct {
 	c    *client
-	stop <-chan struct{} // closed when the server shuts down: waits end
+	stop <-chan struct{}       // closed when the server shuts down: waits end
+	auth *access.Authenticator // login on: a wait ends when its caller's token no longer stands
 }
 
 // ---- endpoints ---------------------------------------------------------------
@@ -196,7 +242,29 @@ func (s *tools) listEndpoints(ctx context.Context, _ *sdk.CallToolRequest, _ str
 	if off > 0 {
 		summary += fmt.Sprintf(", %d off (requests to an off endpoint go to Unmatched)", off)
 	}
+	if st, err := s.c.get(ctx, "/storage", nil); err == nil {
+		summary += "; " + storageWords(st)
+		out["storage"] = st
+	}
 	return result(summary, out)
+}
+
+// storageWords is the database's size in a line: "database 1.8 GiB of
+// 4.0 GiB (size limit), 3 warning(s): …".
+func storageWords(st map[string]any) string {
+	n := func(v any) string { f, _ := v.(float64); return store.Size(int64(f)) }
+	s := "database " + n(st["used_bytes"])
+	if st["limit_bytes"] != nil {
+		s += " of " + n(st["limit_bytes"]) + " (size limit: the oldest bodies, then requests, are dropped over it; pinned never)"
+	} else {
+		s += ", no size limit"
+	}
+	if ws, _ := st["warnings"].([]any); len(ws) > 0 {
+		for _, w := range ws {
+			s += fmt.Sprintf("; warning: %v", w)
+		}
+	}
+	return s
 }
 
 func (s *tools) getEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in EndpointIn) (*sdk.CallToolResult, map[string]any, error) {
@@ -220,7 +288,113 @@ func (s *tools) getEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in Endp
 	if ep["enabled"] == false {
 		summary += "; off: requests to it go to Unmatched"
 	}
+	if at, ok := ep["started_at"].(string); ok {
+		summary += fmt.Sprintf("; the rules counted %v since their clock started at %s", num(ep["counter"]), at)
+	}
 	return result(summary, ep)
+}
+
+type PinIn struct {
+	RequestID int64 `json:"request_id" jsonschema:"the id of the request"`
+	Pinned    *bool `json:"pinned,omitempty" jsonschema:"true (the default) pins it, false unpins it"`
+}
+
+func (s *tools) pinRequest(ctx context.Context, _ *sdk.CallToolRequest, in PinIn) (*sdk.CallToolResult, map[string]any, error) {
+	on := in.Pinned == nil || *in.Pinned
+	method := http.MethodPut
+	if !on {
+		method = http.MethodDelete
+	}
+	path := "/requests/" + strconv.FormatInt(in.RequestID, 10)
+	if _, err := s.c.call(ctx, method, path+"/pin", nil, nil); err != nil {
+		return nil, nil, err
+	}
+	r, err := s.c.get(ctx, path, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.cut(r)
+	if on {
+		return result(fmt.Sprintf("request %d is pinned: retention never prunes it", in.RequestID), r)
+	}
+	return result(fmt.Sprintf("request %d is unpinned: it is kept or pruned with its lane again", in.RequestID), r)
+}
+
+// LaneIn is one retention lane as a tool takes it.
+type LaneIn struct {
+	Count  *int   `json:"count,omitempty" jsonschema:"keep the newest this many"`
+	MaxAge string `json:"max_age,omitempty" jsonschema:"nothing older than this, e.g. 90m, 36h or 7d"`
+}
+
+type RetentionIn struct {
+	Endpoint  string  `json:"endpoint" jsonschema:"the endpoint: its id, its exact path, or unmatched"`
+	Normal    *LaneIn `json:"normal,omitempty" jsonschema:"the normal requests' lane"`
+	Anomalies *LaneIn `json:"anomalies,omitempty" jsonschema:"the anomalies' lane (not for unmatched)"`
+	Defaults  bool    `json:"defaults,omitempty" jsonschema:"true: back to the server's defaults (normal and anomalies left out)"`
+}
+
+func (s *tools) setRetention(ctx context.Context, _ *sdk.CallToolRequest, in RetentionIn) (*sdk.CallToolResult, map[string]any, error) {
+	p, err := s.c.endpointPath(ctx, in.Endpoint)
+	if err != nil {
+		return nil, nil, err
+	}
+	var policy any // nil: the defaults
+	if !in.Defaults {
+		if in.Normal == nil && in.Anomalies == nil {
+			return nil, nil, errors.New("give normal, anomalies or both, or defaults: true")
+		}
+		m := map[string]any{}
+		for name, l := range map[string]*LaneIn{"normal": in.Normal, "anomalies": in.Anomalies} {
+			if l == nil {
+				continue
+			}
+			lane := map[string]any{}
+			if l.Count != nil {
+				lane["count"] = *l.Count
+			}
+			if l.MaxAge != "" {
+				lane["max_age"] = l.MaxAge
+			}
+			m[name] = lane
+		}
+		policy = m
+	} else if in.Normal != nil || in.Anomalies != nil {
+		return nil, nil, errors.New("defaults: true goes back to the server's defaults; leave normal and anomalies out")
+	}
+	ep, err := s.c.call(ctx, http.MethodPatch, p, nil, map[string]any{"retention": policy})
+	if err != nil {
+		return nil, nil, err
+	}
+	return result(fmt.Sprintf("%s keeps %s; %v request(s) removed now", nameOf(ep, p), keeps(ep), num(ep["to_prune"])), ep)
+}
+
+// nameOf is an endpoint's path, or "Unmatched".
+func nameOf(ep map[string]any, apiPath string) string {
+	if apiPath == "/unmatched" {
+		return "Unmatched"
+	}
+	return fmt.Sprint(ep["path"])
+}
+
+// keeps reads an endpoint's effective retention as words.
+func keeps(ep map[string]any) string {
+	eff, _ := ep["retention_effective"].(map[string]any)
+	lane := func(v any, what string) string {
+		l, _ := v.(map[string]any)
+		if l == nil {
+			return ""
+		}
+		out := fmt.Sprintf("the newest %v %s", num(l["count"]), what)
+		if a, ok := l["max_age"].(string); ok {
+			out += " for at most " + a
+		}
+		return out
+	}
+	out := lane(eff["normal"], "requests")
+	if a := lane(eff["anomalies"], "anomalies"); a != "" {
+		out = lane(eff["normal"], "normal requests") + " and " + a
+	}
+	return out
 }
 
 type SwitchIn struct {
@@ -256,6 +430,8 @@ type ConfigureIn struct {
 	Checks   any    `json:"checks,omitempty" jsonschema:"the checks, in order (replaces all checks)"`
 	Vars     any    `json:"vars,omitempty" jsonschema:"template variables [{name, value}] (replaces all)"`
 	Schemas  any    `json:"schemas,omitempty" jsonschema:"JSON Schemas [{name, text}] (replaces all)"`
+	Event    any    `json:"event,omitempty" jsonschema:"where the sender puts an event's id, the same on every retry: {from: header|body, key}, e.g. {from: header, key: X-GitHub-Delivery} or {from: body, key: /id}"`
+	Forward  any    `json:"forward,omitempty" jsonschema:"a receiver to pass requests through to, sending live traffic outward: {url, keep_host, insecure_tls, timeout_ms, on_failure: gateway|default}; false removes it. Admin only once login is on"`
 }
 
 func (s *tools) configureEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in ConfigureIn) (*sdk.CallToolResult, map[string]any, error) {
@@ -263,15 +439,16 @@ func (s *tools) configureEndpoint(ctx context.Context, _ *sdk.CallToolRequest, i
 	if err != nil {
 		return nil, nil, err
 	}
-	parts := map[string]any{"default": in.Default, "rules": in.Rules, "checks": in.Checks, "vars": in.Vars, "schemas": in.Schemas}
+	parts := map[string]any{"default": in.Default, "rules": in.Rules, "checks": in.Checks, "vars": in.Vars, "schemas": in.Schemas, "event": in.Event,
+		"forward": in.Forward}
 	var changed []string
-	for _, k := range []string{"default", "rules", "checks", "vars", "schemas"} {
+	for _, k := range []string{"default", "rules", "checks", "vars", "schemas", "event", "forward"} {
 		if parts[k] != nil {
 			changed = append(changed, k)
 		}
 	}
 	if len(changed) == 0 {
-		return nil, nil, errors.New("give at least one of default, rules, checks, vars, schemas")
+		return nil, nil, errors.New("give at least one of default, rules, checks, vars, schemas, event, forward")
 	}
 	// Read, change the parts given, write with If-Match; a change made in
 	// between (the UI, another agent) is retried once.
@@ -287,6 +464,9 @@ func (s *tools) configureEndpoint(ctx context.Context, _ *sdk.CallToolRequest, i
 		delete(doc, "secrets")
 		for _, k := range changed {
 			doc[k] = parts[k]
+			if k == "forward" && parts[k] == false {
+				delete(doc, k) // no receiver: the endpoint answers itself
+			}
 		}
 		out, err := s.c.putBehaviour(ctx, p, hd.Get("ETag"), doc)
 		var ae *apiError
@@ -296,7 +476,16 @@ func (s *tools) configureEndpoint(ctx context.Context, _ *sdk.CallToolRequest, i
 		if err != nil {
 			return nil, nil, err
 		}
-		return result("Set "+strings.Join(changed, ", ")+"; the next request is answered by the new behaviour", out)
+		summary := "Set " + strings.Join(changed, ", ") + "; the next request is answered by the new behaviour"
+		if f, ok := out["forward"].(map[string]any); ok {
+			summary += fmt.Sprintf("; requests no rule takes are forwarded to %v (live traffic leaves the server)", f["url"])
+		}
+		if ws, ok := out["warnings"].([]any); ok {
+			for _, w := range ws {
+				summary += fmt.Sprintf("; warning: %v", w)
+			}
+		}
+		return result(summary, out)
 	}
 }
 
@@ -351,7 +540,7 @@ func (s *tools) setSecret(ctx context.Context, _ *sdk.CallToolRequest, in Secret
 
 type ResetIn struct {
 	Endpoint string `json:"endpoint" jsonschema:"the endpoint: its id or its exact path"`
-	Counter  bool   `json:"counter,omitempty" jsonschema:"start the rules' count again"`
+	Counter  bool   `json:"counter,omitempty" jsonschema:"start the rules' count and clock again"`
 	Requests bool   `json:"requests,omitempty" jsonschema:"delete the kept requests"`
 }
 
@@ -368,7 +557,7 @@ func (s *tools) resetEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in Re
 		if _, err := s.c.call(ctx, http.MethodPost, p+"/reset-counter", nil, nil); err != nil {
 			return nil, nil, err
 		}
-		done = append(done, "counter reset")
+		done = append(done, "counter and clock reset")
 	}
 	if in.Requests {
 		if _, err := s.c.call(ctx, http.MethodDelete, p+"/requests", nil, nil); err != nil {
@@ -641,6 +830,14 @@ func (s *tools) waitMatching(ctx context.Context, p string, f Filters, after int
 			return found, &stoppingError{matched: len(found), want: n}
 		default:
 		}
+		// Each round is a fresh check of the caller's token: one revoked,
+		// or its user removed or given another role, ends the wait.
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("cancelled: %w", ctx.Err())
+		}
+		if !s.auth.StillValid(ctx, access.From(ctx)) {
+			return nil, errors.New("the credential was revoked (or its user removed or given another role): this wait ends; call again with a valid token")
+		}
 		left := time.Until(deadline).Round(time.Millisecond)
 		q := f.query(url.Values{"after": {strconv.FormatInt(cursor, 10)}, "limit": {strconv.Itoa(n - len(found))}})
 		if left > 0 {
@@ -755,10 +952,30 @@ func verdictOr(v any) string {
 // describe is a request's summary line: "#3 POST /hooks answered 200, verdict fail (GitHub signature: signature does not match)".
 func describe(r map[string]any) string {
 	s := fmt.Sprintf("#%v %v %v", num(r["no"]), r["method"], r["path"])
-	if out, ok := r["outcome"].(map[string]any); ok && out["action"] != nil && out["action"] != "reply" {
+	fw, _ := r["forward"].(map[string]any)
+	switch out, ok := r["outcome"].(map[string]any); {
+	case fw != nil && ok && out["action"] == "forward" && fw["error_kind"] == nil && fw["pending"] == nil:
+		s += fmt.Sprintf(" → receiver %v in %v ms", num(fw["status"]), num(fw["ms"]))
+	case fw != nil && fw["pending"] != nil:
+		s += " forwarding…"
+	case ok && out["action"] != nil && out["action"] != "reply":
 		s += fmt.Sprintf(" %v", out["action"])
-	} else {
+	default:
 		s += fmt.Sprintf(" answered %v", num(r["status"]))
+	}
+	switch {
+	case fw != nil && fw["error_kind"] != nil:
+		s += fmt.Sprintf(" (receiver failed: %v)", fw["error_kind"])
+	case fw != nil && out(r) != "forward" && fw["status"] != nil:
+		s += fmt.Sprintf(" (the receiver got it too: %v)", num(fw["status"]))
+	case r["not_forwarded"] == true:
+		s += " (not forwarded)"
+	}
+	if left, ok := fw["sender_left_ms"]; ok && left != nil {
+		s += fmt.Sprintf("; the sender left after %v ms", num(left))
+	}
+	if r["body_dropped"] == true {
+		s += "; body dropped to stay under the database size limit"
 	}
 	if v, _ := r["verdict"].(string); v != "" {
 		s += ", verdict " + v
@@ -770,6 +987,11 @@ func describe(r map[string]any) string {
 		}
 	}
 	return s
+}
+
+func out(r map[string]any) any {
+	o, _ := r["outcome"].(map[string]any)
+	return o["action"]
 }
 
 // notes are the verdicts' notes in short ("same signature as #1"); the
@@ -819,9 +1041,22 @@ func (s *tools) exportEndpoint(ctx context.Context, _ *sdk.CallToolRequest, in E
 		name = params["filename"]
 	}
 	eps, _ := file["endpoints"].([]any)
-	return result(fmt.Sprintf("Setup of %d endpoint(s): save the setup object as %s; secret names and kinds are in it, their values are not in it", len(eps), name),
+	res, structured, err := result(fmt.Sprintf("Setup of %d endpoint(s): save the setup object as %s; secret names and kinds are in it, their values are not in it", len(eps), name),
 		map[string]any{"file_name": name, "setup": file})
+	if n := len(res.Content[0].(*sdk.TextContent).Text); n > MaxExport {
+		get := s.c.base + "/setup"
+		if len(q) > 0 {
+			get += "?" + q.Encode()
+		}
+		return nil, nil, fmt.Errorf("the setup is %.1f MiB, over the %d MiB a result carries: export fewer endpoints, or download it with GET %s (the API's token works there too)",
+			float64(n)/(1<<20), MaxExport>>20, get)
+	}
+	return res, structured, err
 }
+
+// MaxExport bounds export_endpoint's result: an agent cannot hold more in
+// its context, and the API gives the whole file.
+const MaxExport = 4 << 20
 
 type ImportIn struct {
 	Setup      map[string]any `json:"setup" jsonschema:"the setup file: {hookwitness: 1, endpoints: [...]}, as export_endpoint gives it"`

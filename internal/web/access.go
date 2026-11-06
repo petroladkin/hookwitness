@@ -95,6 +95,9 @@ func (h *Handler) secure(r *http.Request) bool {
 	if r.TLS != nil || access.ForwardedHTTPS(r, h.proxies) {
 		return true
 	}
+	if h.adminHost != "" && hostName(r.Host) == h.adminHost && strings.HasPrefix(h.adminOrigin, "https://") {
+		return true // -admin-url names an https origin, behind its proxy
+	}
 	if !strings.HasPrefix(h.catch.Public, "https://") {
 		return false
 	}
@@ -121,7 +124,7 @@ func (h *Handler) apiLoginOn(ctx context.Context) (bool, error) {
 // static files.
 func (h *Handler) openUI(r *http.Request) bool {
 	p := r.URL.Path
-	return p == h.prefix+"/login" || p == h.prefix+"/logout" || strings.HasPrefix(p, h.prefix+"/static/")
+	return p == h.prefix+"/login" || p == h.prefix+"/logout" || strings.HasPrefix(p, h.prefix+"/static/") || strings.HasPrefix(p, h.prefix+"/oidc/")
 }
 
 // mayReplay reports whether the caller may send replays: an admin, or
@@ -229,6 +232,9 @@ func (h *Handler) ours(next string) bool {
 
 // gateAPI checks that the API and /mcp get an identity once login is on.
 func (h *Handler) gateAPI(w http.ResponseWriter, r *http.Request, id *access.Identity, isMCP bool) bool {
+	if r.Method == http.MethodGet && r.URL.Path == api.Base(h.prefix)+"/login/providers" {
+		return true // the login page's providers: open
+	}
 	on, err := h.apiLoginOn(r.Context())
 	if err != nil {
 		h.failGate(w, true, err)
@@ -270,12 +276,17 @@ func withMCPIdentity(next http.Handler) http.Handler {
 	return mcpauth.RequireBearerToken(verify, &mcpauth.RequireBearerTokenOptions{AllowMissingExpiration: true})(next)
 }
 
-// sessionEnded reports whether the session of a live feed has ended since
-// it connected (logout, expiry, a password or role change, removal).
-func (h *Handler) sessionEnded(r *http.Request) bool {
+// loginEnded reports whether the login of a live feed has ended since it
+// connected: a session by its cookie (logout, expiry, a password or role
+// change, removal), a personal token by its row (revoked, its user removed
+// or given another role).
+func (h *Handler) loginEnded(r *http.Request) bool {
 	id := access.From(r.Context())
-	if h.auth == nil || id == nil || id.Via != access.ViaSession {
+	if h.auth == nil || id == nil {
 		return false
+	}
+	if id.Via != access.ViaSession {
+		return !h.auth.StillValid(r.Context(), id)
 	}
 	c, err := r.Cookie(access.CookieName)
 	if err != nil {
@@ -285,7 +296,7 @@ func (h *Handler) sessionEnded(r *http.Request) bool {
 	return errors.Is(err, access.ErrNoSession)
 }
 
-// sessionCheck is how often an open live feed checks its session.
+// sessionCheck is how often an open live feed checks its login.
 var sessionCheck = heartbeat
 
 // loginAttempt waits this long after a failed login (tests set 0): it slows

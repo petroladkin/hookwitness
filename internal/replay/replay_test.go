@@ -54,7 +54,7 @@ func caught(t *testing.T, st *store.Store, body []byte) *store.Request {
 			{Name: "Content-Type", Value: "application/json"},
 			{Name: "Content-Length", Value: strconv.Itoa(len(body))},
 		}}
-	if err := st.AddRequest(ctx, r, 100, nil); err != nil {
+	if err := st.AddRequest(ctx, r, store.Keep{Normal: 100}, nil); err != nil {
 		t.Fatal(err)
 	}
 	return r
@@ -179,10 +179,10 @@ func TestRefusals(t *testing.T) {
 	// Bodies not kept whole.
 	big := &store.Request{EndpointID: r.EndpointID, ReceivedAt: time.Now(), Method: "POST", Path: "/gh", Proto: "HTTP/1.1",
 		Size: 20 << 20, TooLarge: true}
-	st.AddRequest(ctx, big, 100, nil)
+	st.AddRequest(ctx, big, store.Keep{Normal: 100}, nil)
 	cut := &store.Request{EndpointID: store.Unmatched, ReceivedAt: time.Now(), Method: "POST", Path: "/nope", Proto: "HTTP/1.1",
 		Body: bytes.Repeat([]byte("a"), 64<<10), Size: 100 << 10}
-	st.AddRequest(ctx, cut, 100, nil)
+	st.AddRequest(ctx, cut, store.Keep{Normal: 100}, nil)
 	var nk *NotKeptError
 	if _, err := svc.Replay(ctx, big.ID, Input{URL: "http://127.0.0.1:1/"}); !errors.As(err, &nk) || !strings.Contains(nk.Reason, "not kept") {
 		t.Fatalf("too large: %v", err)
@@ -277,6 +277,65 @@ func TestLimits(t *testing.T) {
 	b.free.Store(5)
 	if _, err := svc.Replay(context.Background(), r.ID, Input{URL: "http://127.0.0.1:9/"}); !errors.Is(err, ErrBusy) {
 		t.Fatalf("over budget: %v", err)
+	}
+}
+
+// A replay loads the body only once it holds a slot and its bytes are
+// reserved: replays refused as busy never hold the body.
+func TestBodyAfterSlot(t *testing.T) {
+	st := openStore(t)
+	r := caught(t, st, []byte("0123456789"))
+	release := make(chan struct{})
+	var started atomic.Int32
+	blocking := func(ctx context.Context, h send.Head, body []byte, o send.Options) (send.Response, error) {
+		started.Add(1)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return send.Response{Status: 204, Line: h.Method + " " + h.Target + " HTTP/1.1"}, nil
+	}
+	b := &budget{}
+	b.free.Store(1 << 20)
+	svc, _ := newService(t, st, Options{Send: blocking, SlotWait: 50 * time.Millisecond, Budget: b})
+	var loads atomic.Int32
+	load := svc.body
+	svc.body = func(ctx context.Context, id int64) ([]byte, error) {
+		loads.Add(1)
+		return load(ctx, id)
+	}
+	var wg sync.WaitGroup
+	for range Slots {
+		wg.Go(func() {
+			if _, err := svc.Replay(context.Background(), r.ID, Input{URL: "http://127.0.0.1:9/"}); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	for started.Load() < Slots {
+		time.Sleep(5 * time.Millisecond)
+	}
+	var busy sync.WaitGroup
+	for range 20 {
+		busy.Go(func() {
+			if _, err := svc.Replay(context.Background(), r.ID, Input{URL: "http://127.0.0.1:9/"}); !errors.Is(err, ErrBusy) {
+				t.Errorf("with every slot taken: %v, want busy", err)
+			}
+		})
+	}
+	busy.Wait()
+	if n := loads.Load(); n != Slots {
+		t.Fatalf("%d body loads, want %d (only the replays holding a slot)", n, Slots)
+	}
+	close(release)
+	wg.Wait()
+	// Over the budget: refused before the body is read.
+	b.free.Store(5)
+	if _, err := svc.Replay(context.Background(), r.ID, Input{URL: "http://127.0.0.1:9/"}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("over budget: %v", err)
+	}
+	if n := loads.Load(); n != Slots {
+		t.Fatalf("%d body loads after a refusal over the budget, want %d", n, Slots)
 	}
 }
 

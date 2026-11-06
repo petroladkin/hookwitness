@@ -157,7 +157,7 @@ func TestRepeatedSignaturePrunedAndRechecked(t *testing.T) {
 		t.Fatalf("after a re-check: %s, want %s", got, want)
 	}
 	// Retention 1: the earlier request goes when the next is kept.
-	h.Retention = 1
+	h.Retention = store.Keep{Normal: 1}
 	do(t, http.DefaultClient, "POST", url+"/gh", body, "X-Hub-Signature-256", sig)
 	if _, _, note := noteOf(t, st, ep, 1); note != "" {
 		t.Fatalf("note %q naming a pruned request", note)

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -375,5 +376,204 @@ func TestMachineToken(t *testing.T) {
 	}
 	if _, _, err := ReadMachineToken(filepath.Join(dir, "missing")); err == nil {
 		t.Error("missing file accepted")
+	}
+}
+
+// Failures from the addresses of one IPv6 /64 count against one limit;
+// another /64, IPv4 and IPv4-mapped addresses count on their own, as before.
+func TestLimiterIPv6Block(t *testing.T) {
+	for in, want := range map[string]string{
+		"2001:db8:1:2::5":                  "2001:db8:1:2::/64",
+		"2001:db8:1:2:ffff:ffff:ffff:ffff": "2001:db8:1:2::/64",
+		"2001:db8::1%eth0":                 "2001:db8::/64",
+		"192.0.2.1":                        "192.0.2.1",
+		"::ffff:192.0.2.1":                 "::ffff:192.0.2.1",
+		"not an address":                   "not an address",
+	} {
+		if got := limitKey(in); got != want {
+			t.Errorf("limitKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+	l := NewLimiter(nil)
+	fail := func(addr string) {
+		t.Helper()
+		if ok, _ := l.Allow(addr); !ok {
+			t.Fatalf("an attempt from %s refused", addr)
+		}
+		l.Fail(addr)
+	}
+	for i := range MaxFailures {
+		fail("2001:db8:1:2::" + strconv.Itoa(i+1)) // ten addresses of one /64
+	}
+	if ok, wait := l.Allow("2001:db8:1:2:ffff:ffff:ffff:ffff"); ok || wait < 14*time.Minute {
+		t.Fatalf("another address of the /64 passed: %v %v", ok, wait)
+	}
+	if ok, _ := l.Allow("2001:db8:1:3::1"); !ok {
+		t.Fatal("the next /64 was refused")
+	}
+	l.Release("2001:db8:1:3::1")
+	for range MaxFailures {
+		fail("192.0.2.1")
+	}
+	if ok, _ := l.Allow("192.0.2.1"); ok {
+		t.Fatal("IPv4: the address passed its limit")
+	}
+	if ok, _ := l.Allow("192.0.2.2"); !ok {
+		t.Fatal("IPv4: a neighbouring address was refused")
+	}
+	l.Release("192.0.2.2")
+	for range MaxFailures {
+		fail("::ffff:192.0.2.9")
+	}
+	if ok, _ := l.Allow("::ffff:192.0.2.10"); !ok {
+		t.Fatal("IPv4-mapped addresses were grouped")
+	}
+	l.Release("::ffff:192.0.2.10")
+	// A login from the /64 clears it, as a login clears an IPv4 address.
+	l.Success("2001:db8:1:2::77")
+	if ok, _ := l.Allow("2001:db8:1:2::1"); !ok {
+		t.Fatal("a login did not clear the /64")
+	}
+}
+
+// A personal token stands while its row exists and its user keeps the role
+// it had; the machine token and sessions are not checked here.
+func TestStillValid(t *testing.T) {
+	ctx := context.Background()
+	a, st, _ := newAuth(t, "machine-token-for-tests")
+	ann, _ := st.AddUser(ctx, "ann", store.RoleAdmin, a.HashPassword("correct horse battery"))
+	bob, _ := st.AddUser(ctx, "bob", store.RoleUser, a.HashPassword("correct horse battery"))
+	identity := func(u store.User, name string) *Identity {
+		t.Helper()
+		v, _, err := a.MintFor(ctx, u.ID, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := a.Token(ctx, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	revoked, removed, demoted, kept := identity(ann, "revoked"), identity(bob, "removed"), identity(ann, "demoted"), identity(ann, "kept")
+	machine, _ := a.Token(ctx, "machine-token-for-tests")
+	for _, id := range []*Identity{revoked, removed, demoted, kept, machine, nil, {Via: ViaSession, SessionID: 99}} {
+		if !a.StillValid(ctx, id) {
+			t.Fatalf("%+v does not stand before any change", id)
+		}
+	}
+	st.RevokeToken(ctx, revoked.TokenID, 0)
+	if _, err := st.RemoveUser(ctx, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	st.AddUser(ctx, "cy", store.RoleAdmin, a.HashPassword("correct horse battery")) // the last admin may not be demoted
+	if _, err := st.SetRole(ctx, "ann", store.RoleUser); err != nil {
+		t.Fatal(err)
+	}
+	for name, id := range map[string]*Identity{"revoked": revoked, "removed user": removed, "demoted user": demoted} {
+		if a.StillValid(ctx, id) {
+			t.Errorf("a token of a %s still stands", name)
+		}
+	}
+	if !a.StillValid(ctx, machine) {
+		t.Error("the machine token no longer stands")
+	}
+	// kept: its user was demoted too, so it ends with the others; a token
+	// presented after the change carries the new role and stands.
+	if a.StillValid(ctx, kept) {
+		t.Error("a token presented before its user was demoted still stands")
+	}
+	v, _, _ := a.MintFor(ctx, ann.ID, "after")
+	after, _ := a.Token(ctx, v)
+	if !a.StillValid(ctx, after) {
+		t.Error("a token presented after the change does not stand")
+	}
+	ctxDone, cancel := context.WithCancel(ctx)
+	cancel()
+	if a.StillValid(ctxDone, after) {
+		t.Error("a token the store could not confirm stands")
+	}
+	var changed int
+	a.OnChange(func() { changed++ })
+	a.Changed()
+	(*Authenticator)(nil).Changed()
+	if changed != 1 {
+		t.Fatalf("listeners told %d times", changed)
+	}
+}
+
+func TestEmailsAndNames(t *testing.T) {
+	for in, want := range map[string]string{" Ann@Example.COM ": "ann@example.com", "a@b.co": "a@b.co", "first.last+tag@sub.example.test": "first.last+tag@sub.example.test"} {
+		if got, err := CheckEmail(in); err != nil || got != want {
+			t.Errorf("CheckEmail(%q) = %q, %v", in, got, err)
+		}
+	}
+	for _, in := range []string{"", "ann", "ann@", "@example.com", "ann@example", "a@@example.com", "ann @example.com", "ann@example.com.", "ann@.example.com", "ann\x00@example.com",
+		strings.Repeat("a", 250) + "@x.co"} {
+		if _, err := CheckEmail(in); err == nil {
+			t.Errorf("CheckEmail(%q) accepted", in)
+		} else if e, ok := IsInvalid(err); !ok || e.Field != "email" {
+			t.Errorf("CheckEmail(%q): %v", in, err)
+		}
+	}
+	for in, want := range map[string]string{"Ann.Lee@x.co": "ann.lee", "o'brien+hooks@x.co": "o-brien-hooks", "Željko@x.co": "-eljko", "---@x.co": "user",
+		strings.Repeat("b", 80) + "@x.co": strings.Repeat("b", 64)} {
+		if got := NameFromEmail(in); got != want {
+			t.Errorf("NameFromEmail(%q) = %q, want %q", in, got, want)
+		}
+		if _, err := CheckName(NameFromEmail(in)); err != nil {
+			t.Errorf("NameFromEmail(%q) is not a valid name: %v", in, err)
+		}
+	}
+}
+
+func TestReadSecretFile(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "s")
+	os.WriteFile(p, []byte("s3cret\n"), 0o600)
+	if s, warn, err := ReadSecretFile("X_FILE", p, 1); err != nil || s != "s3cret" || warn != "" {
+		t.Fatalf("%q %q %v", s, warn, err)
+	}
+	os.Chmod(p, 0o644)
+	if _, warn, _ := ReadSecretFile("X_FILE", p, 1); !strings.Contains(warn, "X_FILE names a file readable by everyone") {
+		t.Fatalf("warn %q", warn)
+	}
+	for _, body := range []string{"", " padded", "two\nlines"} {
+		os.WriteFile(p, []byte(body), 0o600)
+		if _, _, err := ReadSecretFile("X_FILE", p, 1); err == nil || !strings.Contains(err.Error(), "X_FILE") || (body != "" && strings.Contains(err.Error(), body)) {
+			t.Errorf("%q: %v", body, err)
+		}
+	}
+	if _, _, err := ReadSecretFile("X_FILE", filepath.Join(dir, "none"), 1); err == nil || !strings.HasPrefix(err.Error(), "X_FILE: ") {
+		t.Errorf("missing: %v", err)
+	}
+}
+
+// A user without a password cannot log in with one, and the login checks
+// the dummy record as for an unknown name: the time taken tells nothing.
+func TestLoginWithoutAPassword(t *testing.T) {
+	ctx := context.Background()
+	a, st, _ := newAuth(t, "")
+	st.AddUserWithEmail(ctx, "pat", store.RoleUser, "", "pat@example.com")
+	st.AddUser(ctx, "ann", store.RoleAdmin, a.HashPassword("correct horse battery"))
+	var checked []string
+	a.matchHook = func(record string) { checked = append(checked, record) }
+	for _, try := range []struct{ name, pw string }{{"pat", ""}, {"pat", "anything at all"}, {"nobody", "anything at all"}} {
+		if _, err := a.Login(ctx, try.name, try.pw); !errors.Is(err, ErrWrongLogin) {
+			t.Fatalf("%s: %v", try.name, err)
+		}
+	}
+	if len(checked) != 3 || checked[0] != a.dummy || checked[1] != a.dummy || checked[2] != a.dummy {
+		t.Fatalf("records checked: %d, all the dummy: %v", len(checked), checked[0] == a.dummy)
+	}
+	if u, err := a.Login(ctx, "ann", "correct horse battery"); err != nil || u.Name != "ann" {
+		t.Fatalf("a password login: %v", err)
+	}
+	if c := FlowCookie("flow", "/admin", true); c.Name != "hookwitness_oidc" || c.Path != "/admin/oidc/" || !c.HttpOnly || !c.Secure ||
+		c.SameSite != http.SameSiteLaxMode || c.MaxAge != 600 {
+		t.Fatalf("flow cookie %+v", c)
+	}
+	if c := FlowCookie("", "", false); c.MaxAge != -1 || c.Path != "/oidc/" {
+		t.Fatalf("clearing %+v", c)
 	}
 }

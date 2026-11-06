@@ -45,7 +45,7 @@ func TestOpensRelease010Database(t *testing.T) {
 	}
 	// It still catches: the next request is number 4, counter 4.
 	r := sample(1, `{"order":4}`)
-	if err := s.AddRequest(ctx, r, 100, func(n int64) (int, string) { return 202, "" }); err != nil {
+	if err := s.AddRequest(ctx, r, Keep{Normal: 100}, func(DecideIn) (int, string, string) { return 202, "", "" }); err != nil {
 		t.Fatal(err)
 	}
 	if r.No != 4 {
@@ -69,7 +69,7 @@ func TestEndpointOnAndOff(t *testing.T) {
 	if err := s.SetConfig(ctx, ep.ID, `{"x":1}`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AddRequest(ctx, sample(ep.ID, "1"), 100, func(int64) (int, string) { return 200, "" }); err != nil {
+	if err := s.AddRequest(ctx, sample(ep.ID, "1"), Keep{Normal: 100}, func(DecideIn) (int, string, string) { return 200, "", "" }); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,7 +90,7 @@ func TestEndpointOnAndOff(t *testing.T) {
 		t.Fatalf("creating at an off endpoint's path: %v", err)
 	}
 	// A request decided for it while it was on is refused once it is off.
-	if err := s.AddRequest(ctx, sample(ep.ID, "2"), 100, func(int64) (int, string) { return 200, "" }); !errors.Is(err, ErrOff) {
+	if err := s.AddRequest(ctx, sample(ep.ID, "2"), Keep{Normal: 100}, func(DecideIn) (int, string, string) { return 200, "", "" }); !errors.Is(err, ErrOff) {
 		t.Fatalf("AddRequest to an off endpoint: %v", err)
 	}
 	if got, _ := s.Endpoint(ctx, ep.ID); got.Count != 1 || got.Counter != 1 {
@@ -102,7 +102,7 @@ func TestEndpointOnAndOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := sample(ep.ID, "3")
-	if err := s.AddRequest(ctx, r, 100, func(n int64) (int, string) { return 200, "" }); err != nil {
+	if err := s.AddRequest(ctx, r, Keep{Normal: 100}, func(DecideIn) (int, string, string) { return 200, "", "" }); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := s.Endpoint(ctx, ep.ID); !got.Enabled || got.Counter != 2 || r.No != 2 {

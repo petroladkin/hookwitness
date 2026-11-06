@@ -101,6 +101,15 @@ without its body, and the register says **Busy**; a sender that retries gets
 through. If this happens under normal load, raise the limit
 (`HOOKWITNESS_MAX_INFLIGHT=1GiB`).
 
+## A request got 503 "could not be stored"
+
+The database did not take the request, and nothing of it is kept. The
+answer is `503` with `Retry-After: 5`, so a sender that retries gets it
+kept once the database works again. The server's log says why, on a line
+`catch: request not stored` or `catch: endpoint lookup failed`: a full
+disk, a volume that fails, or another program holding the database file
+locked.
+
 ## My requests land in Unmatched with 404
 
 The path does not match an endpoint exactly. Compare them in the Unmatched
@@ -126,6 +135,12 @@ reverse proxy that buffers responses holds it back; turn buffering off for
 the admin prefix (nginx: `proxy_buffering off;`; Hookwitness also sends
 `X-Accel-Buffering: no`). A reload always shows the current state.
 
+**FEED LOST — RETRYING** in the header means the stream's address answered
+an error while the page itself loads: a proxy's timeout or `502` on
+`/events`, or a server restarting. The page keeps trying with growing pauses
+(up to about a minute) and is live again by itself once the stream answers.
+Raise the proxy's read timeout for the admin prefix, or let `/events` through.
+
 ## The API answers 401 since a user was added
 
 The first user turns login on for the REST API and MCP too: scripts and
@@ -134,10 +149,35 @@ page), see [Users, login and tokens](access.md#tokens-for-scripts-and-agents).
 `401 invalid_token` means the token is wrong or was revoked, or its owner
 was removed.
 
+## Signing in with a provider fails
+
+The login page names the reason, and the server log has one line per
+refusal (`oidc sign-in refused provider=… reason=…`):
+
+- **The provider says the redirect URI does not match.** Register exactly
+  the `redirect_uri` the start log prints (`oidc provider configured`); it
+  is built on `-admin-url`, not on the address you opened the admin by.
+- **The server will not start: OIDC needs the admin's address.** Set
+  `-admin-url` (`HOOKWITNESS_ADMIN_URL`) to the admin's external address.
+- **"… cannot be reached right now"** (`unreachable`): the server cannot
+  fetch the provider's discovery document or token endpoint. Check the
+  issuer: it must be exactly what the provider's
+  `/.well-known/openid-configuration` states, trailing slash included.
+- **"… could not be verified"** (`invalid_token`) with `expired` or `not
+  valid yet` in the log: the server's clock is off. Keep it synchronised
+  (NTP); a token's expiry has no grace period.
+- **"… belongs to an account already signed in with another … identity"**
+  (`linked_elsewhere`): a new app registration (Entra) or a new client gives
+  people new identities. Unlink the old one on the Users page, then sign in
+  again.
+- **"There is no account here for …"** (`no_account`): add a user with
+  that email, or allow its domain for that provider.
+- **Behind a proxy**, forward `<prefix>/oidc/` like the rest of the admin.
+
 ## Nobody can log in any more
 
 On the server, `hookwitness user passwd <name>` sets a new password and
 `hookwitness user add <name> --admin` adds another admin; see [Lost the admin
 password](access.md#lost-the-admin-password). Ten failed logins from one
-address pause its logins for 15 minutes; behind a reverse proxy, set
+address (an IPv6 address with its /64) pause its logins for 15 minutes; behind a reverse proxy, set
 `-trusted-proxies` so that the pause hits the client, not the proxy.

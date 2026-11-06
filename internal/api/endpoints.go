@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/petroladkin/hookwitness/internal/catch"
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
@@ -16,18 +17,34 @@ type endpointJSON struct {
 	Path     string `json:"path"`
 	URL      string `json:"url"` // where senders deliver, as reached by this API call
 	Requests int    `json:"requests"`
-	Counter  int64  `json:"counter"` // requests that passed its checks since the last reset
-	Enabled  bool   `json:"enabled"` // off: requests to its path go to Unmatched
+	Counter  int64  `json:"counter"`    // requests that passed its checks since the last reset
+	Started  *stamp `json:"started_at"` // its clock's start: the first of those; null before it
+	Enabled  bool   `json:"enabled"`    // off: requests to its path go to Unmatched
 	Created  stamp  `json:"created_at"`
 	Last     *stamp `json:"last_request_at,omitempty"`
+	// ForwardsTo is the receiver its requests go to (origin and path);
+	// absent when it answers them itself.
+	ForwardsTo string `json:"forwards_to,omitempty"`
+	retentionView
+	ToPrune *int `json:"to_prune,omitempty"` // in a PATCH answer: requests the change removed
 }
 
 func (h *Handler) endpointView(r *http.Request, ep store.Endpoint) endpointJSON {
 	v := endpointJSON{ID: ep.ID, Path: ep.Path, URL: h.o.Catch.Base(r) + ep.Path,
-		Requests: ep.Count, Counter: ep.Counter, Enabled: ep.Enabled, Created: stamp(ep.CreatedAt)}
+		Requests: ep.Count, Counter: ep.Counter, Enabled: ep.Enabled, Created: stamp(ep.CreatedAt),
+		retentionView: h.retentionOf(ep.ID, ep.Kept)}
 	if !ep.LastAt.IsZero() {
 		last := stamp(ep.LastAt)
 		v.Last = &last
+	}
+	if !ep.StartedAt.IsZero() {
+		started := stamp(ep.StartedAt)
+		v.Started = &started
+	}
+	if strings.Contains(ep.Config, `"forward"`) {
+		if c, err := emulate.Parse(ep.Config); err == nil && c.Forward != nil {
+			v.ForwardsTo = c.Forward.Where()
+		}
 	}
 	return v
 }

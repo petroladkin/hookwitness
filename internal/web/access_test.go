@@ -73,7 +73,7 @@ func newAccessEnv(t *testing.T, machineToken string) *accessEnv {
 	auth := access.New(st, keys, machineToken)
 	logs := &lockedBuffer{}
 	lv := live.New()
-	h := New(st, lv, slog.New(slog.NewTextHandler(logs, nil)), Options{Prefix: "/admin", MaxBody: 10 << 20, Retention: 1000,
+	h := New(st, lv, slog.New(slog.NewTextHandler(logs, nil)), Options{Prefix: "/admin", MaxBody: 10 << 20, Retention: store.Keep{Normal: 1000},
 		Hosts: []string{"hooks.example.test", "example.com"}, Keys: keys, Access: auth})
 	return &accessEnv{env: env{h, st, lv}, auth: auth, keys: keys, log: logs, seen: &bytes.Buffer{}}
 }
@@ -247,6 +247,12 @@ func TestRouteMatrix(t *testing.T) {
 	for _, pat := range e.h.api.Patterns() {
 		method, p, _ := strings.Cut(pat, " ")
 		p = fill(p)
+		if p == "/admin/api/v1/login/providers" { // open: the login page's providers
+			if got := e.req(method, p, "", "", nil).Code; got != http.StatusOK {
+				t.Errorf("%s %s without credentials: %d, want 200", method, p, got)
+			}
+			continue
+		}
 		body := func() io.Reader { return strings.NewReader("{}") }
 		ct := []string{"Content-Type", "application/json"}
 		call := func(cookie, token string) int {
@@ -573,6 +579,123 @@ func TestLiveFeedEndsWithTheSession(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the feed did not end with its session")
+	}
+}
+
+// TestLiveFeedEndsWithTheToken: a register opened with a personal token
+// sees the token revoked (here by another process, nothing announced) at
+// its next check and is told to reload; one whose user is given another
+// role, too.
+func TestLiveFeedEndsWithTheToken(t *testing.T) {
+	old := sessionCheck
+	sessionCheck = 50 * time.Millisecond
+	t.Cleanup(func() { sessionCheck = old })
+	e := newAccessEnv(t, "")
+	ann := e.addUser(t, "ann", store.RoleAdmin, adminPW)
+	bob := e.addUser(t, "bob", store.RoleAdmin, userPW)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/live")
+	srv := httptest.NewServer(e.h)
+	defer srv.Close()
+	open := func(tok string) (*http.Response, chan string) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", srv.URL+e.h.regPath(ep.ID)+"/events", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != 200 {
+			t.Fatalf("feed with a token: %d", resp.StatusCode)
+		}
+		done := make(chan string, 1)
+		go func() { b, _ := io.ReadAll(resp.Body); done <- string(b) }()
+		return resp, done
+	}
+	ended := func(what string, done chan string) {
+		t.Helper()
+		select {
+		case got := <-done:
+			if !strings.Contains(got, "event: login") {
+				t.Fatalf("%s: the feed ended without the login event: %q", what, got)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: the feed did not end", what)
+		}
+	}
+	revoked, demoted := e.token(t, ann, "revoked"), e.token(t, bob, "demoted")
+	r1, d1 := open(revoked)
+	defer r1.Body.Close()
+	r2, d2 := open(demoted)
+	defer r2.Body.Close()
+	select {
+	case got := <-d1:
+		t.Fatalf("the feed ended before anything changed: %q", got)
+	case <-time.After(200 * time.Millisecond): // four checks
+	}
+	pub, _ := access.ParseToken(revoked)
+	if _, err := e.st.RevokeToken(context.Background(), pub, 0); err != nil {
+		t.Fatal(err)
+	}
+	ended("revoked token", d1)
+	if _, err := e.st.SetRole(context.Background(), "bob", store.RoleUser); err != nil {
+		t.Fatal(err)
+	}
+	ended("demoted user's token", d2)
+}
+
+// TestRevocationClosesMCPSessions: revoking a token from the account page or
+// the API, or removing its user, closes the MCP sessions it opened at once
+// (the periodic check is minutes away), not another token's.
+func TestRevocationClosesMCPSessions(t *testing.T) {
+	e := newAccessEnv(t, "")
+	ann := e.addUser(t, "ann", store.RoleAdmin, adminPW)
+	bob := e.addUser(t, "bob", store.RoleUser, userPW)
+	a := e.login(t, "ann", adminPW)
+	srv := httptest.NewServer(e.h)
+	t.Cleanup(srv.Close) // after the clients' Cleanup: their streams end first
+	connect := func(tok string) *sdk.ClientSession {
+		t.Helper()
+		cl := sdk.NewClient(&sdk.Implementation{Name: "test", Version: "1"}, nil)
+		cs, err := cl.Connect(context.Background(), &sdk.StreamableClientTransport{Endpoint: srv.URL + "/admin/mcp", HTTPClient: withBearer(srv.Client(), tok), MaxRetries: -1}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { cs.Close() })
+		return cs
+	}
+	sessions := func(n int, what string) {
+		t.Helper()
+		for deadline := time.Now().Add(3 * time.Second); e.h.mcp.Sessions() != n; time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: %d MCP sessions, want %d", what, e.h.mcp.Sessions(), n)
+			}
+		}
+	}
+	page, api, kept, removed := e.token(t, ann, "page"), e.token(t, ann, "api"), e.token(t, ann, "kept"), e.token(t, bob, "removed")
+	keptSession := connect(kept)
+	connect(page)
+	connect(api)
+	connect(removed)
+	sessions(4, "connected")
+	pub, _ := access.ParseToken(page)
+	if rec := e.form("/admin/account/tokens/"+pub+"/revoke", a, nil); rec.Code != http.StatusSeeOther {
+		t.Fatalf("revoke from the page: %d", rec.Code)
+	}
+	sessions(3, "revoked from the account page")
+	pub, _ = access.ParseToken(api)
+	if rec := e.req("DELETE", "/admin/api/v1/me/tokens/"+pub, a, "", nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("revoke through the API: %d", rec.Code)
+	}
+	sessions(2, "revoked through the API")
+	if rec := e.form("/admin/users/bob/remove", a, nil); rec.Code != http.StatusSeeOther {
+		t.Fatalf("remove bob: %d", rec.Code)
+	}
+	sessions(1, "its user removed")
+	if _, err := keptSession.ListTools(context.Background(), nil); err != nil {
+		t.Fatalf("another token's session: %v", err)
+	}
+	if !strings.Contains(e.log.String(), "mcp: session closed: its token no longer stands") {
+		t.Fatalf("not logged: %s", e.log.String())
 	}
 }
 

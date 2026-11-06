@@ -21,27 +21,22 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/petroladkin/hookwitness/internal/access"
+	"github.com/petroladkin/hookwitness/internal/setup"
 )
 
 // NewServer is an MCP server whose tools call api (the REST API's handler,
 // served at base) as if addressed to host. Waits end when stop is closed
-// (the server is shutting down); nil never closes.
-func NewServer(api http.Handler, base, host, version string, stop <-chan struct{}) *sdk.Server {
-	return newServer(api, base, host, version, stop, nil)
-}
-
-func newServer(api http.Handler, base, host, version string, stop <-chan struct{}, onSession func(*sdk.ServerSession)) *sdk.Server {
+// (the server is shutting down); nil never closes. auth, when login is on,
+// is asked at each round of a wait whether its caller's token still stands.
+func NewServer(api http.Handler, base, host, version string, stop <-chan struct{}, auth *access.Authenticator) *sdk.Server {
 	opts := &sdk.ServerOptions{
 		Instructions: "Hookwitness catches webhooks for testing a sender. Create an endpoint, give its catch URL to the sender, " +
 			"configure checks (signatures, tokens, JSON Schema) and fault rules, then wait_for_request or expect verdicts. " +
 			"Secrets are write-only; use test values.",
 	}
-	if onSession != nil {
-		opts.InitializedHandler = func(_ context.Context, r *sdk.InitializedRequest) { onSession(r.Session) }
-	}
 	srv := sdk.NewServer(&sdk.Implementation{Name: "hookwitness", Title: "Hookwitness", Version: version}, opts)
 	srv.AddReceivingMiddleware(carryIdentity)
-	(&tools{c: &client{api: api, base: base, host: host}, stop: stop}).register(srv)
+	(&tools{c: &client{api: api, base: base, host: host}, stop: stop, auth: auth}).register(srv)
 	return srv
 }
 
@@ -66,37 +61,59 @@ func carryIdentity(next sdk.MethodHandler) sdk.MethodHandler {
 // exist at once: a slot is taken when a session would be created and given
 // back when that session ends.
 type Streamable struct {
-	sdk      http.Handler
-	log      *slog.Logger
-	limit    int // most sessions at once; 0: no limit
-	mu       sync.Mutex
-	sessions map[*sdk.ServerSession]struct{}
+	sdk   http.Handler
+	log   *slog.Logger
+	limit int // most sessions at once; 0: no limit
+	auth  *access.Authenticator
+	mu    sync.Mutex
+	// sessions are the open sessions, each with the identity that opened it
+	// (nil with login off).
+	sessions map[*sdk.ServerSession]*access.Identity
 	slots    int       // sessions open or being created
 	warned   time.Time // the last refusal logged
 	closed   bool
+	done     chan struct{} // closed by CloseSessions
 }
 
 // sessionTimeout ends a session idle this long (a seam for tests).
 var sessionTimeout = 30 * time.Minute
 
+// credentialCheck is how often the sessions opened with a personal token
+// are checked (a seam for tests): a token revoked by another process (the
+// user command) is not announced to this one.
+var credentialCheck = 25 * time.Second
+
 // RetryAfter is what a client refused for the session limit is told to wait.
 const RetryAfter = 30 * time.Second
+
+// MaxRequest bounds an MCP request's body: a setup file as large as the API
+// takes (import_endpoints) with the JSON-RPC message around it. A larger
+// one is refused by the transport (413), before any tool sees it.
+const MaxRequest = setup.MaxSize + 1<<20
 
 // Handler serves MCP over Streamable HTTP. Each session gets a server bound
 // to the host the client addressed, so catch URLs read as the client sees
 // the server. At most maxSessions sessions exist at once (0: no limit).
-// Waits end when stop is closed; CloseSessions then ends the sessions.
-func Handler(api http.Handler, base, version string, log *slog.Logger, stop <-chan struct{}, maxSessions int) *Streamable {
-	s := &Streamable{sessions: map[*sdk.ServerSession]struct{}{}, log: log, limit: maxSessions}
+// Waits end when stop is closed; CloseSessions then ends the sessions. With
+// auth (login on), a session opened with a personal token is closed when
+// the token no longer stands: at once when this process revokes it, removes
+// its user or changes the user's role, else within credentialCheck.
+func Handler(api http.Handler, base, version string, log *slog.Logger, stop <-chan struct{}, maxSessions int, auth *access.Authenticator) *Streamable {
+	s := &Streamable{sessions: map[*sdk.ServerSession]*access.Identity{}, log: log, limit: maxSessions, auth: auth, done: make(chan struct{})}
+	if auth != nil {
+		auth.OnChange(s.Recheck)
+		go s.sweep(stop, credentialCheck)
+	}
 	s.sdk = sdk.NewStreamableHTTPHandler(func(r *http.Request) *sdk.Server {
-		srv := newServer(api, base, r.Host, version, stop, s.track)
+		srv := NewServer(api, base, r.Host, version, stop, auth)
 		if c, ok := r.Context().Value(creatingKey{}).(*creating); ok {
 			c.srv = srv // the last one built for the request is the session's
 		}
 		return srv
 	}, &sdk.StreamableHTTPOptions{
-		Logger:         log,
-		SessionTimeout: sessionTimeout,
+		Logger:              log,
+		SessionTimeout:      sessionTimeout,
+		MaxRequestBodyBytes: MaxRequest,
 		// internal/web's host check guards against DNS rebinding, -admin-hosts
 		// included; the SDK's own check would refuse those names behind a
 		// local proxy.
@@ -135,23 +152,21 @@ func (s *Streamable) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	c := &creating{}
 	s.sdk.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), creatingKey{}, c)))
-	// The slot goes with the session made; none made, or one that never
-	// initialized (a failed initialize; a client probing a newer protocol
-	// first), gives it back now, before the client's next request.
-	held := false
+	// The slot goes with the session made, which from now on a shutdown
+	// closes, whether or not its client ever says initialized; none made,
+	// or one that never initialized (a failed initialize; a client probing
+	// a newer protocol first), gives it back now, before the client's next
+	// request.
 	if c.srv != nil {
 		for ss := range c.srv.Sessions() {
-			if ss.InitializeParams() == nil {
-				break
+			if ss.InitializeParams() != nil {
+				s.hold(ss, access.From(r.Context()))
+				return
 			}
-			held = true
-			go func() { ss.Wait(); s.give() }()
 			break
 		}
 	}
-	if !held {
-		s.give()
-	}
+	s.give()
 }
 
 // peekSize is how much of a body opens reads; an initialize is far smaller.
@@ -220,21 +235,70 @@ func (s *Streamable) refuse(w http.ResponseWriter, r *http.Request) {
 	w.Write(out.Bytes())
 }
 
-func (s *Streamable) track(ss *sdk.ServerSession) {
+// hold keeps ss, a session just created with a slot by id, among the
+// sessions CloseSessions closes; when it ends, it leaves them and its slot
+// is given back. Tracking and the slot have this one owner.
+func (s *Streamable) hold(ss *sdk.ServerSession, id *access.Identity) {
 	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		go ss.Close() // began as the server stops
-		return
+	closed := s.closed
+	if !closed {
+		s.sessions[ss] = id
 	}
-	s.sessions[ss] = struct{}{}
 	s.mu.Unlock()
 	go func() {
 		ss.Wait()
 		s.mu.Lock()
 		delete(s.sessions, ss)
+		s.slots--
 		s.mu.Unlock()
 	}()
+	if closed {
+		ss.Close() // began as the server stops
+	}
+}
+
+// Recheck closes the sessions whose personal token no longer stands (it was
+// revoked, its user removed or given another role). It does not wait for
+// them to close: a session waits for its running tools, whose waits end
+// within a round on the same check.
+func (s *Streamable) Recheck() {
+	if s.auth == nil {
+		return
+	}
+	type opened struct {
+		ss *sdk.ServerSession
+		id *access.Identity
+	}
+	var check []opened
+	s.mu.Lock()
+	for ss, id := range s.sessions {
+		if id != nil && id.Via == access.ViaToken {
+			check = append(check, opened{ss, id})
+		}
+	}
+	s.mu.Unlock()
+	for _, o := range check {
+		if !s.auth.StillValid(context.Background(), o.id) {
+			s.log.Info("mcp: session closed: its token no longer stands", "user", o.id.Name, "token_id", o.id.TokenID)
+			go o.ss.Close()
+		}
+	}
+}
+
+// sweep rechecks the sessions every period until the server stops.
+func (s *Streamable) sweep(stop <-chan struct{}, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-s.done:
+			return
+		case <-t.C:
+			s.Recheck()
+		}
+	}
 }
 
 // Sessions is the number of open sessions.
@@ -249,6 +313,9 @@ func (s *Streamable) Sessions() int {
 // a session waits for its running tool calls, and a wait ends on stop.
 func (s *Streamable) CloseSessions() {
 	s.mu.Lock()
+	if !s.closed {
+		close(s.done)
+	}
 	s.closed = true
 	open := make([]*sdk.ServerSession, 0, len(s.sessions))
 	for ss := range s.sessions {

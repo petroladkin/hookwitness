@@ -28,6 +28,10 @@ type navView struct {
 	Bare       bool   // the login page: no endpoints, no addresses
 	Theme      string // this browser's choice: "light", "dark" or "" (auto)
 	Here       string // the page's own URL, where the theme switch comes back to
+	// Storage is the database's size against its limit (nil: unknown);
+	// StorageWarnings are on every page.
+	Storage         *store.Storage
+	StorageWarnings []string
 }
 
 // registerView is one register: an endpoint's requests or the Unmatched ones.
@@ -36,6 +40,7 @@ type registerView struct {
 	Path     string // empty for Unmatched
 	Enabled  bool   // the endpoint is on (always true for Unmatched)
 	Unset    int    // its secrets without a value (imported from a setup file)
+	Receiver string // where its requests are forwarded (origin and path); "" when it answers itself
 	Count    int
 	Rows     []rowView
 	More     bool  // older requests exist beyond Rows
@@ -43,11 +48,12 @@ type registerView struct {
 	Seq      int64 // the change sequence the rows are complete up to
 	Base     string
 	Selected int64
-	Keep     int // retention: the register never holds more
+	Keeps    keepsView // retention: limits in force, pinned, pruned
 	Verdicts verdictsView
-	Export   *exportView       // the report dialog, when open
-	Draft    *draftDialogView  // the schema draft dialog, when open
-	Replay   *replayDialogView // the replay dialog, when open
+	Export   *exportView          // the report dialog, when open
+	Draft    *draftDialogView     // the schema draft dialog, when open
+	Replay   *replayDialogView    // the replay dialog, when open
+	Retain   *retentionDialogView // the retention dialog, when open
 }
 
 // rowView is one line of the register.
@@ -67,6 +73,19 @@ type rowView struct {
 	Verdict  string // overall authorization verdict, "" without checks
 	Replays  int    // replays kept of it
 	Repeat   string // the note of a signature an earlier request carried
+	Pinned   bool   // never pruned by retention
+	Anomaly  bool   // kept in the anomaly lane
+}
+
+// lane is the retention lane a row is in, for the page's pruning.
+func (r rowView) lane() string {
+	switch {
+	case r.Pinned:
+		return "pinned"
+	case r.Anomaly:
+		return "anomaly"
+	}
+	return "normal"
 }
 
 // exhibitView is one request in full.
@@ -81,8 +100,12 @@ type exhibitView struct {
 	From     string
 	Size     int64
 	TooLarge bool
+	Dropped  bool // the body was dropped to stay under the database size limit
 	Status   int
 	Delivery int
+	Event    *string // the event it belongs to; nil or "" when counted per body
+	Pinned   bool    // never pruned by retention
+	PinURL   string  // where Pin / Unpin posts
 	Headers  []store.Header
 	Query    []queryParam
 	Body     bodyView
@@ -96,7 +119,8 @@ type exhibitView struct {
 	Images   []imageView
 	// CanReplay: the whole body is kept, so it can be sent as it arrived.
 	CanReplay bool
-	Replays   []replayView // newest first
+	Replays   []replayView  // newest first
+	Exchange  *exchangeView // the receiver's side, when forwarded
 }
 
 // imageView is an image the request carries, under its body.
@@ -168,12 +192,16 @@ func tryCommand(base, path string) string {
 // status, a refusal, a render error, a refused body), "timeout" or "drop".
 func (r rowView) mark() string {
 	switch {
+	case r.Outcome.Pending():
+		return "ok" // judged when the receiver answers; the row refreshes then
 	case r.Outcome.HeldUp():
 		return "timeout"
 	case r.Outcome.Action == emulate.ActDrop:
 		return "drop"
 	case r.TooLarge || !r.Outcome.Good():
 		return "bad"
+	case r.Outcome.Forward != nil && r.Outcome.Forward.Fallback:
+		return "bad" // the receiver failed; the sender got the default reply
 	}
 	return "ok"
 }
@@ -193,6 +221,10 @@ func (r rowView) tag() string {
 		return strconv.Itoa(o.Status) + " refused"
 	case o.Action == emulate.ActError:
 		return "500 template error"
+	case o.Source == emulate.FromForward && o.Forward != nil:
+		return o.Stamp()
+	case o.Source == emulate.FromLoop:
+		return "508 loop"
 	case o.Source == emulate.FromRule:
 		return strconv.Itoa(o.Status) + " · rule " + strconv.Itoa(o.Rule)
 	case o.Source == emulate.FromOff:

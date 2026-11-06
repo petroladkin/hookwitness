@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -53,6 +54,10 @@ type Options struct {
 	// KeepHost sends the received Host line as it is; by default its value
 	// becomes the target's host and port, in the same place.
 	KeepHost bool
+	// OnConnect, when set, is told the local address of the connection once
+	// it is open, before anything is written: a forward knows its own
+	// connections when they come back to the server (a loop).
+	OnConnect func(local net.Addr)
 
 	Resolver Resolver       // nil: net.DefaultResolver
 	RootCAs  *x509.CertPool // nil: the system's roots
@@ -133,6 +138,9 @@ func Send(ctx context.Context, h Head, body []byte, o Options) (Response, error)
 		return res, classify(ctx, "dial", err)
 	}
 	defer conn.Close()
+	if o.OnConnect != nil {
+		o.OnConnect(conn.LocalAddr())
+	}
 	stop := context.AfterFunc(ctx, func() { conn.SetDeadline(time.Unix(1, 0)) })
 	defer stop()
 	if dl, ok := ctx.Deadline(); ok {
@@ -212,6 +220,12 @@ func compose(h Head, body []byte, o Options, res *Response) ([]byte, error) {
 	if !chunked && !length && len(body) > 0 {
 		lines = append(lines, wire.Header{Name: "Content-Length", Value: strconv.Itoa(len(body))})
 		res.Notes = append(res.Notes, "Content-Length added: the request had no framing for its body")
+	}
+	if chunked && length {
+		// Both framings at once is an ambiguous message (a request
+		// smuggling shape): the body goes chunked, so its length is left out.
+		lines = slices.DeleteFunc(lines, func(hd wire.Header) bool { return strings.EqualFold(hd.Name, "Content-Length") })
+		res.Notes = append(res.Notes, "Content-Length left out: the body is sent chunked")
 	}
 	if chunked {
 		res.Notes = append(res.Notes, "the chunked body is sent as one chunk, without chunk extensions or trailers")

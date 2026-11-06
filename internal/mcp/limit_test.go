@@ -32,7 +32,7 @@ func limitServer(t *testing.T, limit int, logs io.Writer) (*httptest.Server, *St
 	keys, _ := secret.Load("", filepath.Join(t.TempDir(), "hw.db.key"))
 	log := slog.New(slog.NewTextHandler(logs, nil))
 	a := api.New(st, live.New(), log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: make(chan struct{}), Version: "test"})
-	h := Handler(a, api.Base("/admin"), "test", log, nil, limit)
+	h := Handler(a, api.Base("/admin"), "test", log, nil, limit, nil)
 	mux := http.NewServeMux()
 	mux.Handle("/admin/mcp", h)
 	srv := httptest.NewServer(mux)
@@ -192,4 +192,128 @@ func TestSessionLimitOff(t *testing.T) {
 	}
 	res.Body.Close()
 	waitFor(t, "40 slots", func() bool { return h.slotsInUse() == 40 })
+}
+
+// bigSetup is a setup file of n endpoints, each with a schema of size bytes.
+func bigSetup(n, size int) map[string]any {
+	eps := []any{}
+	for i := range n {
+		eps = append(eps, map[string]any{"path": "/big/" + itoa(i), "default": map[string]any{"status": 200},
+			"schemas": []any{map[string]any{"name": "Big", "text": `{"type":"object","description":"` + strings.Repeat("x", size) + `"}`}}})
+	}
+	return map[string]any{"hookwitness": 1, "endpoints": eps}
+}
+
+func toolText(res *sdk.CallToolResult) string {
+	if res == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*sdk.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	return b.String()
+}
+
+// Over HTTP, import_endpoints takes any setup the API takes (16 MiB): one
+// of 10 MiB is imported; one the API finds too large is a tool error; a
+// request past MaxRequest is refused by the transport (413, naming the
+// limit), and the server keeps the session. export_endpoint gives at most
+// 4 MiB, and above that says how to get the file.
+func TestSetupSizesOverHTTP(t *testing.T) {
+	srv, h := limitServer(t, 0, io.Discard)
+	cs, err := connect(srv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	ctx := context.Background()
+	call := func(name string, args map[string]any) (*sdk.CallToolResult, error) {
+		return cs.CallTool(ctx, &sdk.CallToolParams{Name: name, Arguments: args})
+	}
+	res, err := call("import_endpoints", map[string]any{"setup": bigSetup(10, 1<<20)})
+	if err != nil || res.IsError {
+		t.Fatalf("a 10 MiB setup: %v %s", err, toolText(res))
+	}
+	res, err = call("import_endpoints", map[string]any{"setup": bigSetup(11, 3<<19)}) // 16.5 MiB
+	if err != nil || !res.IsError || !strings.Contains(toolText(res), "the setup file is over 16777216 bytes") {
+		t.Fatalf("a 16.5 MiB setup: %v %+v", err, res)
+	}
+
+	res, err = call("export_endpoint", map[string]any{"endpoints": []any{"/big/3"}})
+	if err != nil || res.IsError || len(toolText(res)) > MaxExport {
+		t.Fatalf("one endpoint's export: %v, %d bytes", err, len(toolText(res)))
+	}
+	res, err = call("export_endpoint", map[string]any{})
+	if err != nil || !res.IsError {
+		t.Fatalf("a 10 MiB export: %v, error %v", err, res.IsError)
+	}
+	if text := toolText(res); !strings.Contains(text, "the setup is 10.0 MiB, over the 4 MiB a result carries") || !strings.Contains(text, "GET /admin/api/v1/setup") || len(text) > 1000 {
+		t.Fatalf("a 10 MiB export: %s", text)
+	}
+
+	// 18 MiB: the transport refuses it. This client then ends its session
+	// itself; the server keeps a session whose request was too large.
+	if _, err = call("import_endpoints", map[string]any{"setup": bigSetup(12, 3<<19)}); err == nil || !strings.Contains(err.Error(), "Request Entity Too Large") {
+		t.Fatalf("an 18 MiB request: %v", err)
+	}
+	_, _, sid, _ := initialize(t, srv, 1)
+	waitFor(t, "one session", func() bool { return h.Sessions() == 1 })
+	raw, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 99, "method": "tools/call",
+		"params": map[string]any{"name": "import_endpoints", "arguments": map[string]any{"setup": bigSetup(12, 3<<19)}}})
+	req, _ := http.NewRequest("POST", srv.URL+"/admin/mcp", strings.NewReader(string(raw)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Mcp-Session-Id", sid)
+	req.Header.Set("Mcp-Protocol-Version", "2025-06-18")
+	r, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := io.ReadAll(r.Body); r.StatusCode != http.StatusRequestEntityTooLarge || !strings.Contains(string(b), "request body exceeds 17825792 bytes") {
+		t.Fatalf("an 18 MiB request: %d %s", r.StatusCode, b)
+	}
+	if h.Sessions() != 1 {
+		t.Fatalf("the server dropped the session: %d", h.Sessions())
+	}
+}
+
+// A session whose client sent initialize but never initialized is closed at
+// shutdown like any other: its open stream ends, its slot comes back.
+func TestCloseSessionNeverInitialized(t *testing.T) {
+	srv, h := limitServer(t, 4, io.Discard)
+	code, _, sid, body := initialize(t, srv, 1)
+	if code != http.StatusOK || sid == "" {
+		t.Fatalf("initialize: %d %q %s", code, sid, body)
+	}
+	if h.Sessions() != 1 || h.slotsInUse() != 1 {
+		t.Fatalf("after initialize: %d sessions, %d slots", h.Sessions(), h.slotsInUse())
+	}
+	req, _ := http.NewRequest("GET", srv.URL+"/admin/mcp", nil)
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Mcp-Session-Id", sid)
+	req.Header.Set("Mcp-Protocol-Version", "2025-06-18")
+	res, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("the GET stream: %d", res.StatusCode)
+	}
+	ended := make(chan struct{})
+	go func() { io.Copy(io.Discard, res.Body); res.Body.Close(); close(ended) }()
+	select {
+	case <-ended:
+		t.Fatal("the stream ended before the shutdown")
+	case <-time.After(100 * time.Millisecond):
+	}
+	h.CloseSessions()
+	select {
+	case <-ended:
+	case <-time.After(10 * time.Second): // the alternative is the 30-minute session timeout
+		t.Fatal("the stream is still open after CloseSessions")
+	}
+	waitFor(t, "sessions and slots back to 0", func() bool { return h.Sessions() == 0 && h.slotsInUse() == 0 })
 }

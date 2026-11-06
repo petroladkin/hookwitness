@@ -22,6 +22,7 @@ import (
 
 	"github.com/petroladkin/hookwitness/internal/api"
 	"github.com/petroladkin/hookwitness/internal/catch"
+	"github.com/petroladkin/hookwitness/internal/forward"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -68,8 +69,10 @@ func newEnv(t *testing.T) env {
 	stop := make(chan struct{})
 	stopOnce := sync.OnceFunc(func() { close(stop) })
 	t.Cleanup(stopOnce)
-	a := api.New(st, lv, log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: stop, Version: "v0.0.0-test"})
-	catcher := &catch.Handler{Store: st, Live: lv, Log: log, MaxBody: 1 << 20, Retention: 1000, Keys: keys}
+	a := api.New(st, lv, log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: stop, Version: "v0.0.0-test",
+		Keep: store.Keep{Normal: 1000, Anomalies: 1000}})
+	catcher := &catch.Handler{Store: st, Live: lv, Log: log, MaxBody: 1 << 20, Retention: store.Keep{Normal: 1000, Anomalies: 1000}, Keys: keys}
+	catcher.Forward = forward.New(log, forward.Options{MaxWait: time.Minute, Budget: catcher})
 
 	polls, inPoll := &atomic.Int64{}, &atomic.Int64{}
 	counted := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +83,7 @@ func newEnv(t *testing.T) env {
 		}
 		a.ServeHTTP(w, r)
 	})
-	srv := NewServer(counted, api.Base("/admin"), "127.0.0.1:8080", "v0.0.0-test", stop)
+	srv := NewServer(counted, api.Base("/admin"), "127.0.0.1:8080", "v0.0.0-test", stop, nil)
 	ct, stt := sdk.NewInMemoryTransports()
 	ss, err := srv.Connect(context.Background(), stt, nil)
 	if err != nil {
@@ -158,7 +161,7 @@ func TestToolList(t *testing.T) {
 	}
 	want := []string{"create_endpoint", "list_endpoints", "get_endpoint", "configure_endpoint", "set_secret", "wait_for_request",
 		"list_requests", "get_request", "expect", "reset_endpoint", "recheck", "delete_endpoint", "switch_endpoint",
-		"export_endpoint", "import_endpoints", "replay_request"}
+		"export_endpoint", "import_endpoints", "replay_request", "pin_request", "set_retention"}
 	if len(got) != len(want) {
 		t.Fatalf("%d tools, want %d", len(got), len(want))
 	}
@@ -173,7 +176,7 @@ func TestToolList(t *testing.T) {
 			t.Errorf("%s is not marked read-only", name)
 		}
 	}
-	for _, name := range []string{"delete_endpoint", "reset_endpoint", "import_endpoints"} {
+	for _, name := range []string{"delete_endpoint", "reset_endpoint", "import_endpoints", "set_retention"} {
 		if a := got[name].Annotations; a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint {
 			t.Errorf("%s is not marked destructive", name)
 		}
@@ -181,7 +184,7 @@ func TestToolList(t *testing.T) {
 	if a := got["replay_request"].Annotations; a.ReadOnlyHint || a.OpenWorldHint == nil || !*a.OpenWorldHint || a.DestructiveHint == nil || *a.DestructiveHint {
 		t.Errorf("replay_request is not marked open-world and not destructive: %+v", a)
 	}
-	for _, name := range []string{"create_endpoint", "configure_endpoint", "set_secret", "recheck", "switch_endpoint"} {
+	for _, name := range []string{"create_endpoint", "configure_endpoint", "set_secret", "recheck", "switch_endpoint", "pin_request"} {
 		if a := got[name].Annotations; a.DestructiveHint == nil || *a.DestructiveHint {
 			t.Errorf("%s is marked destructive", name)
 		}
@@ -319,7 +322,15 @@ func TestResetAndDelete(t *testing.T) {
 	if res, text := e.call(t, context.Background(), "reset_endpoint", map[string]any{"endpoint": "/r"}); !res.IsError || !strings.Contains(text, "say what to reset") {
 		t.Fatalf("nothing to reset: %s", text)
 	}
-	e.ok(t, "reset_endpoint", map[string]any{"endpoint": "/r", "requests": true, "counter": true})
+	if out, text := e.ok(t, "get_endpoint", map[string]any{"endpoint": "/r"}); out["started_at"] == nil || !strings.Contains(text, "the rules counted 1 since their clock started at") {
+		t.Fatalf("get_endpoint before the reset: %s", text)
+	}
+	if _, text := e.ok(t, "reset_endpoint", map[string]any{"endpoint": "/r", "requests": true, "counter": true}); !strings.Contains(text, "counter and clock reset") {
+		t.Fatalf("reset: %s", text)
+	}
+	if out, text := e.ok(t, "get_endpoint", map[string]any{"endpoint": "/r"}); out["started_at"] != nil || strings.Contains(text, "clock started") {
+		t.Fatalf("get_endpoint after the reset: %s", text)
+	}
 	if out, _ := e.ok(t, "list_requests", map[string]any{"endpoint": "/r"}); len(out["requests"].([]any)) != 0 {
 		t.Fatal("requests not cleared")
 	}
@@ -403,5 +414,45 @@ func TestDescribeNotes(t *testing.T) {
 			"note": "same signature as #1: a replay, or a redelivery of the same signed request"}}}
 	if got := describe(r); got != "#2 POST /gh answered 200, verdict pass; same signature as #1" {
 		t.Fatalf("%q", got)
+	}
+}
+
+// configure_endpoint takes rules by time and state, and refuses an
+// impossible one with the API's message.
+func TestClockRulesTool(t *testing.T) {
+	e := newEnv(t)
+	e.ok(t, "create_endpoint", map[string]any{"path": "/limited"})
+	e.ok(t, "configure_endpoint", map[string]any{"endpoint": "/limited", "rules": []any{
+		map[string]any{"when": map[string]any{"kind": "rate", "n": 1, "per_s": 60, "block_s": 60}, "do": "reply",
+			"reply": map[string]any{"status": 429, "headers": []any{map[string]any{"name": "Retry-After", "value": "{{.RetryAfter}}"}}}},
+	}})
+	if a, b := e.deliver("/limited", "{}"), e.deliver("/limited", "{}"); a != 200 || b != 429 {
+		t.Fatalf("over 1 in 60 s: %d then %d", a, b)
+	}
+	res, text := e.call(t, context.Background(), "configure_endpoint", map[string]any{"endpoint": "/limited", "rules": []any{
+		map[string]any{"when": map[string]any{"kind": "window", "from_s": 5, "to_s": 5}, "do": "drop"}}})
+	if !res.IsError || !strings.Contains(text, "to_s must be above from_s") {
+		t.Fatalf("an empty window: %s", text)
+	}
+}
+
+// list_endpoints names the database's size; a request whose body was
+// dropped says so.
+func TestStorageTools(t *testing.T) {
+	e := newEnv(t)
+	e.ok(t, "create_endpoint", map[string]any{"path": "/s"})
+	out, text := e.ok(t, "list_endpoints", map[string]any{})
+	if !strings.Contains(text, "; database ") || !strings.Contains(text, "no size limit") || out["storage"] == nil {
+		t.Fatalf("list_endpoints: %s", text)
+	}
+	e.deliver("/s", `{"a":1}`)
+	r, _ := e.ok(t, "list_requests", map[string]any{"endpoint": "/s"})
+	id := int64(r["requests"].([]any)[0].(map[string]any)["id"].(float64))
+	if err := e.catcher.Store.DropBodies(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	got, text := e.ok(t, "get_request", map[string]any{"id": id})
+	if got["body_dropped"] != true || got["body_kept"] != false || !strings.Contains(text, "body dropped") {
+		t.Fatalf("get_request: %s", text)
 	}
 }

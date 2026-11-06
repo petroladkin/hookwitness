@@ -56,7 +56,7 @@ func (c Config) CredentialHeaders() []string {
 var AuthKinds = []string{KindGitHub, KindStripe, KindStandard, KindHMAC, KindBearer, KindBasic}
 
 func knownKind(k string) bool {
-	return k == KindHeader || k == KindSchema || slices.Contains(AuthKinds, k)
+	return k == KindHeader || k == KindSchema || slices.Contains(AuthKinds, k) || slices.Contains(DeliveryKinds, k)
 }
 
 func (ch Check) kind() string {
@@ -87,6 +87,15 @@ func (ch Check) Label() string {
 		return "Basic credentials"
 	case KindHeader:
 		return "header " + ch.Header
+	case KindDuplicates:
+		return "Duplicates"
+	case KindOrder:
+		if ch.Order != nil {
+			return "Order by " + ch.Order.Key
+		}
+		return "Order"
+	case KindBackoff:
+		return "Retry backoff"
 	case KindSchema:
 		if ch.Select != nil {
 			return "JSON Schema by " + ch.Select.Label()
@@ -184,6 +193,9 @@ func (c Config) validateAuth(ch Check, maxWait time.Duration) error {
 	if ch.kind() == KindSchema {
 		return c.validateSchemaCheck(ch, maxWait)
 	}
+	if ch.IsDelivery() {
+		return c.validateDelivery(ch)
+	}
 	if ch.Secret == "" {
 		return errors.New("choose the secret")
 	}
@@ -275,6 +287,11 @@ func (c Config) Verify(r Request, received time.Time, hasBody bool, keys Keyring
 func (c Config) verify(ch Check, r Request, in auth.Input, keys Keyring) auth.Verdict {
 	if ch.kind() == KindSchema {
 		return c.verifySchema(ch, r, in.HasBody)
+	}
+	if ch.IsDelivery() {
+		// Finished where the request is stored (JudgeDelivery): it needs the
+		// earlier kept requests.
+		return auth.Verdict{Result: auth.NotChecked, Reason: "judged against the earlier requests when stored"}
 	}
 	s, ok := c.SecretByName(ch.Secret)
 	if !ok {

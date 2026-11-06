@@ -79,23 +79,31 @@ variable. In Docker, pass the variables: `-e HOOKWITNESS_RETENTION=5000`.
 | `-log-format` | `HOOKWITNESS_LOG_FORMAT` | `text` | `text` or `json` |
 | `-max-body` | `HOOKWITNESS_MAX_BODY` | `10MiB` | the largest body kept, in bytes or with `KiB`, `MiB`, `GiB`, at most `512MiB`; a larger one is answered `413` and not kept |
 | `-max-inflight` | `HOOKWITNESS_MAX_INFLIGHT` | the larger of `256MiB` and twice `-max-body` | bytes of request bodies read at once; a body that does not fit is answered `503` with `Retry-After: 5` and kept without its body; at least `-max-body` |
-| `-retention` | `HOOKWITNESS_RETENTION` | `1000` | requests kept per endpoint, and as many unmatched |
+| `-max-db-size` | `HOOKWITNESS_MAX_DB_SIZE` | none | a size limit for the database (at least `64MiB`): over it the oldest bodies, then requests, are dropped, normal ones before anomalies, pinned never ([Keeping requests](keeping.md#a-size-limit-for-the-database)) |
+| `-retention` | `HOOKWITNESS_RETENTION` | `1000` | normal requests kept per endpoint by default, and as many unmatched; each endpoint can set its own ([Keeping requests](keeping.md)) |
+| `-retention-anomalies` | `HOOKWITNESS_RETENTION_ANOMALIES` | `1000` | anomalies (not answered 2xx, a failed verdict, a redelivery) kept per endpoint by default, apart from the normal ones; `0`: no separate lane |
 | `-admin-addr` | `HOOKWITNESS_ADMIN_ADDR` | none | the admin's own address (host:port) for the UI, the API and MCP; none: they live under `-admin-prefix` on `-addr` ([below](#the-admin-on-its-own-port)) |
 | `-admin-prefix` | `HOOKWITNESS_ADMIN_PREFIX` | `/admin` | where the UI and the API live; `/` (the root) only with `-admin-addr` |
 | `-public-url` | `HOOKWITNESS_PUBLIC_URL` | none | the URL senders reach the catch paths at, such as `https://hooks.example.com`: the catch URLs the UI and the API show are built on it (behind a proxy, a tunnel or remapped ports) |
 | `-admin-hosts` | `HOOKWITNESS_ADMIN_HOSTS` | none | host names the UI and the API answer to, comma-separated |
 | `-max-wait` | `HOOKWITNESS_MAX_WAIT` | `5m` | the longest reply delay or timeout hold, from 1s to 1h |
 | `-import` | `HOOKWITNESS_IMPORT` | none | a setup file applied at every start: its endpoints are created or their behaviour replaced, secrets keep their values ([Sharing a setup](sharing.md#known-endpoints-without-clicks)) |
-| `-replay-allow` | `HOOKWITNESS_REPLAY_ALLOW` | any target but link-local and cloud-metadata addresses | where caught requests may be replayed to: host names, `host:port`, addresses or CIDRs, comma-separated; `none` turns replay off ([Replaying a request](replay.md#which-targets)) |
+| `-replay-allow` | `HOOKWITNESS_REPLAY_ALLOW` | any target but link-local and cloud-metadata addresses | where caught requests may be replayed and endpoints may forward to: host names, `host:port`, addresses or CIDRs, comma-separated; `none` turns replay and forwarding off ([Replaying a request](replay.md#which-targets), [Recording a live integration](recorder.md#keep-it-closed)) |
 | `-mcp-max-sessions` | `HOOKWITNESS_MCP_MAX_SESSIONS` | `32` | MCP sessions open at once; one more is answered `503` at `initialize`, and a slot frees when a session closes or stays idle for 30 minutes; `0` for no limit ([MCP](agents.md#mcp)) |
 | `-trusted-proxies` | `HOOKWITNESS_TRUSTED_PROXIES` | none | reverse proxies (addresses or CIDRs, comma-separated) whose `X-Forwarded-For` names the client, for the login limit ([Users and login](access.md#behind-a-reverse-proxy)) |
+| `-admin-url` | `HOOKWITNESS_ADMIN_URL` | `-public-url` when the admin shares its port and that URL has no path | the admin's external address, such as `https://hooks-admin.example.com`: the base of the providers' redirect URIs; its host passes the host check ([Signing in with a provider](access.md#signing-in-with-google-microsoft-entra-id-or-another-provider)) |
+| `-oidc-providers` | `HOOKWITNESS_OIDC_PROVIDERS` | none | OpenID Connect providers to sign in with, comma-separated names; each set by `HOOKWITNESS_OIDC_<NAME>_*` variables ([Signing in with a provider](access.md#signing-in-with-google-microsoft-entra-id-or-another-provider)) |
 | — | `HOOKWITNESS_ADMIN_USER`, `HOOKWITNESS_ADMIN_PASSWORD_FILE` | none | the first admin, created at start on a database without users ([Users and login](access.md)) |
 | — | `HOOKWITNESS_API_TOKEN_FILE` | none | a file with a machine token for the API and MCP ([Users and login](access.md#a-machine-token)) |
 | — | `HOOKWITNESS_SECRET_KEY` | none | the secret key (below); without it, the key file `<db>.key` |
 
-The database grows to at most about (endpoints × `-retention` × `-max-body`)
-plus `-retention` × 64 KiB for the Unmatched register, which keeps only the
-first 64 KiB of a body.
+The database grows to at most about (endpoints × (`-retention` +
+`-retention-anomalies`) × `-max-body`), with each endpoint's own limits in
+place of the defaults, plus `-retention` × 64 KiB for the Unmatched register,
+which keeps only the first 64 KiB of a body, plus the pinned requests.
+Pinned requests are never pruned; an age limit is applied once a minute.
+With `-max-db-size` it stays at most the limit plus about a minute of
+traffic, plus what pinned requests hold beyond it.
 
 Ctrl-C or SIGTERM stops the server gracefully: requests in flight finish,
 held timeouts end.
@@ -111,6 +119,10 @@ is:
   list;
 - or, when it is not set, a key file next to the database (`<db>.key`,
   created with mode 0600 on the first run).
+
+A new database file (and its `-wal` and `-shm`) is created with mode 0600
+too: it holds every request's body. An existing database keeps the mode it
+has; `chmod 600` it if others on the machine should not read it.
 
 Keep the key with the database when you move it. A database opened with
 another key keeps everything except the secrets: signing keys cannot be

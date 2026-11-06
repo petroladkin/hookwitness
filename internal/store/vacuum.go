@@ -111,19 +111,51 @@ func (s *Store) reclaimStep(ctx context.Context) (int64, error) {
 // gives it back (space freed by pruning; clearing gives its own back at once).
 const ReclaimFrom = 8 << 20
 
-// Housekeep gives free space back every interval (Reclaim from
-// ReclaimFrom) until ctx ends; errors go to report.
-func (s *Store) Housekeep(ctx context.Context, interval time.Duration, report func(freed int64, err error)) {
-	t := time.NewTicker(interval)
+// Housekeeping is what the minute tick does and whom it tells.
+type Housekeeping struct {
+	Interval time.Duration
+	Keep     Keep                   // the server's default retention
+	Now      func() time.Time       // nil: time.Now
+	Pruned   func(reg int64, n int) // a register lost n requests to retention (wake its feeds)
+	Report   func(freed int64, err error)
+	// MaxSize is the database size limit (-max-db-size); 0: none. Over it
+	// the tick, and a large body at once (Nudge), evict (evict.go);
+	// Evicted is told what an eviction did (the feeds of e.Registers lost
+	// requests).
+	MaxSize int64
+	Evicted func(Evicted)
+}
+
+// Housekeep applies retention (ages, counts left over after a limit was
+// lowered) and gives free space back (Reclaim from ReclaimFrom) every
+// interval until ctx ends; errors go to h.Report.
+func (s *Store) Housekeep(ctx context.Context, h Housekeeping) {
+	now := h.Now
+	if now == nil {
+		now = time.Now
+	}
+	t := time.NewTicker(h.Interval)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.nudge:
+			s.evictFor(ctx, h)
 		case <-t.C:
+			pruned, err := s.Prune(ctx, now(), h.Keep)
+			for reg, n := range pruned {
+				if h.Pruned != nil {
+					h.Pruned(reg, n)
+				}
+			}
+			if err != nil && ctx.Err() == nil {
+				h.Report(0, fmt.Errorf("retention: %w", err))
+			}
+			s.evictFor(ctx, h)
 			freed, err := s.Reclaim(ctx, ReclaimFrom)
 			if (freed > 0 || err != nil) && ctx.Err() == nil {
-				report(freed, err)
+				h.Report(freed, err)
 			}
 		}
 	}

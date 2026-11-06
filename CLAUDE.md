@@ -20,8 +20,12 @@ live (SSE + HTMX) with the recorder strip (2 min, 10 min, 1 h or 6 h, every
 kept request of the range from a UI-only marks route, the time before the
 oldest kept request hatched "not kept") and the request detail. Each
 endpoint's behaviour page scripts its answers: required-header checks, ordered
-rules (every Nth, first N, random p%) with reply / timeout / drop, a default
-reply, template variables; a reply body is a template or exact bytes
+rules (every Nth, first N, random p%; by the endpoint's clock, started by
+the first request after a reset: a window, a flap in seconds or requests, a
+rate limit with a block; the first attempts of each event) with reply /
+timeout / drop, a default reply, template variables (`RetryAfter`,
+`Elapsed`, `Attempt` among them); the Rules tab shows the counter and the
+clock's start, and its reset clears both; a reply body is a template or exact bytes
 (`body_base64`); every request records its outcome (a reply body that is not
 UTF-8 as base64). Authorization
 checks (GitHub, Stripe, Standard Webhooks/Svix, generic HMAC, bearer, basic)
@@ -69,15 +73,49 @@ API) turns login on for the UI, the API and MCP: browser sessions (cookie,
 SameSite=Lax, idle 24 h, absolute 7 days), personal tokens
 (`hkw_<id>_<secret>`, Bearer, shown once; skip the host check), a machine
 token (`HOOKWITNESS_API_TOKEN_FILE`, closes the API and MCP even without
-users), two roles (user, admin), a login limit per client address
-(`-trusted-proxies`); token and user management needs a session; the
+users), two roles (user, admin), a login limit per client address (IPv6
+per /64; `-trusted-proxies`); a revoked token (or its user removed or
+given another role) ends the live feeds, MCP waits and MCP sessions it
+opened; token and user management needs a session; the
 catcher replaces the session cookie's value in recorded `Cookie` headers.
+Sign-in through OpenID Connect providers (Google, Entra ID, any provider
+with discovery; `-oidc-providers` + `HOOKWITNESS_OIDC_<NAME>_*` env, the
+client secret from a file, `-admin-url` for the redirect URI): code flow
+with PKCE, state and nonce kept server-side, the ID token verified
+(go-oidc); a pre-created user links by a verified email once (then by
+issuer + subject), allowed domains per provider create `user`-role users
+without a password; provider sign-in is off until a first admin exists;
+users have an optional email, may have no password (a first one from a
+sign-in under 10 minutes old), identities are unlinked by an admin or by
+the user (never their own last way in), which ends their logins.
 Replay: a caught request whose body was kept whole is sent again, byte for
 byte (Host replaced in place unless kept), to a URL from the UI, the API
 (`POST <prefix>/api/v1/requests/{id}/replays`) or MCP (`replay_request`), by an admin once login is on;
 the target's answer is kept with the request (newest 50); link-local and
 cloud-metadata addresses are refused on the address dialled, and
-`-replay-allow` narrows the targets or turns replay off. Setup files: an endpoint's setup (path,
+`-replay-allow` narrows the targets or turns replay off. Recorder in the
+middle: an endpoint with a receiver (`forward`: URL without query or
+userinfo, Host, TLS, timeout 30 s by default, a gateway error or the
+default reply on failure) passes each request that passes its checks and
+that no rule takes on to it, byte for byte, and answers with its answer
+(up to 1 MiB, framed by the server, protected like any reply); a rule's
+forward switch lets the receiver have its requests too; the exchange is
+kept with the request (`forwards`, its body's first 64 KiB), the sender
+leaving does not end it, 64 at once, `508` for a request back on the
+server's own forward; the same target policy as replay; only an admin
+changes a receiver once login is on (UI Receiver tab, API, MCP, setup
+import), with an open-relay warning; rows, the request page (Receiver
+section), reports, the API (`forward`, `forward=` filter,
+`/requests/{id}/forward`) and MCP show the receiver's side. Size limit:
+with `-max-db-size` the minute tick (and a body over 1 MiB at once) drops,
+globally and oldest first, normal bodies, then normal requests, then
+anomalies' bodies, then anomalies, until the used pages are under 95 % of
+it; pinned never; a dropped body keeps the request's metadata and verdicts
+(`body_dropped`; replay refused, re-check notes it and keeps its order
+mark, raw body and images 404), its replays' and receiver's answer
+bodies go with it (`body_dropped`, 404); the endpoints page, `GET <prefix>/api/v1/storage` and MCP name the
+size, the limit, pinned bytes and the volume's free space, with warnings on
+every page. Setup files: an endpoint's setup (path,
 behaviour, secret names and kinds, never values; `"hookwitness": 1`,
 unknown fields refused) exports from the Behaviour page, Export all, `GET
 <prefix>/api/v1/setup` and MCP `export_endpoint`, and imports (all or
@@ -106,29 +144,60 @@ that makes it false.
   environment; signal handling; logger setup; wiring of the parts below.
 - `internal/access` — who may use the admin: names, passwords, tokens
   (format, minting), sessions (ids hashed with SHA-256, lifetimes, the
-  cookie), the login limiter and trusted proxies, the identity a request
-  carries in its context (`With`, `From`, `Who` for logs), the
-  `Authenticator` over the store and `internal/secret`.
+  cookie), the login limiter (IPv6 keyed by its /64) and trusted proxies,
+  the identity a request carries in its context (`With`, `From`, `Who` for
+  logs), the `Authenticator` over the store and `internal/secret`
+  (`StillValid`: a token's row and its owner's role, for streams and waits
+  opened earlier; `OnChange`/`Changed`: told when this process revokes a
+  token, removes a user or changes a role); emails (`CheckEmail`,
+  `NameFromEmail`), the provider sign-in's flow cookie (`hookwitness_oidc`),
+  a login of a user without a password checked against a dummy record.
+- `internal/oidc` — OpenID Connect providers (coreos/go-oidc,
+  x/oauth2): lazy discovery (retried after 30 s, refreshed after 24 h), the
+  flows in progress in memory (single use, 10 minutes, at most 10 000),
+  `Exchange` (the code with PKCE, the ID token's signature, iss, aud, exp,
+  nonce, azp; `email_verified` or Entra's `xms_edov`); `oidctest` is a test
+  provider (forged tokens, rotation, outages) that `scripts/oidcmock` serves
+  for scripts; neither is in the server's package graph (a repoguard test).
 - `internal/config` — `serve` settings from flags and `HOOKWITNESS_*` env
-  (the admin's own address and the public URL validated with the rest).
+  (the admin's own address and the public URL validated with the rest;
+  OpenID Connect providers from `HOOKWITNESS_OIDC_*`, every error naming
+  its variable; `AdminOrigin`, `RedirectURI`).
 - `internal/store` — sqlite (modernc.org/sqlite, no cgo): pragmas, embedded
   migrations in `internal/store/migrations/NNNN_name.sql`, applied in order and
   recorded in `schema_migrations`; a newer database schema is refused. New
-  databases have incremental auto-vacuum: clearing and deleting give space
+  databases have incremental auto-vacuum (set once on the empty file by
+  `initFile`, never by a pool pragma): clearing and deleting give space
   back at once, pruning by a housekeeping tick (`vacuum.go`, steps of 1024
   pages); `Compact` (`hookwitness db compact`, server stopped: a shared
   lock on `<db>.lock` while open, exclusive while compacting) converts an
-  older database through a checked copy renamed into place.
+  older database through a checked copy renamed into place (the copy made
+  empty with mode 0600, the database's mode given when complete); a new
+  database file is created 0600, an existing one keeps its mode.
   Users, sessions and tokens (`access.go`; the last admin guarded inside the
-  write transaction).
-  Endpoints and requests (`catch.go`); imports (`import.go`: all or none); `endpoint_id` NULL is the Unmatched
+  write transaction); emails and provider identities (`identity.go`:
+  `SignIn` links, creates or refuses in one write transaction; `Unlink`).
+  The size limit (`evict.go`: `Evict` in batches under the writer's lock,
+  a pass bounded by the requests it started with, moved up a few times
+  when requests that arrived meanwhile hold work of an earlier step;
+  `DropBodies`; `Usage` from used pages; `storage.go`: `Storage`, its
+  warnings, the volume's space by statfs on Linux and macOS); the WAL cut
+  back to `WALLimit` after checkpoints.
+  Forwards (`forwards.go`: one exchange per request, stored with the
+  final outcome in one transaction; the `forward=` filter reads the
+  outcome).
+  Endpoints and requests (`catch.go`; the rules' counter and their state,
+  `endpoints.state`, read and written in the transaction that stores a
+  request, with its attempt of its event, so decisions are exact under
+  concurrency); imports (`import.go`: all or none); `endpoint_id` NULL is the Unmatched
   register; request ids are never reused (they are the SSE event ids);
   every outcome or verdict change takes the next value of one change
   sequence (`requests.change_seq`, in commit order), from which the live
   feed resumes (`Last-Event-ID: <request id>.<seq>`); the signatures kept
   requests carried, as keyed digests (`signature_seen`), so a passing
   signature that repeats an earlier kept request's gets a note (the
-  result unchanged).
+  result unchanged); order marks (`event_seen`) are compared only with
+  marks of the same order definition (`order_def`).
 - `internal/setup` — setup files: `Export` (secret names and kinds only),
   `Parse` (format marker and version, unknown fields refused, paths and
   behaviours validated), `Endpoint.Config` (a replace keeps the values of
@@ -145,7 +214,9 @@ that makes it false.
 - `internal/emulate` — pure decision logic for an endpoint's answer: config
   (JSON in `endpoints.config`), validation, required-header and
   authorization checks (`checks.go`: kinds, secrets list, `Verify`), rule
-  conditions, text/template rendering (`guard.go`: the string builtins
+  conditions (`clock.go`: by time and state, `Decide` over the counter, the
+  arrival, the stored state and the attempt; a rate rule's state keyed by
+  its position and condition), text/template rendering (`guard.go`: the string builtins
   replaced with bounded ones, a byte budget per render, a render past its
   deadline stopped), the outcome record (JSON in
   `requests.outcome`). Verdicts go to `requests.verdict` / `verdicts`.
@@ -192,13 +263,21 @@ that makes it false.
   a rendered page.
 - `internal/catch` — records and answers caught requests (body limit, 413,
   404 + Unmatched keeping a body's first 64 KiB; bodies held at once bounded
-  by `-max-inflight`, over it 503 "busy" without the body); runs checks, lets the store decide the rule inside the
+  by `-max-inflight`, over it 503 "busy" without the body; a request the
+  store cannot keep 503 with `Retry-After`, the error logged); runs checks, lets the store decide the rule inside the
   counter's transaction (exact under concurrency), then replies (with
   `Content-Security-Policy: sandbox` always, next to an endpoint's own
   policy, `nosniff` unless the endpoint sets it, and never a `Set-Cookie` of
-  the login cookie: catch paths share the UI's origin), delays, holds
+  the admin's cookies, the login's or a provider sign-in's, also from a
+  receiver: catch paths share the UI's origin), delays, holds
   (timeout) or
-  resets (drop, SO_LINGER 0); holds end on shutdown.
+  resets (drop, SO_LINGER 0); holds end on shutdown. An endpoint with a
+  receiver (`forward.go`): the request is stored pending, sent through
+  `internal/forward`, and the exchange and the final outcome stored
+  together (`store.FinishForward`); the answer passed back or the failure
+  answer; a rule with the forward switch answers while the receiver gets
+  it; a request on one of the server's own forward connections is a loop
+  (508).
 - `internal/live` — wake-ups for live feeds; feeds read what they missed from
   the store, so nothing is lost or repeated.
 - `internal/api` — the JSON API under `<prefix>/api/v1`, mounted by
@@ -213,16 +292,29 @@ that makes it false.
   task-shaped tools that call the REST API's handler in-process (same
   validation, errors and access), mounted by `internal/web` at
   `<prefix>/mcp`; `wait_for_request` and `expect` chain the API's long-polls
-  and end on cancellation and at shutdown (a tool error); open sessions are
-  tracked and closed on shutdown (`Streamable.CloseSessions`, called by
-  `StopStreams`) and capped (`-mcp-max-sessions`, default 32: a slot taken at
-  `initialize`, 503 over it); results are a summary line and compact JSON,
-  bodies cut at 16 KiB; `Bridge` pipes stdio to Streamable HTTP.
+  (rounds of 30 s) and end on cancellation, at shutdown and when the
+  caller's token no longer stands, checked each round (a tool error); open
+  sessions are tracked from `initialize` with their identity (and their
+  slot, one owner: `hold`), closed when their token no longer stands (at
+  once on `Changed`, else within 25 s: `Recheck`) and on shutdown
+  (`Streamable.CloseSessions`, called by `StopStreams`), and
+  capped (`-mcp-max-sessions`, default 32: a slot taken at `initialize`, 503
+  over it); a request is at most `MaxRequest` (a 16 MiB setup file and its
+  message; over it 413 from the SDK); results are a summary line and compact
+  JSON, bodies cut at 16 KiB, an export at most 4 MiB (`MaxExport`, then an
+  error naming the API's address); `Bridge` pipes stdio to Streamable HTTP.
 - `internal/send` — one HTTP/1.1 exchange written and read by hand (header
   lines in order and case, the body as is, the answer never decompressed,
   no redirects), and the target `Policy` checked on the dialled address
   (the dialer's Control hook): link-local and metadata addresses always
   refused, `-replay-allow` parsed here.
+- `internal/forward` — forwards of caught requests to an endpoint's
+  receiver: 64 at once (5 s for a slot, then busy), 1 MiB of
+  `-max-inflight` held for the answer, the answer passed back without
+  framing and hop-by-hop lines, its first 64 KiB kept, failures by kind,
+  the local ends of its open connections (the loop guard, `Own`), logs
+  naming only the target's origin; `Stop`/`Wait` at shutdown (the
+  catcher's `Stop` stops it).
 - `internal/replay` — replays of caught requests: refuses bodies not kept
   whole, four at once, bodies held against `-max-inflight` (the catcher's
   `Reserve`/`Release`), the timeout, the record (`store` `replays`, newest
@@ -238,7 +330,8 @@ that makes it false.
   the `hw_theme` cookie written into `<html data-theme>` by the server. The admin's gate
   (`access.go`: credentials, then the host check, then the rules per route)
   and the login, account and users pages (`users.go`, `access.templ`); the
-  live feed checks its session at each heartbeat (`event: login`).
+  live feed checks its login at each heartbeat (`event: login`): a session
+  by its cookie, a token by `StillValid`.
 - `internal/version` — version and commit, set via `-ldflags` by `make build`;
   without them (`go install`) taken from the build info Go records.
 - `internal/repoguard` — tests over the repository itself: no private network
@@ -251,6 +344,10 @@ that makes it false.
 - `scripts/dist` — `make dist`: cross-builds and packs the release archives
   reproducibly (fixed entry time from the commit, owner 0, sorted entries,
   no gzip name or time) and writes `SHA256SUMS`.
+- `scripts/release` — `draft.sh`, the binaries job's step: the archives on
+  the tag's draft Release (made when there is none, uploaded again to one
+  draft), a published Release never changed, several Releases with the tag
+  refused; tested against a fake `gh`.
 - `scripts/hooks` — git hooks; `scripts/notices.sh` — notices generator;
   `scripts/dco.sh` — every commit of a range signed off by its author;
   `scripts/docker-smoke.sh` — the container scenario (README's `docker run`,
@@ -287,7 +384,8 @@ that makes it false.
   archives; on a release tag only, the job `binaries` (the only one with
   `contents: write`) attests the archives and puts them with `SHA256SUMS`
   on a draft Release of the tag (a prerelease for an rc), never changing a
-  published one. Actions are
+  published one and refusing when several Releases carry the tag
+  (`scripts/release/draft.sh`). Actions are
   pinned to commit SHAs; `.github/dependabot.yml` updates them, the Go modules
   and the base images weekly. `.github/ISSUE_TEMPLATE/` (bug, feature, no
   blank issues, security reported privately) and the PR template carry the
@@ -321,7 +419,7 @@ that makes it false.
 
 - In the first release: the features above.
 - Out of scope: Kafka / MQTT / gRPC, roles beyond user and admin
-  (per-endpoint permissions, RBAC), SSO/OIDC, a hosted cloud version.
+  (per-endpoint permissions, RBAC), SAML, a hosted cloud version.
 
 ## Stack
 
@@ -363,3 +461,8 @@ Go, sqlite, templ, HTMX, Server-Sent Events, Docker.
   twice, a hold past its cap); exact durations go through the catcher's timer
   seam (`Handler.after`). Wait for a recorded outcome by polling, not by a
   fixed sleep.
+- The pool's connection pragmas (`store.dsn`) must not write: each new
+  connection runs them, and one that needs the write lock makes reads wait
+  for writes (under steady writes they failed with `SQLITE_BUSY` and caught
+  requests were answered 500). A one-time setting of a new file goes in
+  `initFile`; `TestNewConnectionReadsDuringWrite` guards it.

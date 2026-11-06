@@ -125,6 +125,7 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
 	format, sel := rq.Format, rq.Selection
 	now := time.Now().UTC()
 	o := report.Options{
+		Exchange:  h.store.ForwardOf,
 		Endpoint:  ep.Path,
 		Selection: rq.Words,
 		From:      sel.From,
@@ -133,6 +134,7 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
 		Version:   version.String(),
 		Generated: now,
 		NoImages:  rq.NoImages,
+		Pruned:    &report.Pruned{NormalUntil: ep.Kept.NormalAt, AnomaliesUntil: ep.Kept.AnomalyAt, Pinned: ep.Kept.Pinned},
 	}
 	if rq.Setup && reg != store.Unmatched {
 		cfg, err := emulate.Parse(ep.Config)

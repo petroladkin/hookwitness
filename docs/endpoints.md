@@ -117,12 +117,14 @@ request the endpoint keeps in the range, not only the rows the register has
 loaded. The browser remembers the range, and the page's address carries it
 (`?span=10m`, `1h`, `6h`), so a link shows the same paper.
 
-The register keeps the newest requests only (`-retention`, see
-[Deployment](deployment.md#settings)). The part of a range older than the oldest kept
-request is hatched and labelled **not kept**: requests may have arrived then,
-but they are gone. A cleared register shows the same before its first new
-request. With a very high retention, a long range of a busy endpoint has
-many marks to load and draw.
+The register keeps what its retention allows (see [Keeping
+requests](keeping.md)). Where retention pruned every request, the strip is
+hatched and labelled **not kept**: requests may have arrived then, but they
+are gone. Where it pruned only normal requests, a lighter hatch says **only
+anomalies kept**, and the anomalies of that time are still drawn; a pinned
+request has a small pin over its mark. A cleared register shows **not
+kept** before its first new request. With a very high retention, a long
+range of a busy endpoint has many marks to load and draw.
 
 ### Retries
 
@@ -179,9 +181,12 @@ replies stay as they were sent.
 
 ## How many requests are kept
 
-Each endpoint keeps its newest 1000 requests (`-retention`), and so does the
-Unmatched register. Older ones are deleted as new ones arrive. See
-[Configuration and deployment](deployment.md).
+Each endpoint keeps its newest 1000 normal requests and, apart from them,
+its newest 1000 anomalies (failures, failed verdicts, redeliveries), so a
+flood of good requests never pushes out a failure; the Unmatched register
+keeps its newest 1000. **Retention** on the register sets an endpoint's own
+counts and ages, and **Pin** on a request keeps it for good. See [Keeping
+requests](keeping.md).
 
 ## Light or dark
 

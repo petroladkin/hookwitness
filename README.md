@@ -82,6 +82,9 @@ the first admin, backups.
 - **[Authorization checks](docs/authorization.md)**: GitHub, Stripe, Standard
   Webhooks (Svix), generic HMAC, bearer, basic; a verdict per request, enforced
   if you want; write-only secrets.
+- **[Delivery checks](docs/delivery.md)**: a sender's duplicates, events out
+  of order and retries off its backoff schedule or before `Retry-After`,
+  judged against the earlier attempts of the same event.
 - **[JSON Schema checks](docs/schemas.md)**: the body against one schema, any
   of several, or one picked by the event's type; problems marked in the body;
   schemas drafted from caught bodies; images in the payload decoded.
@@ -96,6 +99,9 @@ the first admin, backups.
 - **[Replay](docs/replay.md)**: send a caught request byte for byte to your
   own handler and keep its answer, to tell a verification bug from bytes
   changed on the way.
+- **[Recorder in the middle](docs/recorder.md)**: pass a live integration's
+  requests on to the real receiver and keep both sides, with verdicts and
+  faults injected on live traffic.
 
 ## How it compares
 
