@@ -166,7 +166,8 @@ that makes it false.
 - `internal/store` — sqlite (modernc.org/sqlite, no cgo): pragmas, embedded
   migrations in `internal/store/migrations/NNNN_name.sql`, applied in order and
   recorded in `schema_migrations`; a newer database schema is refused. New
-  databases have incremental auto-vacuum: clearing and deleting give space
+  databases have incremental auto-vacuum (set once on the empty file by
+  `initFile`, never by a pool pragma): clearing and deleting give space
   back at once, pruning by a housekeeping tick (`vacuum.go`, steps of 1024
   pages); `Compact` (`hookwitness db compact`, server stopped: a shared
   lock on `<db>.lock` while open, exclusive while compacting) converts an
@@ -459,3 +460,8 @@ Go, sqlite, templ, HTMX, Server-Sent Events, Docker.
   twice, a hold past its cap); exact durations go through the catcher's timer
   seam (`Handler.after`). Wait for a recorded outcome by polling, not by a
   fixed sleep.
+- The pool's connection pragmas (`store.dsn`) must not write: each new
+  connection runs them, and one that needs the write lock makes reads wait
+  for writes (under steady writes they failed with `SQLITE_BUSY` and caught
+  requests were answered 500). A one-time setting of a new file goes in
+  `initFile`; `TestNewConnectionReadsDuringWrite` guards it.
