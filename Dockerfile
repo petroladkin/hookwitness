@@ -2,7 +2,7 @@
 # Hookwitness container image. The build stage runs on the build machine's
 # platform and cross-compiles for the target (pure Go, no cgo), so a
 # multi-platform build needs no emulation.
-FROM --platform=$BUILDPLATFORM golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.3-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -12,7 +12,7 @@ RUN GOOS=$TARGETOS GOARCH=$TARGETARCH make build VERSION=$VERSION COMMIT=$COMMIT
     && mkdir -p /out/data && cp bin/hookwitness /out/
 
 # distroless static, nonroot: no shell, CA certificates and tzdata, uid 65532.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 ARG VERSION=dev COMMIT=none
 LABEL org.opencontainers.image.title="hookwitness" \
       org.opencontainers.image.description="Self-hosted webhook catcher with verdicts" \
