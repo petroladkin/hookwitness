@@ -1,0 +1,105 @@
+#!/bin/bash
+# Pre-push guard: nothing private and no AI agent as an author leaves this clone.
+# Enable once per clone:  git config core.hooksPath scripts/hooks
+# With the maintainer's gate installed (oss-gate on PATH or in ~/.local/bin) every check
+# runs: secrets, text in images, binary files, tags. Without it, this script refuses commits
+# whose author, committer or trailers name an AI agent, co-author trailers, attribution
+# phrases in commit messages and added lines, and, if .git/info/private-patterns exists,
+# pushed lines matching it (one extended regex per line; blank and # lines are skipped).
+# It does not read merge resolutions or tag messages.
+# Optional: `git config --add oss-gate.only refs/heads/master` checks only pushes to the refs listed.
+
+gate=$(command -v oss-gate 2>/dev/null)
+if [ -z "$gate" ] && [ -x "$HOME/.local/bin/oss-gate" ]; then
+  gate="$HOME/.local/bin/oss-gate"
+fi
+if [ -n "$gate" ]; then
+  exec "$gate" push "$@"
+fi
+echo "pre-push: oss-gate is not installed; running the built-in checks only (no secret, image or binary-file checks)" >&2
+
+remote="$1"
+zero=0000000000000000000000000000000000000000
+git=(git -c log.showRoot=true -c log.showSignature=false -c core.quotePath=false -c diff.noprefix=false -c color.ui=false)
+patterns="$("${git[@]}" rev-parse --git-common-dir)/info/private-patterns"
+only=$("${git[@]}" config --local --no-includes --get-all oss-gate.only)
+agents='claude|anthropic|openai|chatgpt|gpt-?[0-9]+|copilot|aider|openhands|windsurf|codeium|opencode|amazon[- ]q|factory-droid|qwen|deepseek'
+by='[[:space:]]+(with|by|using|via)[[:space:]]+(the[[:space:]]+help[[:space:]]+of[[:space:]]+)?((the|an?)[[:space:]]+)?[^[:alnum:][:space:]]*('"$agents"')\b'
+phrases='\bgenerated'"$by"'|\b(written|authored|created|coded)'"$by"
+robot=$'\xf0\x9f\xa4\x96'
+pats=""
+if [ -f "$patterns" ]; then
+  pats=$(grep -vE '^[[:space:]]*(#|$)' "$patterns" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+fi
+# a new ref: what the remote's tracking refs lack; for a URL or path, only remotes with that
+# URL count (a trailing / or .git aside), and none means the whole history
+norm() { local u="$1"; while [ "${u%/}" != "$u" ] || [ "${u%.git}" != "$u" ]; do u="${u%/}"; u="${u%.git}"; done; printf '%s' "$u"; }
+exclude=()
+if "${git[@]}" config --get "remote.$remote.url" >/dev/null 2>&1; then
+  exclude=("--remotes=$remote")
+else
+  target=$(norm "${2:-$remote}")
+  while read -r key url; do
+    name=${key#remote.}; name=${name%.pushurl}; name=${name%.url}
+    [ "$(norm "$url")" = "$target" ] && exclude+=("--remotes=$name")
+  done < <("${git[@]}" config --get-regexp '^remote\..*\.(push)?url$')
+fi
+status=0
+set -o pipefail
+
+refuse() {
+  echo "refusing to push $1: $2" >&2
+  if [ -n "$3" ]; then printf '%s\n' "$3" | sed 's/^/  /' >&2; fi
+  status=1
+}
+
+# ok: the last command ran (grep's 1 means no match); anything else refuses, fail closed
+ok() {
+  if [ "$1" -gt 1 ]; then
+    echo "refusing to push $2: the built-in check failed ($3)" >&2
+    status=1
+    return 1
+  fi
+}
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue
+  if [ -n "$only" ] && ! printf '%s\n' "$only" | grep -qxF "$remote_ref"; then
+    continue
+  fi
+  if [ "$remote_sha" = "$zero" ] || ! "${git[@]}" cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    range=("$local_sha" --not "${exclude[@]}")
+  else
+    range=("$remote_sha..$local_sha")
+  fi
+  idents=$("${git[@]}" log --format='%an <%ae>%n%cn <%ce>' "${range[@]}" | grep -iE "\b($agents)\b")
+  ok $? "$remote_ref" "authors" || continue
+  [ -n "$idents" ] && refuse "$remote_ref" "a commit's author or committer is an AI agent" "$idents"
+  messages=$("${git[@]}" log --format=%B "${range[@]}")
+  ok $(( $? ? 2 : 0 )) "$remote_ref" "messages" || continue
+  hits=$(printf '%s\n' "$messages" | grep -iE "^[[:space:]]*co-(authored|developed)-by:|^[[:space:]]*[a-z][a-z-]*-by:.*\b($agents)\b|$phrases")
+  ok $? "$remote_ref" "messages" || continue
+  robots=$(printf '%s\n' "$messages" | grep -F "$robot")
+  ok $? "$remote_ref" "messages" || continue
+  hits="$hits$robots"
+  [ -n "$hits" ] && refuse "$remote_ref" "a commit message names an AI agent as an author or co-author" "$hits"
+  # added lines; a "+++ " line is a file header only between "diff --git" and the first "@@"
+  added=$("${git[@]}" log -p --text --no-textconv --no-ext-diff --format= "${range[@]}" |
+    awk '/^diff --git /{h=1; next} h && /^@@/{h=0; next} h{next} /^\+/{print}')
+  ok $(( $? ? 2 : 0 )) "$remote_ref" "added lines" || continue
+  hits=$(printf '%s\n' "$added" | grep -iE "[a-z][a-z-]*-by:.*\b($agents)\b|$phrases")
+  ok $? "$remote_ref" "added lines" || continue
+  robots=$(printf '%s\n' "$added" | grep -F "$robot" | grep -iE "generated|\b($agents)\b")
+  ok $? "$remote_ref" "added lines" || continue
+  hits="$hits$robots"
+  [ -n "$hits" ] && refuse "$remote_ref" "added lines name an AI agent as an author" "$hits"
+  if [ -n "$pats" ]; then
+    names=$("${git[@]}" log --format= --name-only "${range[@]}")
+    ok $(( $? ? 2 : 0 )) "$remote_ref" "file names" || continue
+    hits=$( { printf '%s\n' "$remote_ref" "$messages" "$names" "$added"; } | grep -iE -f <(printf '%s\n' "$pats"))
+    ok $? "$remote_ref" "private-patterns" || continue
+    [ -n "$hits" ] && refuse "$remote_ref" "lines match .git/info/private-patterns:" "$hits"
+  fi
+done
+
+exit $status
