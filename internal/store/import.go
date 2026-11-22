@@ -18,6 +18,9 @@ type ImportItem struct {
 	// Config gives the configuration to store from the endpoint's current
 	// one (exists false for a new endpoint); the caller validates it.
 	Config func(old string, exists bool) (string, error)
+	// Retention is the endpoint's retention to store (its stored form; ""
+	// for the server's defaults).
+	Retention string
 }
 
 // ImportResult says what an import did to one endpoint.
@@ -42,8 +45,8 @@ func (s *Store) ImportEndpoints(ctx context.Context, items []ImportItem) ([]Impo
 	out := make([]ImportResult, 0, len(items))
 	for _, it := range items {
 		var id int64
-		var old string
-		err := tx.QueryRowContext(ctx, `SELECT id, config FROM endpoints WHERE path = ?`, it.Path).Scan(&id, &old)
+		var old, oldRet string
+		err := tx.QueryRowContext(ctx, `SELECT id, config, retention FROM endpoints WHERE path = ?`, it.Path).Scan(&id, &old, &oldRet)
 		exists := err == nil
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -56,10 +59,10 @@ func (s *Store) ImportEndpoints(ctx context.Context, items []ImportItem) ([]Impo
 		if err != nil {
 			return nil, err
 		}
-		r := ImportResult{ID: id, Path: it.Path, Created: !exists, Changed: !exists || cfg != old}
+		r := ImportResult{ID: id, Path: it.Path, Created: !exists, Changed: !exists || cfg != old || it.Retention != oldRet}
 		switch {
 		case !exists:
-			res, err := tx.ExecContext(ctx, `INSERT INTO endpoints (path, created_at, config) VALUES (?, ?, ?)`, it.Path, now, cfg)
+			res, err := tx.ExecContext(ctx, `INSERT INTO endpoints (path, created_at, config, retention) VALUES (?, ?, ?, ?)`, it.Path, now, cfg, it.Retention)
 			if err != nil {
 				if isUnique(err) {
 					return nil, fmt.Errorf("%s: %w", it.Path, ErrDuplicatePath)
@@ -70,7 +73,7 @@ func (s *Store) ImportEndpoints(ctx context.Context, items []ImportItem) ([]Impo
 				return nil, err
 			}
 		case r.Changed:
-			if _, err := tx.ExecContext(ctx, `UPDATE endpoints SET config = ? WHERE id = ?`, cfg, id); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE endpoints SET config = ?, retention = ? WHERE id = ?`, cfg, it.Retention, id); err != nil {
 				return nil, err
 			}
 		}

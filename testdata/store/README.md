@@ -9,3 +9,11 @@ endpoint `/orders` (id 1) with a secret `hook` (kind key, value
 `fixture-signing-key`), an HMAC check on `X-Sig`, a rule "the first 1 →
 503", the default reply 202 `ok {{.N}}`; three signed requests to it
 (counter 3) and one request to `/nowhere` in Unmatched.
+
+`v0.2.0.db`: made the same way by `hookwitness serve` 0.2.0 (schema
+version 9), with `HOOKWITNESS_SECRET_KEY` = base64 of
+`fixture-key-0.2.0-hookwitness-32`. It holds the endpoint `/orders` (id 1)
+with a secret `hook` (kind key, value `fixture-signing-key`), an HMAC check
+on `X-Sig` (sha256, hex), a rule "the first 1 → 503", the default reply 202
+`ok {{.N}}`; three signed requests to it (counter 3; answered 503, 202,
+202) and one request to `/nowhere` in Unmatched.

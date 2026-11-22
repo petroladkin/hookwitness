@@ -65,6 +65,9 @@ func DraftSchema(cfg emulate.Config, path string, reqs []store.Request) (SchemaD
 		if r.TooLarge {
 			return SchemaDraft{}, fmt.Errorf("request %d: its body was over the limit and was not kept", r.No)
 		}
+		if r.BodyDropped {
+			return SchemaDraft{}, fmt.Errorf("request %d: %s", r.No, store.DroppedReason)
+		}
 		if msg := schema.BodyError(r.Body); msg != "" {
 			return SchemaDraft{}, fmt.Errorf("request %d: %s", r.No, msg)
 		}
@@ -118,7 +121,11 @@ func DraftRequests(ctx context.Context, st *store.Store, endpointID int64, ids [
 }
 
 // DiscriminatorValue is the value a request carries for the endpoint's
-// first discriminator check; "" without one, or when it lacks the value.
+// first discriminator check, to draft by; "" without one, when it lacks
+// the value, or when its body was not kept (nothing to draft from).
 func DiscriminatorValue(cfg emulate.Config, r store.Request) string {
+	if r.BodyDropped || r.TooLarge {
+		return ""
+	}
 	return cfg.DraftHint("", []emulate.Request{toEmulate(r)}).Value
 }

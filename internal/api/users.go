@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -18,6 +20,7 @@ const (
 	needSession               // a logged-in person, not a token: their own password and tokens
 	needAdmin                 // an admin's session: users and everyone's tokens
 	needAdminRole             // an admin, by login or token: sending replays
+	needNobody                // open: the login page's providers
 )
 
 // loginOn reports whether the API wants credentials: a user exists, or a
@@ -41,6 +44,10 @@ const loginFirst = "log in, or send Authorization: Bearer <token>"
 // guard wraps a route with its rule.
 func (h *Handler) guard(n need, fn http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if n == needNobody {
+			fn(w, r)
+			return
+		}
 		on, err := h.loginOn(r.Context())
 		if err != nil {
 			h.fail(w, "access", err)
@@ -73,10 +80,48 @@ func (h *Handler) guard(n need, fn http.HandlerFunc) http.HandlerFunc {
 
 // userJSON is a user as the API shows it: never the password.
 type userJSON struct {
-	Name    string `json:"name"`
-	Role    string `json:"role"`
-	Created stamp  `json:"created_at"`
-	Tokens  int    `json:"tokens"`
+	Name       string         `json:"name"`
+	Role       string         `json:"role"`
+	Email      *string        `json:"email"`
+	Password   bool           `json:"password"`
+	Identities []identityJSON `json:"identities"`
+	Created    stamp          `json:"created_at"`
+	Tokens     int            `json:"tokens"`
+}
+
+// identityJSON is a linked identity at a provider.
+type identityJSON struct {
+	Provider    string `json:"provider"`
+	Label       string `json:"label"`
+	Issuer      string `json:"issuer"`
+	Email       string `json:"email"`
+	LinkedAt    stamp  `json:"linked_at"`
+	LastLoginAt stamp  `json:"last_login_at"`
+}
+
+// Provider is a configured OpenID Connect provider, as the API names it.
+type Provider struct{ Name, Label, Issuer string }
+
+func (h *Handler) identitiesJSON(ids []store.Identity) []identityJSON {
+	out := []identityJSON{}
+	for _, id := range ids {
+		j := identityJSON{Provider: id.Provider, Label: id.Provider, Issuer: id.Issuer, Email: id.Email, LinkedAt: stamp(id.LinkedAt), LastLoginAt: stamp(id.LastLoginAt)}
+		for _, p := range h.o.Providers {
+			if p.Issuer == id.Issuer {
+				j.Provider, j.Label = p.Name, p.Label
+			}
+		}
+		out = append(out, j)
+	}
+	return out
+}
+
+func (h *Handler) userJSON(u store.User, ids []store.Identity, tokens int) userJSON {
+	j := userJSON{Name: u.Name, Role: u.Role, Password: u.HasPassword(), Identities: h.identitiesJSON(ids), Created: stamp(u.CreatedAt), Tokens: tokens}
+	if u.Email != "" {
+		j.Email = &u.Email
+	}
+	return j
 }
 
 // tokenJSON is a token without its value; Token is set only when it was just
@@ -116,7 +161,82 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"login": false})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"login": true, "name": id.Name, "role": id.Role, "via": id.Via.String()})
+	out := map[string]any{"login": true, "name": id.Name, "role": id.Role, "via": id.Via.String(), "email": nil, "password": false, "identities": []identityJSON{}}
+	if id.UserID != 0 {
+		u, err := h.store.UserByID(r.Context(), id.UserID)
+		if err != nil {
+			h.fail(w, "me", err)
+			return
+		}
+		ids, err := h.store.Identities(r.Context(), u.ID)
+		if err != nil {
+			h.fail(w, "me", err)
+			return
+		}
+		j := h.userJSON(u, ids, 0)
+		out["email"], out["password"], out["identities"] = j.Email, j.Password, j.Identities
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// loginProviders lists the providers people may sign in with: open, for
+// scripts and the docs; nothing secret.
+func (h *Handler) loginProviders(w http.ResponseWriter, r *http.Request) {
+	out := []map[string]string{}
+	for _, p := range h.o.Providers {
+		out = append(out, map[string]string{"name": p.Name, "label": p.Label})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// issuerOf is the issuer {provider} names: a configured provider's, or
+// ?issuer= for one no longer configured.
+func (h *Handler) issuerOf(r *http.Request) string {
+	if iss := r.URL.Query().Get("issuer"); iss != "" {
+		return iss
+	}
+	for _, p := range h.o.Providers {
+		if p.Name == r.PathValue("provider") {
+			return p.Issuer
+		}
+	}
+	return ""
+}
+
+func (h *Handler) unlink(w http.ResponseWriter, r *http.Request, name string, self bool) {
+	issuer := h.issuerOf(r)
+	if issuer == "" {
+		WriteError(w, http.StatusNotFound, "not_found", "no provider "+r.PathValue("provider")+" (an unconfigured one: give ?issuer=)", "")
+		return
+	}
+	gone, err := h.store.Unlink(r.Context(), name, issuer, self)
+	switch {
+	case errors.Is(err, store.ErrLastWayIn):
+		WriteError(w, http.StatusConflict, "last_way_in", "you would have no way to log in: set a password first", "")
+		return
+	case errors.Is(err, store.ErrNotFound):
+		WriteError(w, http.StatusNotFound, "not_found", "no such identity of "+name, "")
+		return
+	case err != nil:
+		h.fail(w, "unlink", err)
+		return
+	}
+	h.log.Info("oidc identity unlinked", logAttrs(r, "name", name, "provider", gone.Provider, "issuer", gone.Issuer)...)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) unlinkOwn(w http.ResponseWriter, r *http.Request) {
+	id := access.From(r.Context())
+	h.unlink(w, r, id.Name, true)
+}
+
+func (h *Handler) unlinkUser(w http.ResponseWriter, r *http.Request) {
+	name, ok := h.userName(w, r)
+	if !ok {
+		return
+	}
+	id := access.From(r.Context())
+	h.unlink(w, r, name, id != nil && id.Name == name)
 }
 
 func writeInvalid(w http.ResponseWriter, err error) bool {
@@ -147,7 +267,19 @@ func (h *Handler) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusUnprocessableEntity, "invalid", e.Message, "new")
 		return
 	}
-	if _, err := h.o.Access.Login(r.Context(), id.Name, in.Current); err != nil {
+	u, err := h.store.UserByID(r.Context(), id.UserID)
+	if err != nil {
+		h.fail(w, "change password", err)
+		return
+	}
+	if !u.HasPassword() {
+		// A first password: no current one, so a fresh sign-in.
+		at, err := h.store.SessionCreatedAt(r.Context(), id.SessionID)
+		if err != nil || time.Since(at) >= access.FirstPasswordWindow {
+			WriteError(w, http.StatusUnprocessableEntity, "reauth", "sign in again to set a password: a first password needs a sign-in from the last 10 minutes", "current")
+			return
+		}
+	} else if _, err := h.o.Access.Login(r.Context(), id.Name, in.Current); err != nil {
 		switch {
 		case errors.Is(err, access.ErrBusy):
 			busy(w)
@@ -224,6 +356,7 @@ func (h *Handler) revokeToken(owner func(*http.Request) int64) http.HandlerFunc 
 			return
 		}
 		h.log.Info("token revoked", logAttrs(r, "owner", t.Owner, "token", t.Name, "token_id", t.PublicID)...)
+		h.o.Access.Changed()
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -234,9 +367,14 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "list users", err)
 		return
 	}
+	all, err := h.store.AllIdentities(r.Context())
+	if err != nil {
+		h.fail(w, "list users", err)
+		return
+	}
 	out := []userJSON{}
 	for _, u := range us {
-		out = append(out, userJSON{Name: u.Name, Role: u.Role, Created: stamp(u.CreatedAt), Tokens: u.Tokens})
+		out = append(out, h.userJSON(u, all[u.ID], u.Tokens))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": out})
 }
@@ -250,7 +388,12 @@ func checkRole(role string) error {
 
 // AddUser creates a user for the UI and the API: the first one must be an
 // admin (or nobody could manage users).
-func AddUser(ctx context.Context, st *store.Store, a *access.Authenticator, name, role, password string) (store.User, error) {
+//
+// email ("" : none) lets the user sign in through a provider; with one, the
+// password may be "" (provider sign-in only), except for the first user,
+// who keeps a password: provider sign-in is off until a first admin exists,
+// and a password is the way in when the provider is down.
+func AddUser(ctx context.Context, st *store.Store, a *access.Authenticator, name, role, password, email string) (store.User, error) {
 	n, err := access.CheckName(name)
 	if err != nil {
 		return store.User{}, err
@@ -258,17 +401,31 @@ func AddUser(ctx context.Context, st *store.Store, a *access.Authenticator, name
 	if err := checkRole(role); err != nil {
 		return store.User{}, err
 	}
-	if err := access.CheckPassword(password); err != nil {
-		return store.User{}, err
-	}
-	if role != store.RoleAdmin {
-		if on, err := st.HasUsers(ctx); err != nil {
+	if email != "" {
+		if email, err = access.CheckEmail(email); err != nil {
 			return store.User{}, err
-		} else if !on {
-			return store.User{}, &access.ErrInvalid{Field: "role", Message: "the first user must be an admin: otherwise nobody could manage users"}
 		}
 	}
-	return st.AddUser(ctx, n, role, a.HashPassword(password))
+	on, err := st.HasUsers(ctx)
+	if err != nil {
+		return store.User{}, err
+	}
+	record := ""
+	switch {
+	case password != "":
+		if err := access.CheckPassword(password); err != nil {
+			return store.User{}, err
+		}
+		record = a.HashPassword(password)
+	case !on:
+		return store.User{}, &access.ErrInvalid{Field: "password", Message: "the first user needs a password: the way in when a provider is down"}
+	case email == "":
+		return store.User{}, &access.ErrInvalid{Field: "password", Message: "a password is needed, or an email to sign in through a provider"}
+	}
+	if role != store.RoleAdmin && !on {
+		return store.User{}, &access.ErrInvalid{Field: "role", Message: "the first user must be an admin: otherwise nobody could manage users"}
+	}
+	return st.AddUserWithEmail(ctx, n, role, record, email)
 }
 
 func (h *Handler) addUser(w http.ResponseWriter, r *http.Request) {
@@ -276,6 +433,7 @@ func (h *Handler) addUser(w http.ResponseWriter, r *http.Request) {
 		Name     string `json:"name"`
 		Role     string `json:"role"`
 		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 	if !decode(w, r, &in, false) {
 		return
@@ -283,7 +441,7 @@ func (h *Handler) addUser(w http.ResponseWriter, r *http.Request) {
 	if in.Role == "" {
 		in.Role = store.RoleUser
 	}
-	u, err := AddUser(r.Context(), h.store, h.o.Access, in.Name, in.Role, in.Password)
+	u, err := AddUser(r.Context(), h.store, h.o.Access, in.Name, in.Role, in.Password, in.Email)
 	if writeInvalid(w, err) {
 		return
 	}
@@ -291,12 +449,16 @@ func (h *Handler) addUser(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusConflict, "exists", "a user with this name exists", "name")
 		return
 	}
+	if errors.Is(err, store.ErrEmailTaken) {
+		WriteError(w, http.StatusConflict, "email_taken", "another user has this email", "email")
+		return
+	}
 	if err != nil {
 		h.fail(w, "add user", err)
 		return
 	}
 	h.log.Info("user added", logAttrs(r, "name", u.Name, "role", u.Role)...)
-	writeJSON(w, http.StatusCreated, userJSON{Name: u.Name, Role: u.Role, Created: stamp(u.CreatedAt)})
+	writeJSON(w, http.StatusCreated, h.userJSON(u, nil, 0))
 }
 
 func (h *Handler) userName(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -325,11 +487,24 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Role     *string `json:"role"`
-		Password *string `json:"password"`
+		Role     *string         `json:"role"`
+		Password *string         `json:"password"`
+		Email    json.RawMessage `json:"email"` // a string, or null to clear
 	}
 	if !decode(w, r, &in, false) {
 		return
+	}
+	email, setEmail := "", len(in.Email) > 0
+	if setEmail && string(in.Email) != "null" {
+		if json.Unmarshal(in.Email, &email) != nil {
+			WriteError(w, http.StatusUnprocessableEntity, "invalid", "email is a string, or null to clear it", "email")
+			return
+		}
+		e, err := access.CheckEmail(email)
+		if writeInvalid(w, err) {
+			return
+		}
+		email = e
 	}
 	if in.Role != nil && writeInvalid(w, checkRole(*in.Role)) {
 		return
@@ -352,6 +527,17 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.log.Info("user role changed", logAttrs(r, "name", u.Name, "role", u.Role)...)
+		h.o.Access.Changed()
+	}
+	if setEmail {
+		if _, err := h.store.SetEmail(r.Context(), name, email); errors.Is(err, store.ErrEmailTaken) {
+			WriteError(w, http.StatusConflict, "email_taken", "another user has this email", "email")
+			return
+		} else if err != nil {
+			h.userError(w, "change user", name, err)
+			return
+		}
+		h.log.Info("user email set", logAttrs(r, "name", name, "email", email)...)
 	}
 	if in.Password != nil {
 		// A reset by an admin ends every session of that user.
@@ -367,7 +553,8 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ts, _ := h.store.Tokens(r.Context(), u.ID)
-	writeJSON(w, http.StatusOK, userJSON{Name: u.Name, Role: u.Role, Created: stamp(u.CreatedAt), Tokens: len(ts)})
+	ids, _ := h.store.Identities(r.Context(), u.ID)
+	writeJSON(w, http.StatusOK, h.userJSON(u, ids, len(ts)))
 }
 
 func (h *Handler) removeUser(w http.ResponseWriter, r *http.Request) {
@@ -385,6 +572,7 @@ func (h *Handler) removeUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("user removed", logAttrs(r, "name", u.Name)...)
+	h.o.Access.Changed()
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"modernc.org/sqlite" // also registers the "sqlite" driver
@@ -39,7 +40,17 @@ var errLocked = errors.New("locked")
 // Store is an open, migrated database.
 type Store struct {
 	db   *sql.DB
+	path string   // the database file
 	lock *os.File // a shared lock on <db>.lock while open (Compact takes it exclusively)
+	// nudge wakes the housekeeping for a size check after a large body
+	// (evict.go); full means one is already pending.
+	nudge chan struct{}
+	// stuck: the last eviction could not get under its target, because
+	// what is left is pinned (Storage warns of it).
+	stuck atomic.Bool
+	// evictStarted, in tests, runs once an eviction has read the newest
+	// request it works on.
+	evictStarted func()
 	// wmu serialises writes inside this process: SQLite has one writer at a
 	// time anyway, and queueing here is cheaper than retrying SQLITE_BUSY.
 	wmu sync.Mutex
@@ -70,6 +81,13 @@ func open(ctx context.Context, dbPath string, migrations fs.FS) (*Store, error) 
 	if err != nil {
 		return nil, fmt.Errorf("open %s: lock: %w", dbPath, err)
 	}
+	// A new database is private, like the key file: it holds every body,
+	// hashed token and sealed secret (SQLite gives its -wal and -shm the
+	// file's mode). An existing file keeps the mode it has.
+	if err := createPrivate(dbPath); err != nil && !errors.Is(err, fs.ErrExist) {
+		lock.Close()
+		return nil, fmt.Errorf("open %s: %w", dbPath, err)
+	}
 	db, err := sql.Open("sqlite", dsn(dbPath))
 	if err != nil {
 		lock.Close()
@@ -97,17 +115,55 @@ func open(ctx context.Context, dbPath string, migrations fs.FS) (*Store, error) 
 		lock.Close()
 		return nil, err
 	}
-	return &Store{db: db, lock: lock}, nil
+	return &Store{db: db, path: dbPath, lock: lock, nudge: make(chan struct{}, 1)}, nil
 }
 
 // setupRetry bounds how long Open keeps retrying a busy database.
 const setupRetry = 10 * time.Second
 
 func setup(ctx context.Context, db *sql.DB, dbPath string, ms []migration) error {
+	if err := initFile(ctx, dbPath); err != nil {
+		return fmt.Errorf("open %s: %w", dbPath, err)
+	}
 	if err := db.PingContext(ctx); err != nil {
 		return fmt.Errorf("open %s: %w", dbPath, err)
 	}
 	return migrate(ctx, db, ms)
+}
+
+// initFile gives a new, empty database file incremental auto-vacuum (space
+// can go back to the file system, Reclaim) and WAL, on a connection of its
+// own, before the pool's first connection writes the file's first page:
+// auto-vacuum can only be chosen before that page exists. An existing
+// database is only read (its page count) and keeps its mode (Compact
+// converts it). It is not one of the pool's pragmas because setting it is
+// a write: every new connection would wait for the write lock at its start,
+// and under steady writes a read on it failed with SQLITE_BUSY.
+func initFile(ctx context.Context, dbPath string) error {
+	db, err := sql.Open("sqlite", "file:"+uriPath.Replace(dbPath)+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	var pages int
+	if err := conn.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pages); err != nil {
+		return err
+	}
+	if pages > 0 {
+		return nil
+	}
+	// auto_vacuum before WAL, whose switch writes the first page.
+	for _, p := range []string{`PRAGMA auto_vacuum = INCREMENTAL`, `PRAGMA journal_mode = WAL`} {
+		if _, err := conn.ExecContext(ctx, p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const createSchemaMigrations = `CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -140,19 +196,22 @@ func isBusy(err error) bool {
 // SQLite decodes the %XX escapes back.
 var uriPath = strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23")
 
+// WALLimit is the size the WAL file is cut back to after a checkpoint.
+const WALLimit = 64 << 20
+
 // dsn builds the modernc.org/sqlite connection string. The pragmas are set on
-// every new connection of the pool, not once, in this order: busy_timeout
-// first, so that switching to WAL waits for a lock instead of failing at once
-// when another process opens the same new file; auto_vacuum before WAL,
-// whose switch writes the file's first page: a new database gets
-// incremental auto-vacuum (space can go back to the file system, Reclaim),
-// an existing one keeps its mode (Compact converts it).
+// every new connection of the pool, not once, and none of them writes on a
+// database in WAL (a new connection must not wait for a write in progress):
+// busy_timeout first, so that switching to WAL waits for a lock instead of
+// failing at once when another process opens the same new file; the WAL
+// file is cut back to WALLimit when it is reset, so one large body does not
+// leave it at its size. A new file's auto-vacuum is set before, by initFile.
 func dsn(dbPath string) string {
 	q := url.Values{}
 	q.Add("_pragma", "busy_timeout(5000)")
-	q.Add("_pragma", "auto_vacuum(INCREMENTAL)")
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "foreign_keys(1)")
+	q.Add("_pragma", "journal_size_limit("+strconv.Itoa(WALLimit)+")")
 	q.Add("_txlock", "immediate")
 	return "file:" + uriPath.Replace(dbPath) + "?" + q.Encode()
 }

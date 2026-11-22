@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -32,6 +33,7 @@ templ layout(nav navView, pageTitle string) {
 			<script src={ nav.Asset("vendor/htmx/htmx.min.js") } defer></script>
 			<script src={ nav.Asset("vendor/htmx-ext-sse/sse.min.js") } defer></script>
 			<script src={ nav.Asset("strip.js") } defer></script>
+			<script src={ nav.Asset("feed.js") } defer></script>
 			<script src={ nav.Asset("app.js") } defer></script>
 		</head>
 		<body>
@@ -42,6 +44,11 @@ templ layout(nav navView, pageTitle string) {
 						<b>No login.</b> Anyone who can open this page can read every request and change every endpoint.
 						<a href={ templ.SafeURL(nav.Prefix + "/users") }>Add a user</a> to turn login on.
 					</p>
+				}
+				if !nav.Bare {
+					for _, w := range nav.StorageWarnings {
+						<p class="nologin storage-warn" role="alert"><b>Storage.</b> { w }.</p>
+					}
 				}
 				{ children... }
 				if nav.Build != "" {
@@ -197,6 +204,9 @@ templ endpointsPage(nav navView, d endpointsDialog) {
 										if n := unsetSecrets(e.Config); n > 0 {
 											<a class="unset" href={ templ.SafeURL(nav.registerURL(e.ID) + "/behaviour?tab=secrets") }>{ plural(n, "secret", "secrets") } not set</a>
 										}
+										if rv := receiverOf(e.Config); rv != "" {
+											<a class="tag receiver-badge" href={ templ.SafeURL(nav.registerURL(e.ID) + "/behaviour?tab=receiver") } title="Requests are forwarded here: live traffic leaves the server">→ { rv }</a>
+										}
 									</td>
 									<td class="url">{ nav.Catch }{ e.Path }</td>
 									<td class="num">{ strconv.Itoa(e.Count) }</td>
@@ -205,7 +215,7 @@ templ endpointsPage(nav navView, d endpointsDialog) {
 										<div class="row-acts">
 											@switchForm(nav.registerURL(e.ID), e.Path, e.Enabled, nav.Prefix+"/")
 											<a class="btn quiet" href={ templ.SafeURL(nav.registerURL(e.ID) + "/behaviour") }>Behaviour</a>
-											@clearForm(nav, e.ID, nav.Prefix+"/", e.Path)
+											@clearForm(nav, e.ID, nav.Prefix+"/", e.Path, e.Kept.Pinned)
 											<form method="post" action={ templ.SafeURL(nav.registerURL(e.ID) + "/delete") } data-confirm={ "Delete " + e.Path + " and its " + strconv.Itoa(e.Count) + " requests?" }>
 												<button class="btn quiet" type="submit">Delete</button>
 											</form>
@@ -216,6 +226,9 @@ templ endpointsPage(nav navView, d endpointsDialog) {
 						</tbody>
 					</table>
 				</div>
+			}
+			if nav.Storage != nil {
+				<p class="storage-line">{ storageLine(*nav.Storage) }</p>
 			}
 			if d.Import != nil {
 				@importDialog(nav, *d.Import)
@@ -286,9 +299,15 @@ templ importDialog(nav navView, v importView) {
 				for _, it := range v.Items {
 					<fieldset class="masks import-item">
 						<legend>{ it.Path } · { it.Summary }</legend>
+						if it.Receiver != "" {
+							<p class="banner warn">Forwards live traffic to <code>{ it.Receiver }</code>: requests to this endpoint leave the server and the receiver's answers come back to their senders. Only an admin can import a receiver.</p>
+						}
 						<label>Path <input name={ "path_" + strconv.Itoa(it.I) } value={ it.Target } required spellcheck="false" autocomplete="off"/></label>
 						if it.Taken {
 							<label class="check"><input type="checkbox" name={ "replace_" + strconv.Itoa(it.I) } checked?={ it.Replace }/> { it.Target } is already an endpoint: replace its behaviour (its requests, counter and on/off state stay)</label>
+							if it.ToPrune > 0 {
+								<p class="error banner" role="alert">Replacing sets the file's retention, which prunes { thousands(int64(it.ToPrune)) } of its requests at once.</p>
+							}
 						}
 						for _, s := range it.Secrets {
 							<label>
@@ -342,8 +361,8 @@ templ switchForm(base, path string, enabled bool, next string) {
 	</form>
 }
 
-templ clearForm(nav navView, regID int64, next, what string) {
-	<form method="post" action={ templ.SafeURL(nav.registerURL(regID) + "/clear") } data-confirm={ "Clear every request kept for " + what + "?" }>
+templ clearForm(nav navView, regID int64, next, what string, pinned int) {
+	<form method="post" action={ templ.SafeURL(nav.registerURL(regID) + "/clear") } data-confirm={ clearQuestion(what, pinned) }>
 		<input type="hidden" name="next" value={ next }/>
 		<button class="btn quiet" type="submit">Clear</button>
 	</form>
@@ -355,15 +374,20 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 			<div class="reg-id">
 				@registerPicker(nav, reg)
 				<span class="kept"><span id="kept" data-count="kept">{ strconv.Itoa(reg.Count) }</span> kept</span>
+				if reg.Receiver != "" {
+					<a class="tag receiver-badge" href={ templ.SafeURL(reg.Base + "/behaviour?tab=receiver") } title="Requests no rule takes are forwarded here: live traffic leaves the server">→ { reg.Receiver }</a>
+				}
+				@keepsLine(reg.Keeps)
 			</div>
 			<div class="reg-tools">
 				if reg.ID == store.Unmatched {
-					@clearForm(nav, reg.ID, reg.Base, "Unmatched")
+					@clearForm(nav, reg.ID, reg.Base, "Unmatched", reg.Keeps.Pinned)
 				} else {
 					@switchForm(reg.Base, reg.Path, reg.Enabled, reg.Base)
-					@clearForm(nav, reg.ID, reg.Base, reg.Path)
+					@clearForm(nav, reg.ID, reg.Base, reg.Path, reg.Keeps.Pinned)
 					<a class="btn" href={ templ.SafeURL(reg.Base + "/behaviour") }>Behaviour</a>
 				}
+				<a class="btn" href={ templ.SafeURL(reg.Base + "?retention") }>Retention</a>
 				<a class="btn" href={ templ.SafeURL(reg.Base + "?report") }>Report</a>
 				if reg.ID != store.Unmatched {
 					<a class="btn" href={ templ.SafeURL(reg.Base + "?draft") }>Draft schema</a>
@@ -380,7 +404,7 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 					<button type="button" data-span="1h" aria-pressed="false">1 h</button>
 					<button type="button" data-span="6h" aria-pressed="false">6 h</button>
 				</span>
-				<span>height = body size · red: not 2xx · dashed: timeout · ×: dropped · red bar under the line: a failed check · same body bracketed · hatched: not kept</span>
+				<span>height = body size · red: not 2xx · dashed: timeout · ×: dropped · red bar under the line: a failed check · same body bracketed · hatched: not kept · lightly hatched: only one lane kept · pin: pinned</span>
 			</div>
 		</section>
 		<main class="desk">
@@ -425,7 +449,6 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 					sse-swap="request,update"
 					hx-swap="afterbegin"
 					data-selected={ id(reg.Selected) }
-					data-keep={ strconv.Itoa(reg.Keep) }
 					data-seq={ id(reg.Seq) }
 				>
 					for _, r := range reg.Rows {
@@ -453,7 +476,89 @@ templ registerPage(nav navView, reg registerView, ex *exhibitView) {
 		if reg.Replay != nil {
 			@replayDialog(*reg.Replay)
 		}
+		if reg.Retain != nil {
+			@retentionDialog(*reg.Retain)
+		}
 	}
+}
+
+// keepsLine says what the register keeps by retention and what it lost.
+templ keepsLine(k keepsView) {
+	<span class="keeps" title="Retention: what this register keeps; the oldest beyond it are pruned">
+		keeps { strconv.Itoa(k.Normal) } newest
+		if k.NormalAge != "" {
+			{ "for " + k.NormalAge }
+		}
+		if k.Anomalies > 0 {
+			· { strconv.Itoa(k.Anomalies) } anomalies
+			if k.AnomalyAge != "" {
+				{ "for " + k.AnomalyAge }
+			}
+		}
+		if k.Pinned > 0 {
+			· <span data-count="pinned">{ strconv.Itoa(k.Pinned) }</span> pinned
+		}
+		if k.Pruned > 0 {
+			· <span data-count="pruned">{ thousands(k.Pruned) }</span> pruned
+		}
+	</span>
+}
+
+// retentionDialog sets the register's own retention: two lanes (one for
+// Unmatched), each a count and an age; empty fields take the defaults.
+templ retentionDialog(v retentionDialogView) {
+	<dialog class="modal" data-modal data-close={ v.Close } open aria-labelledby="dialog-title">
+		<form class="card" method="post" action={ templ.SafeURL(v.Action) }>
+			<div class="modal-head">
+				<h2 id="dialog-title">Retention</h2>
+				<a class="close" href={ templ.SafeURL(v.Close) } aria-label="Close">×</a>
+			</div>
+			if v.Error != "" {
+				<p class="error banner" role="alert">Not saved: { v.Error }</p>
+			}
+			if v.Unmatched {
+				<p class="help">The newest requests are kept; older ones are pruned, and with an age, anything older than it. Pinned requests are never pruned. Empty fields take the server's defaults.</p>
+			} else {
+				<p class="help">Normal requests and anomalies are kept apart, so a flood of good requests never pushes out a failure. An anomaly: not answered 2xx (an error, a timeout, a drop, a refusal), a failed verdict, or a redelivery (a repeated signature). Pinned requests are never pruned. Empty fields take the server's defaults.</p>
+			}
+			<div class="grid2 even">
+				<label>
+					Normal requests: keep the newest
+					<input name="normal_count" inputmode="numeric" value={ v.NormalCount } placeholder={ strconv.Itoa(v.DefaultNormal) } aria-invalid?={ v.Field == "normal_count" }/>
+				</label>
+				<label>
+					Keep them for at most
+					<input name="normal_age" value={ v.NormalAge } placeholder="no limit, or 7d, 36h, 90m" spellcheck="false" aria-invalid?={ v.Field == "normal_age" }/>
+				</label>
+			</div>
+			if !v.Unmatched {
+				<div class="grid2 even">
+					<label>
+						Anomalies: keep the newest
+						<input name="anomaly_count" inputmode="numeric" value={ v.AnomalyCount } placeholder={ strconv.Itoa(v.DefaultAnomaly) } aria-invalid?={ v.Field == "anomaly_count" }/>
+					</label>
+					<label>
+						Keep them for at most
+						<input name="anomaly_age" value={ v.AnomalyAge } placeholder="no limit, or 30d" spellcheck="false" aria-invalid?={ v.Field == "anomaly_age" }/>
+					</label>
+				</div>
+				<p class="help">0 anomalies: no separate lane; anomalies count as normal requests.</p>
+			}
+			if v.ToPrune > 0 {
+				<p class="error banner" role="alert">Saving prunes { thousands(int64(v.ToPrune)) } { pick(v.ToPrune == 1, "request", "requests") } now. Pinned ones stay.</p>
+				<input type="hidden" name="confirm" value={ strconv.Itoa(v.ToPrune) }/>
+			}
+			<div class="acts">
+				if v.ToPrune > 0 {
+					<button class="btn solid danger" type="submit">Save and prune { thousands(int64(v.ToPrune)) }</button>
+				} else {
+					<button class="btn solid" type="submit">Save</button>
+				}
+				<button class="btn quiet" type="submit" name="op" value="defaults">Use the server's defaults</button>
+				<a class="btn quiet" href={ templ.SafeURL(v.Close) }>Close</a>
+			</div>
+		</form>
+	</dialog>
 }
 
 // replayDialog sends the request on show again to a URL; the page waits for
@@ -509,6 +614,92 @@ templ replayDialog(v replayDialogView) {
 	</dialog>
 }
 
+// receiverSection is the request's exchange with its endpoint's receiver:
+// where it went, what the receiver answered, what was sent.
+templ receiverSection(x exhibitView) {
+	<section id="receiver" aria-label="Receiver">
+		<h2>Receiver</h2>
+		if x.Outcome.NotForwarded {
+			<p class="note">Not forwarded: rule { strconv.Itoa(x.Outcome.Rule) } took this request, and the receiver never saw it.</p>
+		} else if x.Outcome.Forward.Pending {
+			<p class="note">Being forwarded to <code>{ x.Outcome.Forward.Target }</code>…</p>
+		} else if e := x.Exchange; e != nil {
+			<div class="replay">
+				<p>
+					<span class={ "rstamp", templ.KV("bad", !e.good()) }>{ e.stamp() }</span>
+					<span class="rurl">{ e.URL }</span>
+					if e.Status != 0 {
+						<span class="rmeta">· { millisOf(e.Duration) }</span>
+					}
+				</p>
+				if e.ByRule > 0 {
+					<p class="note">Rule { strconv.Itoa(e.ByRule) } took it and the sender got the rule's answer; the receiver got it too.</p>
+				}
+				if e.SenderLeft > 0 {
+					<p class="note">The sender gave up after { millisOf(e.SenderLeft) }; the exchange went on for { millisOf(time.Duration(x.Outcome.Forward.Ms) * time.Millisecond) }.</p>
+				}
+				if e.Error != "" {
+					<p class="note">No answer passed back: <code>{ e.Error }</code></p>
+				}
+				for _, n := range e.Notes {
+					<p class="note">{ n }.</p>
+				}
+				if e.Insecure {
+					<p class="note">The receiver's certificate was not verified.</p>
+				}
+				if e.Status != 0 {
+					<h3>The receiver's answer · { strconv.Itoa(len(e.Headers)) } header lines · first byte after { millisOf(e.TTFB) }</h3>
+					<div class="scroll">
+						<table class="kv">
+							<tbody>
+								for _, hd := range e.Headers {
+									<tr><th>{ hd.Name }</th><td>{ hd.Value }</td></tr>
+								}
+							</tbody>
+						</table>
+					</div>
+					switch  {
+						case e.Dropped:
+							<p class="note">Answer body not kept: dropped with the request's body to stay under the database size limit (<code>-max-db-size</code>). It was { size(e.Size) }.</p>
+						case e.Body.Kind == bodyEmpty:
+							<p class="note">No body.</p>
+						case e.Body.Kind == bodyJSON, e.Body.Kind == bodyText:
+							<pre class="body sent">{ e.Body.Text }</pre>
+						case e.Body.Kind == bodyBinary:
+							<p class="note">Binary, { size(e.Size) }, kept as it arrived (never decompressed). The first bytes:</p>
+							<pre class="body hex">{ e.Body.Hex }</pre>
+					}
+					if e.Cut && !e.Dropped {
+						if e.Size < 0 {
+							<p class="note">The answer ended before its end; what arrived is kept.</p>
+						} else {
+							<p class="note">Only the first 64 KiB of { size(e.Size) } are kept.</p>
+						}
+					}
+					if e.Body.Kind != bodyEmpty {
+						<p><a href={ templ.SafeURL(e.Download) } download>Download the receiver's answer body</a></p>
+					}
+				}
+				if e.Line != "" {
+					<h3>Sent · { strconv.Itoa(len(e.Sent)) } header lines · Host { hostWord(e.Host) }</h3>
+					<pre class="body line">{ e.Line }</pre>
+					<div class="scroll">
+						<table class="kv">
+							<tbody>
+								for _, hd := range e.Sent {
+									<tr><th>{ hd.Name }</th><td>{ hd.Value }</td></tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				}
+			</div>
+		} else {
+			<p class="note">Forwarded to <code>{ x.Outcome.Forward.Target }</code>; the exchange was not kept.</p>
+		}
+	</section>
+}
+
 // replays are the request's replays, newest first: the target, its answer
 // and what was sent.
 templ replays(x exhibitView) {
@@ -551,16 +742,18 @@ templ replays(x exhibitView) {
 									</tbody>
 								</table>
 							</div>
-							switch rp.Body.Kind {
-								case bodyEmpty:
+							switch  {
+								case rp.Dropped:
+									<p class="note">Answer body not kept: dropped with the request's body to stay under the database size limit (<code>-max-db-size</code>). It was { size(rp.Size) }.</p>
+								case rp.Body.Kind == bodyEmpty:
 									<p class="note">No body.</p>
-								case bodyJSON, bodyText:
+								case rp.Body.Kind == bodyJSON, rp.Body.Kind == bodyText:
 									<pre class="body sent">{ rp.Body.Text }</pre>
-								case bodyBinary:
+								case rp.Body.Kind == bodyBinary:
 									<p class="note">Binary, { size(rp.Size) }, kept as it arrived (never decompressed). The first bytes:</p>
 									<pre class="body hex">{ rp.Body.Hex }</pre>
 							}
-							if rp.Cut {
+							if rp.Cut && !rp.Dropped {
 								if rp.Size < 0 {
 									<p class="note">The answer ended before its end; what arrived is kept.</p>
 								} else {
@@ -739,6 +932,7 @@ templ row(r rowView) {
 		data-size={ strconv.FormatInt(r.Size, 10) }
 		data-group={ r.Group }
 		data-mark={ r.mark() }
+		data-lane={ r.lane() }
 		if r.Verdict != "" {
 			data-verdict={ r.Verdict }
 		}
@@ -752,6 +946,9 @@ templ row(r rowView) {
 				}
 				if r.Repeat != "" {
 					<span class="repeat" title={ r.Repeat }>{ repeatShort(r.Repeat) }</span>
+				}
+				if r.Pinned {
+					<span class="tag pinned" title="Pinned: never pruned by retention">pinned</span>
 				}
 			</span>
 			<span class="t">{ clock(r.At) }</span>
@@ -774,6 +971,9 @@ templ row(r rowView) {
 				if t := r.tag(); t != "" {
 					<span class={ "tag", "mark-" + r.mark() }>{ t }</span>
 				}
+				if m := r.Outcome.ReceiverMark(); m != "" && r.Outcome.Source != emulate.FromForward {
+					<span class="tag receiver-mark">{ m }</span>
+				}
 			</span>
 		</a>
 	</li>
@@ -794,7 +994,11 @@ templ exhibit(x exhibitView) {
 				<span>from <b>{ host(x.From) }</b></span>
 				<span>body <b>{ size(x.Size) }</b></span>
 				<span>{ x.Proto }</span>
-				if x.Delivery > 1 {
+				if x.Event != nil && *x.Event != "" {
+					<span>
+						attempt <b>{ strconv.Itoa(x.Delivery) }</b> of event <code>{ *x.Event }</code>
+					</span>
+				} else if x.Delivery > 1 {
 					<span>delivery <b>{ strconv.Itoa(x.Delivery) }</b> of this body</span>
 				}
 			</div>
@@ -807,7 +1011,7 @@ templ exhibit(x exhibitView) {
 		</div>
 	</div>
 	<div class="ex-actions">
-		if !x.TooLarge && x.Size > 0 {
+		if !x.TooLarge && !x.Dropped && x.Size > 0 {
 			<a class="btn" href={ templ.SafeURL(x.Download) } download>Download body</a>
 		}
 		<a class="btn" href={ templ.SafeURL(x.Self + "?report") }>Report</a>
@@ -817,12 +1021,28 @@ templ exhibit(x exhibitView) {
 		if x.CanReplay {
 			<a class="btn" href={ templ.SafeURL(x.Self + "?replay") }>Replay</a>
 		}
+		<form method="post" action={ templ.SafeURL(x.PinURL) }>
+			<input type="hidden" name="next" value={ x.Self }/>
+			if x.Pinned {
+				<input type="hidden" name="pinned" value="false"/>
+				<button class="btn" type="submit" title="Pinned: retention never prunes it. Unpin to return it to its lane.">Unpin</button>
+			} else {
+				<input type="hidden" name="pinned" value="true"/>
+				<button class="btn" type="submit" title="Retention never prunes a pinned request">Pin</button>
+			}
+		</form>
 	</div>
 	if len(x.Images) > 0 {
 		@images(x)
 	}
 	<h2>Body</h2>
-	if x.TooLarge && x.Outcome.Source == emulate.FromBusy {
+	if x.Dropped {
+		<div class="too">
+			Body not kept: dropped to stay under the database size limit (<code>-max-db-size</code>). It was { size(x.Size) };
+			its digest, the header lines, the answer and the verdicts stay, and retries still group by it.
+			Pin a request to keep its body.
+		</div>
+	} else if x.TooLarge && x.Outcome.Source == emulate.FromBusy {
 		<div class="too">
 			Hookwitness was reading other bodies up to its <code>-max-inflight</code> limit when this one
 			arrived ({ size(x.Size) } declared), so it answered 503 with <code>Retry-After</code> and did not keep the body.
@@ -880,6 +1100,9 @@ templ exhibit(x exhibitView) {
 	}
 	@verdicts(x)
 	@answer(x)
+	if x.Outcome.Forward != nil || x.Outcome.NotForwarded {
+		@receiverSection(x)
+	}
 	if len(x.Replays) > 0 {
 		@replays(x)
 	}
@@ -1064,11 +1287,23 @@ templ behaviourPage(nav navView, b behaviourView) {
 				case "checks":
 					@toolbar(b, "check-new", "New check") {
 						<p class="note">Required headers refuse a request without them. Authorization and JSON Schema checks record a verdict on every request and refuse only when enforced. Refused requests are not counted.</p>
+						<p class="note event-line">
+							Event id: <b>{ b.Config.EventWords() }</b> ·
+							<a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=event") }>Edit</a>
+						</p>
 					}
 					@checkList(b)
+				case "receiver":
+					@toolbar(b, "receiver", receiverAction(b)) {
+						<p class="note">A receiver makes this endpoint a recorder in the middle: each request that passes the checks and that no rule takes goes on to it as it arrived, and its answer goes back to the sender. Both sides are kept.</p>
+						if !b.MayForward {
+							<p class="note">Only an admin can change where requests are forwarded.</p>
+						}
+					}
+					@receiverSummary(b)
 				case "default":
 					@toolbar(b, "default", "Edit default reply") {
-						<p class="note">The answer when no check refuses the request and no rule matches.</p>
+						<p class="note">{ defaultNote(b.Config) }</p>
 					}
 					@replySummary(b.Config.Default)
 				case "secrets":
@@ -1090,8 +1325,8 @@ templ behaviourPage(nav navView, b behaviourView) {
 					@toolbar(b, "rule-new", "New rule") {
 						<form class="counter" id="counter" method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
 							<input type="hidden" name="op" value="counter-reset"/>
-							<span class="note"><b class="big">{ i64(b.Counter) }</b> counted since the reset</span>
-							<button class="btn quiet" type="submit">Reset counter</button>
+							<span class="note"><b class="big">{ i64(b.Counter) }</b> counted since the reset · { clockText(b.StartedAt, b.Now) }</span>
+							<button class="btn quiet" type="submit">Reset counter and clock</button>
 						</form>
 					}
 					@ruleList(b)
@@ -1110,7 +1345,9 @@ templ toolbar(b behaviourView, edit, label string) {
 		<div class="toolbar-note">
 			{ children... }
 		</div>
-		<a class="btn solid" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + tabOf(edit) + "&edit=" + edit) }>{ label }</a>
+		if label != "" {
+			<a class="btn solid" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + tabOf(edit) + "&edit=" + edit) }>{ label }</a>
+		}
 	</div>
 	if b.NoDraft != "" {
 		<p class="error banner" role="alert">No draft: { b.NoDraft }.</p>
@@ -1147,12 +1384,22 @@ templ ruleList(b behaviourView) {
 			for i, rule := range b.Config.Rules {
 				<li id={ "rule-" + strconv.Itoa(i) } class={ templ.KV("saved", b.Saved == "rule-"+strconv.Itoa(i)) }>
 					<span class="no">{ strconv.Itoa(i + 1) }</span>
-					<span class="what"><b>{ rule.When.Label() }</b> → { rule.Action() }</span>
+					<span class="what">
+						<b>{ rule.When.Label() }</b> → { rule.Action() }
+						if b.Config.Forward != nil && rule.Forward {
+							· the receiver gets it too
+						} else if b.Config.Forward != nil {
+							· not forwarded
+						}
+					</span>
 					@rowActions(b, "rule", i, len(b.Config.Rules), true)
 				</li>
 			}
 		</ol>
 		<p class="help">The first rule whose condition holds decides; the rest are skipped.</p>
+	}
+	if asksToWait(b.Config) {
+		<p class="help">A reply here sends <code>Retry-After</code>. <a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=check-new&kind=backoff") }>Add a check that the sender waits</a>: a retry that comes earlier fails it.</p>
 	}
 }
 
@@ -1307,6 +1554,9 @@ templ editorDialog(b behaviourView, e *editor) {
 					<input type="hidden" name="op" value="check-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
 					@checkFields(b, e.Check)
+				case "event":
+					<input type="hidden" name="op" value="event"/>
+					@eventFields(e.Event, e.Suggested)
 				case "secret":
 					<input type="hidden" name="op" value="secret-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
@@ -1315,6 +1565,9 @@ templ editorDialog(b behaviourView, e *editor) {
 					<input type="hidden" name="op" value="schema-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
 					@schemaFields(e)
+				case "receiver":
+					<input type="hidden" name="op" value="receiver"/>
+					@receiverFields(b, e.Forward)
 				case "var":
 					<input type="hidden" name="op" value="var-save"/>
 					<input type="hidden" name="i" value={ e.I }/>
@@ -1331,11 +1584,59 @@ templ editorDialog(b behaviourView, e *editor) {
 				<button class="btn solid" type="submit">{ editorSave(e) }</button>
 				<a class="btn quiet" href={ templ.SafeURL(b.Base + "/behaviour?tab=" + b.Tab) }>Cancel</a>
 			</div>
-			if e.Kind != "var" && e.Kind != "secret" && e.Kind != "schema" {
+			if e.Kind != "var" && e.Kind != "secret" && e.Kind != "schema" && e.Kind != "event" && e.Kind != "receiver" {
 				@templateRef()
 			}
 		</form>
 	</dialog>
+}
+
+templ receiverSummary(b behaviourView) {
+	if f := b.Config.Forward; f != nil {
+		<div class="receiver">
+			<p class="receiver-target"><span aria-hidden="true">→</span> <code>{ f.Where() }</code></p>
+			<p class="note">{ f.Summary(b.MaxWait) }</p>
+			if openRelay(b.Config) {
+				<p class="banner warn" role="note">
+					Anyone who reaches this endpoint's URL reaches the receiver, answers included.
+					<a href={ templ.SafeURL(b.Base + "/behaviour?tab=checks&edit=check-new") }>Add an enforced authorization check</a>.
+				</p>
+			}
+			if b.MayForward {
+				<form method="post" action={ templ.SafeURL(b.Base + "/behaviour") }>
+					<input type="hidden" name="op" value="receiver-del"/>
+					<input type="hidden" name="v" value={ b.Version }/>
+					<button class="btn quiet" type="submit">Remove receiver</button>
+				</form>
+			}
+		</div>
+	} else {
+		<p class="empty">No receiver: this endpoint answers every request itself.</p>
+	}
+}
+
+templ receiverFields(b behaviourView, f emulate.Forward) {
+	<label>URL <input name="url" value={ f.URL } required spellcheck="false" autocomplete="off" autofocus placeholder="https://receiver.example/webhooks"/></label>
+	<p class="help">http or https, with no query (the sender's own query goes with each request) and no user name or password. The target policy (<code>-replay-allow</code>) applies.</p>
+	<div class="grid2">
+		<label>
+			Host sent
+			<select name="host">
+				<option value="target" selected?={ !f.KeepHost }>the receiver's</option>
+				<option value="received" selected?={ f.KeepHost }>as received</option>
+			</select>
+		</label>
+		<label>Timeout, s <input type="number" name="timeout" value={ timeoutField(f) } min="0.1" step="any" placeholder={ secondsOf(b.MaxWait) }/></label>
+	</div>
+	<label>
+		When the receiver fails
+		<select name="on_failure">
+			<option value="gateway" selected?={ !f.FallsBackToDefault() }>answer 502, or 504 for a timeout</option>
+			<option value="default" selected?={ f.FallsBackToDefault() }>answer the default reply</option>
+		</select>
+	</label>
+	<label class="check"><input type="checkbox" name="insecure_tls" checked?={ f.InsecureTLS }/> Accept any TLS certificate</label>
+	<p class="help">Each request goes as it arrived: its header lines in order and case, its body's bytes, as HTTP/1.1, a chunked body as one chunk. Redirects are not followed. The answer passes back whole up to 1 MiB, its first 64 KiB are kept. With the default reply on failure the sender stays happy, and the receiver misses those requests.</p>
 }
 
 templ templateRef() {
@@ -1373,11 +1674,38 @@ templ ruleFields(b behaviourView, rule emulate.Rule) {
 				<option value="every" selected?={ rule.When.Kind == "every" }>every Nth request</option>
 				<option value="first" selected?={ rule.When.Kind == "first" }>the first N requests</option>
 				<option value="random" selected?={ rule.When.Kind == "random" }>at random, p%</option>
+				<option value="window" selected?={ rule.When.Kind == "window" }>within a time after the start</option>
+				<option value="flap" selected?={ rule.When.Kind == "flap" }>flapping: down, then up, again</option>
+				<option value="rate" selected?={ rule.When.Kind == "rate" }>over a rate, then blocked</option>
+				<option value="attempts" selected?={ rule.When.Kind == "attempts" }>the first N attempts of each event</option>
 			</select>
 		</label>
-		<label class="for-n">N <input type="number" name="n" value={ blank(rule.When.N) } min="1"/></label>
-		<label class="for-p">p, % <input type="number" name="percent" value={ percent(rule.When.Percent) } min="0" max="100" step="any"/></label>
+		<label class="whened w-every w-first w-rate w-attempts">N <input type="number" name="n" value={ blank(rule.When.N) } min="1"/></label>
+		<label class="whened w-random">p, % <input type="number" name="percent" value={ percent(rule.When.Percent) } min="0" max="100" step="any"/></label>
+		<label class="whened w-window">From, s <input type="number" name="from_s" value={ blankF(rule.When.FromS) } min="0" step="any" placeholder="0"/></label>
+		<label class="whened w-window">Until, s <input type="number" name="to_s" value={ blankF(rule.When.ToS) } min="0" step="any" placeholder="for ever"/></label>
+		<label class="whened w-flap">Down <input type="number" name="down" value={ blankF(rule.When.Down) } min="0" step="any"/></label>
+		<label class="whened w-flap">Up <input type="number" name="up" value={ blankF(rule.When.Up) } min="0" step="any"/></label>
+		<label class="whened w-flap">
+			Counted in
+			<select name="unit">
+				<option value="s" selected?={ rule.When.Unit != "requests" }>seconds</option>
+				<option value="requests" selected?={ rule.When.Unit == "requests" }>requests</option>
+			</select>
+		</label>
+		<label class="whened w-rate">Per, s <input type="number" name="per_s" value={ blankF(rule.When.PerS) } min="0" step="any"/></label>
+		<label class="whened w-rate">Block, s <input type="number" name="block_s" value={ blankF(rule.When.BlockS) } min="0" step="any"/></label>
 	</div>
+	<p class="help whened w-window w-flap w-rate">The clock starts at the first request the rules see after a reset (or after the endpoint is made); "Reset counter and clock" starts it again. Times up to 604800 s, a week.</p>
+	<p class="help whened w-window">It holds between From and Until seconds after the start. With Until blank it never ends, as a resource that is gone after a while.</p>
+	<p class="help whened w-flap">Each cycle starts with its down part, when this rule takes the requests, then the up part, when they go on to the next rules.</p>
+	<p class="help whened w-rate">More than N requests within Per seconds trip it; it then takes every request during the next Block seconds, and the count starts again. It counts every request the rules see, also those an earlier rule takes.</p>
+	<p class="help whened w-attempts">Attempts of the same event: its id where the endpoint's event id says (the Checks tab), else the same body. A request without the id is a first attempt.</p>
+	<p class="help whened w-window w-flap w-rate w-attempts">A reply can say <code>{ "{{.RetryAfter}}" }</code> (seconds until this condition ends, e.g. in a <code>Retry-After</code> header), <code>{ "{{.Elapsed}}" }</code> (seconds since the start) and <code>{ "{{.Attempt}}" }</code>.</p>
+	if b.Config.Forward != nil {
+		<label class="check"><input type="checkbox" name="forward" checked?={ rule.Forward }/> The receiver gets these requests too</label>
+		<p class="help">On: the receiver gets each request this rule takes, while the sender gets the rule's answer (a receiver that processed it, a sender that saw a failure). Off: the receiver never sees them.</p>
+	}
 	<label>
 		Do
 		<select name="do">
@@ -1401,8 +1729,57 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 				<option value={ k } selected?={ checkKind(ch) == k }>{ kindTitle(k) }</option>
 			}
 			<option value="schema" selected?={ checkKind(ch) == "schema" }>{ kindTitle("schema") }</option>
+			for _, k := range emulate.DeliveryKinds {
+				<option value={ k } selected?={ checkKind(ch) == k }>{ kindTitle(k) }</option>
+			}
 		</select>
 	</label>
+	<p class="help kinded k-duplicates k-order k-backoff">Judged against the earlier kept requests of the same event (the endpoint's event id: the line above the checks; without one, the same body). Records a verdict, never refuses.</p>
+	<p class="help kinded k-duplicates">A repeat of an event fails when an earlier attempt was answered 2xx: the sender delivered twice what the receiver had already taken. A retry after a failure, a timeout or a drop passes.</p>
+	<div class="kinded k-order">
+		<div class="grid3">
+			<label>
+				Order by
+				<select name="order_from">
+					<option value="body" selected?={ ch.Order == nil || ch.Order.From == "body" }>a value in the body</option>
+					<option value="header" selected?={ ch.Order != nil && ch.Order.From == "header" }>a header</option>
+				</select>
+			</label>
+			<label>Pointer or header <input name="order_key" value={ orderKey(ch) } spellcheck="false" autocomplete="off" placeholder="/created"/></label>
+			<label>
+				As
+				<select name="order_as">
+					<option value="number" selected?={ ch.Order == nil || ch.Order.As == "number" }>a sequence number</option>
+					<option value="time" selected?={ ch.Order != nil && ch.Order.As == "time" }>a time (RFC 3339 or unix seconds)</option>
+				</select>
+			</label>
+		</div>
+		<div class="grid2">
+			<label>
+				Within each value of
+				<select name="group_from">
+					<option value="" selected?={ ch.Group == nil }>nothing: one order for all</option>
+					<option value="body" selected?={ ch.Group != nil && ch.Group.From == "body" }>a value in the body</option>
+					<option value="header" selected?={ ch.Group != nil && ch.Group.From == "header" }>a header</option>
+				</select>
+			</label>
+			<label>Pointer or header <input name="group_key" value={ groupKey(ch) } spellcheck="false" autocomplete="off" placeholder="/data/object/id"/></label>
+		</div>
+		<p class="help">A value lower than another event's earlier one fails; ties pass, and a retry of an earlier event is judged on its first delivery.</p>
+	</div>
+	<div class="kinded k-backoff">
+		<div class="grid3">
+			<label>First gap, s <input type="number" name="first_s" value={ blankF(ch.FirstS) } min="0" step="any" placeholder="5"/></label>
+			<label>Factor <input type="number" name="factor" value={ blankF(ch.Factor) } min="1" step="any" placeholder="2"/></label>
+			<label>Longest gap, s <input type="number" name="max_s" value={ blankF(ch.MaxS) } min="0" step="any" placeholder="none"/></label>
+		</div>
+		<div class="grid2">
+			<label>At most attempts <input type="number" name="max_attempts" value={ blankF(float64(ch.MaxAttempts)) } min="0" placeholder="no limit"/></label>
+			<label>Tolerance, % <input type="number" name="tolerance_pct" value={ blankF(float64(ch.TolerancePct)) } min="0" max="100" placeholder="25"/></label>
+		</div>
+		<label class="check"><input type="checkbox" name="retry_after" checked?={ ch.RetryAfter == nil || *ch.RetryAfter }/> A retry before the previous answer's Retry-After fails (and Retry-After wins when longer)</label>
+		<p class="help">Each gap is measured from the end of the previous attempt (its reply's delay, or a hold) to the next one: first gap × factor for each later attempt, at most the longest gap. Leave the first gap empty to judge only Retry-After.</p>
+	</div>
 	<div class="kinded k-schema">
 		<div class="grid2">
 			<label>
@@ -1486,10 +1863,40 @@ templ checkFields(b behaviourView, ch emulate.Check) {
 	<textarea class="kinded k-hmac" id="check-content" name="content" rows="2" spellcheck="false" placeholder="{{.Body}}">{ ch.Content }</textarea>
 	<label class="check kinded k-stripe k-standard"><input type="checkbox" name="ignore_timestamp" checked?={ ch.IgnoreTimestamp }/> Accept any timestamp (replayed captures)</label>
 	<label class="check kinded k-github k-stripe k-standard k-hmac k-bearer k-basic k-schema"><input type="checkbox" name="enforce" checked?={ ch.Enforce }/> Enforce: refuse a request that does not pass (otherwise it gets the usual reply and only the verdict is recorded)</label>
-	<label class="check"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header, 401, or 400 listing the schema problems)</label>
-	<div class="reply-fields">
+	<label class="check kinded k-header k-github k-stripe k-standard k-hmac k-bearer k-basic k-schema"><input type="checkbox" name="own_error" checked?={ ch.Error != nil }/> Refuse with my own reply (otherwise 400 naming the header, 401, or 400 listing the schema problems)</label>
+	<div class="reply-fields kinded k-header k-github k-stripe k-standard k-hmac k-bearer k-basic k-schema">
 		@replyFields(b, "check", "error_", errorOrStandard(ch))
 	</div>
+}
+
+// eventFields edits where the sender puts an event's id: a preset or a
+// header or body value of one's own.
+templ eventFields(src emulate.Source, suggested string) {
+	<p class="help">The id a sender keeps on every retry of an event. Attempts, retry groups and the delivery checks follow it; without one they follow the body, so a sender that changes a field on each attempt starts a new group each time.</p>
+	if suggested != "" {
+		<p class="note">None is set yet. { suggested }'s is chosen below because the endpoint checks { suggested }'s signature: save to use it.</p>
+	}
+	<label>
+		Event id
+		<select name="preset" autofocus>
+			<option value="" selected?={ src.Key == "" }>none: the same body is the same event</option>
+			for _, p := range emulate.EventPresets {
+				<option value={ p.Name } selected?={ src == p.Source }>{ p.Name }: { p.Source.String() }</option>
+			}
+			<option value="custom" selected?={ src.Key != "" && !isPreset(src) }>my own…</option>
+		</select>
+	</label>
+	<div class="grid2">
+		<label>
+			From
+			<select name="event_from">
+				<option value="header" selected?={ src.From != "body" }>a header</option>
+				<option value="body" selected?={ src.From == "body" }>a value in the body (JSON pointer)</option>
+			</select>
+		</label>
+		<label>Header or pointer <input name="event_key" value={ src.Key } spellcheck="false" autocomplete="off" placeholder="X-Event-Id or /id"/></label>
+	</div>
+	<p class="help">"My own" uses these two fields.</p>
 }
 
 templ secretFields(e *editor) {

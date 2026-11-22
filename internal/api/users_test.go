@@ -64,7 +64,7 @@ func TestUsersAPI(t *testing.T) {
 	wantError(t, e.do("POST", "/users", `{"name":"ann","role":"admin","password":"short"}`), 422, "invalid", "password")
 	wantError(t, e.do("POST", "/users", `{"name":"ann","role":"boss","password":"admin-password-1234"}`), 422, "invalid", "role")
 	if rec := e.do("POST", "/users", `{"name":"Ann","role":"admin","password":"admin-password-1234"}`); rec.Code != 201 ||
-		!strings.Contains(rec.Body.String(), `"name": "ann"`) || strings.Contains(rec.Body.String(), "password") {
+		!strings.Contains(rec.Body.String(), `"name": "ann"`) || strings.Contains(rec.Body.String(), "admin-password-1234") || strings.Contains(rec.Body.String(), "pbkdf2") {
 		t.Fatalf("first admin: %d %s", rec.Code, rec.Body)
 	}
 	// Login on now.

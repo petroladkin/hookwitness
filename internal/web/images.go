@@ -16,7 +16,7 @@ import (
 // images lists the images a request carries for its exhibit and marks
 // their paths in the body.
 func (h *Handler) images(req store.Request, vs []auth.Verdict, body *bodyView) []imageView {
-	if req.TooLarge {
+	if req.TooLarge || req.BodyDropped {
 		return nil
 	}
 	found := picture.Find(req.Body, contentType(req.Headers), vs)
@@ -80,6 +80,10 @@ func (h *Handler) image(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req, err := h.store.Request(r.Context(), id)
+	if err == nil && req.BodyDropped {
+		http.Error(w, store.DroppedReason, http.StatusNotFound)
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) || (err == nil && req.TooLarge) {
 		http.NotFound(w, r)
 		return

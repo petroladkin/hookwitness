@@ -47,6 +47,7 @@ type replayView struct {
 	Reason    string
 	Headers   []store.Header
 	Body      bodyView
+	Dropped   bool // the answer body was dropped with the request's (the size limit)
 	Size      int64
 	Cut       bool
 	Duration  time.Duration
@@ -93,7 +94,7 @@ func (h *Handler) replays(ctx context.Context, requestID int64) ([]replayView, e
 		json.Unmarshal([]byte(full.Options), &o)
 		out = append(out, replayView{ID: full.ID, At: full.CreatedAt, By: full.By, URL: full.URL, Host: o.Host,
 			Insecure: o.InsecureTLS, TimeoutMS: o.TimeoutMS, Line: full.Line, Sent: full.Sent, Notes: full.Notes,
-			Status: full.Status, Reason: full.Reason, Headers: full.Headers, Body: viewBody(full.Body), Size: full.Size,
+			Status: full.Status, Reason: full.Reason, Headers: full.Headers, Body: viewBody(full.Body), Dropped: full.BodyDropped, Size: full.Size,
 			Cut: full.Truncated, Duration: full.Duration, TTFB: full.TTFB, ErrorKind: full.ErrorKind, Error: full.Error,
 			Download: h.prefix + "/replays/" + strconv.FormatInt(full.ID, 10) + "/body"})
 	}
@@ -116,6 +117,8 @@ func (h *Handler) replayDefaults(ctx context.Context, req store.Request, ex *exh
 	switch {
 	case h.replay.Policy().Off():
 		v.Blocked = "Replay is off on this server (-replay-allow none)."
+	case req.BodyDropped:
+		v.Blocked = "The body of this request was dropped to stay under the database size limit, so it cannot be sent as it arrived."
 	case req.TooLarge:
 		v.Blocked = "The body of this request was not kept, so it cannot be sent as it arrived."
 	case int64(len(req.Body)) < req.Size:
@@ -215,6 +218,10 @@ func (h *Handler) replayBody(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		h.fail(w, "replay body", err)
+		return
+	}
+	if rp.BodyDropped {
+		http.Error(w, store.AnswerDropped, http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")

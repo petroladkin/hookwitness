@@ -41,7 +41,7 @@ docs-check: build
 media: build
 	node scripts/media/media.mjs bin/hookwitness docs/images
 
-## js-test: the tests of the UI's JavaScript layout code (Node 20+, no packages); CI runs it
+## js-test: the tests of the UI's JavaScript: the strip's layout, a closed feed (Node 20+, no packages); CI runs it
 js-test:
 	node --test scripts/stripcheck/*.test.mjs
 

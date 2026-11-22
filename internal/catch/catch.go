@@ -3,6 +3,7 @@ package catch
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/emulate"
+	"github.com/petroladkin/hookwitness/internal/forward"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/wire"
@@ -32,7 +34,7 @@ type Handler struct {
 	// whose body does not fit is answered 503 and kept without it. Zero
 	// means no bound.
 	MaxInFlight int64
-	Retention   int // requests kept per register
+	Retention   store.Keep // requests kept per register by default (each endpoint may set its own)
 	// BodyTimeout bounds reading a request's body; a sender that trickles it
 	// slower is cut off and nothing is kept. Zero means DefaultBodyTimeout.
 	BodyTimeout time.Duration
@@ -41,10 +43,17 @@ type Handler struct {
 	MaxWait time.Duration
 	// Keys opens signing keys and matches tokens of authorization checks.
 	Keys emulate.Keyring
+	// Forward passes requests through to the receivers endpoints name; nil
+	// makes one with the default policy on first use.
+	Forward *forward.Service
+	fwOnce  sync.Once
 
 	// after starts a wait's timer; tests replace it to see the durations
 	// asked for without waiting. Nil means a real timer.
 	after func(time.Duration) <-chan time.Time
+	// now reads the clock a request is received by; tests replace it to
+	// give arrivals exact times. Nil means the real clock.
+	now func() time.Time
 
 	heldMu sync.Mutex
 	held   int64 // bytes of bodies held now, against MaxInFlight
@@ -66,9 +75,15 @@ func (h *Handler) stopping() chan struct{} {
 	return h.stop
 }
 
-// Stop ends pending delays and timeout holds; give it to server.Serve as an
-// onShutdown function so a held request does not delay the shutdown.
-func (h *Handler) Stop() { h.stopOnce.Do(func() { close(h.stopping()) }) }
+// Stop ends pending delays, timeout holds and forwards (each recorded as
+// ended by the stop); give it to server.Serve as an onShutdown function so
+// a held request does not delay the shutdown.
+func (h *Handler) Stop() {
+	h.stopOnce.Do(func() {
+		close(h.stopping())
+		h.forwarder().Stop()
+	})
+}
 
 // Wait returns when every request being answered has stored its outcome.
 // http.Server.Shutdown does not wait for handlers whose connection was
@@ -88,6 +103,9 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	h.inflight.Add(1)
 	defer h.inflight.Done()
 	received := time.Now().UTC()
+	if h.now != nil {
+		received = h.now().UTC()
+	}
 	p := RawPath(r)
 	// net/http cancels the request context when the sender closes its side,
 	// which fire-and-forget senders do right after the request; a request
@@ -100,8 +118,8 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	case errors.Is(err, store.ErrNotFound) || off:
 		endpointID = store.Unmatched
 	case err != nil:
-		h.Log.Error("catch: endpoint lookup failed", "path", p, "err", err)
-		http.Error(w, "storage error", http.StatusInternalServerError)
+		h.Log.Error("catch: endpoint lookup failed; request not kept, answered 503", "method", r.Method, "path", p, "err", err)
+		notKept(w)
 		return
 	}
 
@@ -141,8 +159,8 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 		err = h.Store.AddRequest(ctx, req, h.Retention, nil)
 	}
 	if err != nil {
-		h.Log.Error("catch: request not stored", "method", r.Method, "path", p, "err", err)
-		http.Error(w, "storage error", http.StatusInternalServerError)
+		h.Log.Error("catch: request not stored; answered 503", "method", r.Method, "path", p, "err", err)
+		notKept(w)
 		return
 	}
 	h.Live.Publish(req.EndpointID)
@@ -154,6 +172,14 @@ func (h *Handler) Catch(w http.ResponseWriter, r *http.Request, headers []wire.H
 	}
 
 	plan.free = free
+	switch {
+	case plan.forward:
+		h.forwardOut(ctx, w, r, req, plan)
+		return
+	case plan.forwardToo:
+		h.forwardToo(ctx, w, r, req, plan)
+		return
+	}
 	if changed := h.carryOut(w, r, req, plan); changed {
 		if err := h.Store.UpdateOutcome(ctx, req.ID, plan.out.Status, plan.out.String()); err != nil {
 			h.Log.Error("catch: outcome not stored", "request", req.ID, "err", err)
@@ -173,6 +199,9 @@ type plan struct {
 	closing bool          // close the connection after answering
 	decide  store.Decide  // set when the rules decide (the request passed the checks)
 	free    func()        // the body is no longer needed (MaxInFlight)
+	// forward: the receiver answers the sender (forward.go); forwardToo: a
+	// rule answers and the receiver gets the request as well.
+	forward, forwardToo bool
 }
 
 // plan works out the outcome for everything but the rules, which decide
@@ -207,6 +236,7 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy, off bool) *plan
 	verdicts, f := cfg.Verify(er, req.ReceivedAt, !req.TooLarge, h.Keys)
 	req.Verdict, req.Verdicts = emulate.Overall(verdicts), emulate.VerdictsJSON(verdicts)
 	req.Signatures, req.Repeated = signatures(verdicts, h.Keys), repeated(verdicts)
+	req.Delivery = delivery(cfg, er, verdicts, req.ReceivedAt)
 	if busy {
 		pl.out = busyOutcome()
 		req.Status, req.Outcome = pl.out.Status, pl.out.String()
@@ -219,6 +249,16 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy, off bool) *plan
 		pl.closing = true
 		return pl
 	}
+	if cfg.Forward != nil && h.forwarder().Own(req.RemoteAddr) {
+		// It came back on the server's own forward: a loop.
+		pl.out = loopOutcome()
+		pl.reply, pl.render = emulate.Reply{Status: pl.out.Status, Headers: []emulate.Header{{Name: "Content-Type", Value: "text/plain; charset=utf-8"}},
+			BodyBase64: base64.StdEncoding.EncodeToString([]byte(loopText))}, true // exact bytes, not a template
+		pl.data = emulate.NewData(er, nil, 0)
+		req.Status, req.Outcome = pl.out.Status, pl.out.String()
+		h.Log.Warn("catch: a forward came back to a forwarding endpoint; answered 508", "path", req.Path, "remote", req.RemoteAddr)
+		return pl
+	}
 	if f != nil {
 		pl.data = emulate.NewData(er, cfg.Vars, 0)
 		pl.reply, pl.render = f.Refusal(), true
@@ -229,18 +269,32 @@ func (h *Handler) plan(req *store.Request, cfgText string, busy, off bool) *plan
 	// The template data copies the body: made here, before the store's
 	// transaction, so the copy is not made while the store is locked.
 	pl.data = emulate.NewData(er, cfg.Vars, 0)
-	pl.decide = func(n int64) (int, string) {
-		ch := cfg.Choose(n)
-		pl.data.N = n
-		pl.out = emulate.Outcome{Source: emulate.FromDefault, Action: ch.Do, Counter: n}
+	pl.decide = func(in store.DecideIn) (int, string, string) {
+		ch, state := cfg.Decide(emulate.ChooseIn{Counter: in.Counter, At: in.At, State: in.State, Attempt: in.Attempt})
+		pl.data.N, pl.data.Attempt, pl.data.RetryAfter = in.Counter, in.Attempt, ch.RetryAfter
+		pl.data.Elapsed = float64(ch.Elapsed.Milliseconds()) / 1000
+		pl.out = emulate.Outcome{Source: emulate.FromDefault, Action: ch.Do, Counter: in.Counter}
 		if ch.Rule > 0 {
 			pl.out.Source, pl.out.Rule, pl.out.Label = emulate.FromRule, ch.Rule, ch.Label
+			ch.Note(&pl.out, cfg)
 		}
 		if ch.Do == emulate.ActReply {
 			pl.reply, pl.render = ch.Reply, true
 			pl.out.Status = ch.Reply.Status
 		}
-		return pl.out.Status, pl.out.String()
+		if cfg.Forward != nil {
+			switch {
+			case ch.Do == emulate.ActForward:
+				pl.out.Source, pl.forward = emulate.FromForward, true
+				pl.out.Forward = &emulate.ForwardNote{Target: cfg.Forward.Where(), Pending: true}
+			case ch.Forward:
+				pl.forwardToo = true
+				pl.out.Forward = &emulate.ForwardNote{Target: cfg.Forward.Where(), Pending: true}
+			default:
+				pl.out.NotForwarded = true
+			}
+		}
+		return pl.out.Status, pl.out.String(), state
 	}
 	return pl
 }
@@ -298,7 +352,7 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 			Headers: []emulate.Header{{Name: "Content-Type", Value: "text/plain; charset=utf-8"}},
 			Body:    []byte("Hookwitness could not render this endpoint's reply: " + err.Error() + "\n")}
 	}
-	rendered = rendered.Protect(access.CookieName)
+	rendered = rendered.Protect(adminCookies...)
 	sent, withheld := rendered.AsSent(r.Method) // what net/http will send of it
 	pl.out.SetReply(sent)
 	pl.out.Withheld = withheld
@@ -313,6 +367,17 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 			return true
 		}
 	}
+	writeReply(w, rendered)
+	return true
+}
+
+// writeReply sends a rendered reply: its headers only (no sniffed
+// Content-Type), framed by the server.
+func writeReply(w http.ResponseWriter, rendered emulate.Rendered) { writeReplyLen(w, rendered, "") }
+
+// writeReplyLen is writeReply with the Content-Length to declare ("": the
+// body's): an answer to HEAD keeps the receiver's.
+func writeReplyLen(w http.ResponseWriter, rendered emulate.Rendered, length string) {
 	hd := w.Header()
 	hd["Content-Type"] = nil // no sniffing: only the configured headers
 	for _, x := range rendered.Headers {
@@ -321,10 +386,12 @@ func (h *Handler) carryOut(w http.ResponseWriter, r *http.Request, req *store.Re
 		}
 		hd.Add(x.Name, x.Value)
 	}
-	hd.Set("Content-Length", strconv.Itoa(len(rendered.Body)))
+	if length == "" {
+		length = strconv.Itoa(len(rendered.Body))
+	}
+	hd.Set("Content-Length", length)
 	w.WriteHeader(rendered.Status)
 	w.Write(rendered.Body)
-	return true
 }
 
 // wait sleeps for d unless the sender leaves or the server stops, and
@@ -374,6 +441,14 @@ const unmatchedHead = 64 << 10
 
 // retryAfter is what a busy answer asks the sender to wait, in seconds.
 const retryAfter = "5"
+
+// notKept answers a request the store could not keep (the caller logs
+// why): 503 with Retry-After, which senders retry, so the delivery is not
+// lost with it.
+func notKept(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", retryAfter)
+	http.Error(w, "the request could not be stored; retry later", http.StatusServiceUnavailable)
+}
 
 func busyOutcome() emulate.Outcome {
 	return emulate.Outcome{Source: emulate.FromBusy, Action: emulate.ActReply, Status: http.StatusServiceUnavailable,
@@ -537,8 +612,13 @@ func storeHeaders(r *http.Request, hs []wire.Header, ok bool) []store.Header {
 	return out
 }
 
-// SessionRedacted replaces the value of the admin's login cookie in a
-// recorded Cookie header.
+// adminCookies are the admin's cookies (its login, a provider sign-in's
+// flow): catch paths share the admin's origin, so no answer an endpoint
+// gives, scripted or its receiver's, may set them.
+var adminCookies = []string{access.CookieName, access.FlowCookieName}
+
+// SessionRedacted replaces the value of the admin's login cookie (or of a
+// provider sign-in's flow cookie) in a recorded Cookie header.
 const SessionRedacted = "[hookwitness session]"
 
 // RedactSession replaces the value of a hookwitness_session cookie in a
@@ -546,13 +626,13 @@ const SessionRedacted = "[hookwitness session]"
 // admin on another port of the same host sends it to catch paths too; it
 // must never be kept with the evidence. Everything else stays as sent.
 func RedactSession(v string) string {
-	if !strings.Contains(v, access.CookieName) {
+	if !strings.Contains(v, access.CookieName) && !strings.Contains(v, access.FlowCookieName) {
 		return v
 	}
 	parts := strings.Split(v, ";")
 	for i, p := range parts {
 		name, _, found := strings.Cut(p, "=")
-		if found && strings.TrimSpace(name) == access.CookieName {
+		if n := strings.TrimSpace(name); found && (n == access.CookieName || n == access.FlowCookieName) {
 			parts[i] = name + "=" + SessionRedacted
 		}
 	}

@@ -102,20 +102,24 @@ into the Unmatched register with a `404`.
 | `GET /endpoints` | all endpoints, by path; `?path=/x` finds one (an empty list when there is none); `?enabled=true` or `false` only those on or off |
 | `POST /endpoints` | create: `{"path": "/x"}`; no path or an empty one picks a random path. `201`, `Location` |
 | `GET /endpoints/{id}` | one endpoint |
-| `PATCH /endpoints/{id}` | change its path, `{"path": "/y"}` (validated as on create; its requests and behaviour stay), turn it off or on, `{"enabled": false}`, or both at once (both change or, on an error, neither). `200` with the endpoint |
+| `PATCH /endpoints/{id}` | change its path, `{"path": "/y"}` (validated as on create; its requests and behaviour stay), turn it off or on, `{"enabled": false}`, or both at once (both change or, on an error, neither); set its retention, `{"retention": {…}}` or `null` for the server's defaults (below). `200` with the endpoint |
 | `DELETE /endpoints/{id}` | delete it and its requests. `204` |
 
 ```console
 $ curl -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/orders/events"}'
 201
-{"id":1,"path":"/orders/events","url":"http://localhost:8080/orders/events","requests":0,"counter":0,"enabled":true,"created_at":"2026-10-12T17:28:06.808Z"}
+{"id":1,"path":"/orders/events","url":"http://localhost:8080/orders/events","requests":0,"counter":0,"started_at":null,"enabled":true,"created_at":"2026-10-12T17:28:06.808Z",
+ "retention":null,"retention_effective":{"normal":{"count":1000,"max_age":null},"anomalies":{"count":1000,"max_age":null}},
+ "kept":{"normal":0,"anomalies":0,"pinned":0},"pruned":{"count":0,"normal_until":null,"anomalies_until":null}}
 ```
 
 - `url` is where senders deliver: the path on the host name you called the
   API by (rewrite the host when the sender reaches hookwitness by another
   name, e.g. from another container).
 - `requests` is how many are kept; `counter` how many passed the checks since
-  the rule counter was last reset; `last_request_at` appears once one arrived.
+  the rule counter was last reset; `started_at` when the first of those
+  arrived, which started the rules' clock (`null` until then);
+  `last_request_at` appears once one arrived.
 - `enabled` is `false` for an endpoint that is off: it keeps its path,
   behaviour, secrets, requests and counter, and requests to its path are
   answered `404` and kept in the Unmatched register (outcome `source` `off`).
@@ -123,6 +127,18 @@ $ curl -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/
 - Paths are letters, digits and `. _ ~ -` segments; `/healthz` and the admin
   prefix are reserved (`422`, field `path`). A taken path is `409
   duplicate_path`.
+- Retention ([Keeping requests](keeping.md)): a register keeps normal
+  requests and anomalies (not answered 2xx, a failed verdict, a redelivery)
+  in two lanes, each pruned oldest first on its own; pinned requests never.
+  `retention` is the endpoint's own policy, `{"normal": {"count", "max_age"},
+  "anomalies": {"count", "max_age"}}`, each field optional (absent: the
+  server's default; `max_age` such as `90m`, `36h`, `7d`; anomalies `count`
+  0: no separate lane), or `null`. `retention_effective` resolves it
+  (`anomalies` `null` without a lane), `kept` counts each lane and the pinned
+  ones, `pruned` says how many retention removed and up to when each lane
+  lost requests. A PATCH that lowers a limit prunes at once; its answer's
+  `to_prune` says how many went. `422` (field `retention`) for an invalid
+  policy, which changes nothing.
 
 ### Behaviour
 
@@ -180,8 +196,17 @@ The document (fields left out take their zero value; `default.status` 0 means 20
   reply with both is refused (`422`). A recorded outcome keeps a reply body
   that is not UTF-8 as `body_base64` too.
 - **Conditions:** `every` N (N, 2N, …), `first` N since the counter reset,
-  `random` with `percent` (0 < p ≤ 100). **Actions:** `reply` (with `reply`),
-  `timeout`, `drop`. Delays and timeouts are capped by `-max-wait`.
+  `random` with `percent` (0 < p ≤ 100). By the clock, which starts at the
+  first request after a reset (`started_at`): `window` with `from_s`
+  (default 0) and `to_s` (absent: for ever; above `from_s`); `flap` with
+  `down`, `up` and `unit` `s` or `requests` (the down part first, repeating);
+  `rate` with `n` (1–1000), `per_s` and `block_s` (more than `n` within
+  `per_s` seconds, then for `block_s`; every request the rules see counts).
+  By attempt: `attempts` with `n` (1–1000), the first `n` attempts of each
+  event (the event id, else the same body). Times are seconds, at most
+  604800 (a week). Moving or changing a `rate` rule clears its own count and
+  block. **Actions:** `reply` (with `reply`), `timeout`, `drop`. Delays and
+  timeouts are capped by `-max-wait`.
 - **Required header** checks: `match` is `present`, `equals` (`value`) or
   `regex` (`value`); an optional `error` reply replaces the standard `400`.
 - **Authorization** checks give every request a verdict — `pass`, `fail` or
@@ -212,9 +237,21 @@ The document (fields left out take their zero value; `default.status` 0 means 20
   when absent), refer to each other by name (`{"$ref": "Address"}`), are never
   fetched from anywhere, and assert `format`. An invalid schema is a `422`
   with field `schemas`.
+- **Delivery** checks judge a request against the endpoint's earlier kept
+  requests and never refuse ([guide](delivery.md)): `{"kind":
+  "duplicates"}` (a repeat of an event after a 2xx answer fails), `{"kind":
+  "order", "order": {"from": "body", "key": "/created", "as": "number" |
+  "time"}, "group": {"from", "key"}}` and `{"kind": "backoff", "first_s": 5,
+  "factor": 2, "max_s": 3600, "max_attempts": 8, "tolerance_pct": 25,
+  "retry_after": true}`. The behaviour's `event`, `{"from": "header", "key":
+  "X-GitHub-Delivery"}`, names where the sender puts an event's id; without
+  it attempts are counted per body. Requests then carry `event` and
+  `attempt`.
 
 - Templates: `{{.Header "X-Id"}}`, `{{.Query "x"}}`, `{{.JSON "a.b.0"}}`,
-  `{{.Var.NAME}}`, `{{.N}}`, `{{.Method}}`, `{{.Path}}`, `{{.Body}}`.
+  `{{.Var.NAME}}`, `{{.N}}`, `{{.Method}}`, `{{.Path}}`, `{{.Body}}`, and
+  `{{.RetryAfter}}` (whole seconds until the matching rule's condition ends,
+  else 0), `{{.Elapsed}}` (seconds since the clock started), `{{.Attempt}}`.
 - A `PUT` keeps the endpoint's secrets; a `secrets` list in the body (e.g.
   sent back as read) is ignored.
 - Validation errors are `422` with `field` pointing at the part:
@@ -229,7 +266,7 @@ never holds a secret's value, hash or fingerprint.
 | Route | Does |
 |---|---|
 | `GET /setup` | the setup file of `?id=<id>` (repeat it for several) or of every endpoint; `Content-Disposition` names it `<path>.hookwitness.json` |
-| `POST /setup` | create the file's endpoints, all or none; `201` when it created one, else `200`, with `{"endpoints": [{"id", "path", "result", "secrets_not_set"}]}`. `?on_conflict=replace` replaces the behaviour of an endpoint already at a path (its requests, counter and on/off state stay; a secret of the same name and kind keeps its value); without it a taken path is `409 duplicate_path` |
+| `POST /setup` | create the file's endpoints, all or none; `201` when it created one, else `200`, with `{"endpoints": [{"id", "path", "result", "secrets_not_set", "pruned"}]}`. `?on_conflict=replace` replaces the behaviour and retention of an endpoint already at a path (its requests, counter and on/off state stay; a secret of the same name and kind keeps its value; `pruned`: requests a lower retention removed at once); without it a taken path is `409 duplicate_path` |
 
 ```console
 $ curl -X POST $API/setup -H 'Content-Type: application/json' --data-binary @payments-webhooks.hookwitness.json
@@ -286,23 +323,33 @@ $ curl -X PUT $API/endpoints/1/secrets/ORDERS_PASSWORD -H 'Content-Type: applica
 | `…/requests?include=body` | each item carries `body_text` or `body_base64`, as one request does; `limit` is then at most 100 |
 | `DELETE /endpoints/{id}/requests` | clear the endpoint's requests (numbering goes on). `204` |
 | `GET /unmatched/requests` | the Unmatched register (requests to paths no endpoint has), with the same parameters; read-only |
+| `GET /unmatched`, `PATCH /unmatched` | the Unmatched register's `requests`, `last_request_at`, `retention`, `retention_effective`, `kept`, `pruned`; PATCH sets its `retention` (normal only: it has one lane) |
+| `…/requests?pinned=true`, `?anomaly=true` | only pinned requests, only anomalies |
+| `…/requests?event=<id>` | every kept attempt of an event (the endpoint's event source, below) |
+| `PUT /requests/{id}/pin`, `DELETE /requests/{id}/pin` | pin a request (retention never prunes it; clearing the register still does) or unpin it; send `Content-Type: application/json` (no body needed). `204` |
 | `GET /requests/{id}` | one request in full, Unmatched ones too |
-| `GET /requests/{id}/body` | the exact body as received, with the sender's `Content-Type`, always as a download (`attachment`, `nosniff`, a `sandbox` CSP): whatever a sender sent never runs as a page; `404 not_kept` when it was over the limit |
+| `GET /requests/{id}/body` | the exact body as received, with the sender's `Content-Type`, always as a download (`attachment`, `nosniff`, a `sandbox` CSP): whatever a sender sent never runs as a page; `404 not_kept` when it was over the limit or dropped |
 | `GET /requests/{id}/image?path=<pointer>` | the decoded bytes of an image in the body (`path=` empty for a body that is an image), typed by what they are; `404 not_found` without a value there, `422 not_an_image` when it is no image |
 
 A list item:
 
 ```json
 {"id":1,"endpoint_id":1,"no":1,"received_at":"2026-10-12T17:28:07.433Z","method":"POST","path":"/orders/events",
- "query":"","status":200,"verdict":"pass","body_size":28,"body_kept":true,"content_type":"application/json","replays":0}
+ "query":"","status":200,"verdict":"pass","body_size":28,"body_kept":true,"content_type":"application/json","replays":0,"pinned":false,"anomaly":false,"event":null,"attempt":null}
 ```
 
 - `status` is what hookwitness answered (`0` while a timeout still holds it).
 - `verdict` is the overall verdict of the authorization and schema checks:
   `fail` if any failed, else `n/v` if any could not verify, else `pass` if any
   passed, else `n/c` when none applied; `""` when the endpoint has none.
-- `body_kept` is false when the body was over `-max-body` (answered `413`) or
-  the server was busy reading other bodies (answered `503`).
+- `body_kept` is false when the body was over `-max-body` (answered `413`),
+  the server was busy reading other bodies (answered `503`), or the body was
+  dropped later to stay under the database size limit: then `body_dropped`
+  is true, `body_size` and the digest stay, its raw body and images answer
+  `404 not_kept`, and a replay is refused (`409 body_not_kept`). The answer
+  bodies of its replays and of its receiver go with it: those answers say
+  `body_dropped` too, with no `body_text`, and their body routes answer
+  `404 not_kept`.
 - `body_cut` is true when only the start of the body was kept: the Unmatched
   register keeps 64 KiB; `body_size` is the whole.
 
@@ -324,7 +371,9 @@ One request adds:
   for a path without an endpoint, `off` for an endpoint that is off), `action` (`reply`,
   `timeout`, `drop`, `refused`, `error`, `abandoned`), the reply sent
   (`status`, `headers` as `{name, value}`, the first 64 KiB of `body`),
-  `delay_ms`, `waited_ms` for a timeout, `counter`. `abandoned`: the sender
+  `delay_ms`, `waited_ms` for a timeout, `counter`; a rule by time or state
+  adds `elapsed_ms` since the clock started and, a `rate` rule,
+  `block_until`. `abandoned`: the sender
   gave up during the reply's delay, so nothing was sent — `status` is `0`,
   `waited_ms` how long the sender stayed, `delay_ms` the delay it did not
   wait out, `would_status` the reply it would have got; reports count it as
@@ -368,7 +417,7 @@ Writes, so send them as JSON (an empty object is enough):
 
 | Route | Does |
 |---|---|
-| `POST /endpoints/{id}/reset-counter` | start the rules' count again ("every 3rd" counts from the next request). `200` with the endpoint |
+| `POST /endpoints/{id}/reset-counter` | start the rules' count and clock again ("every 3rd" counts from the next request, "first 30 s" starts with it) and clear rate limits. `200` with the endpoint |
 | `POST /endpoints/{id}/recheck` | verify the kept requests again with the current checks, secrets and schemas — after fixing a secret or a schema. Only verdicts change. `200 {"rechecked": N}` |
 | `POST /endpoints/{id}/schema-draft` `{"requests":[ids]}` | draft a JSON Schema (2020-12) from the bodies of up to 100 of the endpoint's requests; **nothing is stored**. `200` with `name` (suggested), `text`, `exists` and `changes` (how it differs from a stored schema of that name), `discriminator` (the check that picks by a value, the value the requests share, and what it maps to now). `422` (field `requests`) for a body not kept or not JSON, or a request of another endpoint |
 
@@ -403,16 +452,17 @@ answered ([Replaying a request](replay.md)).
 | `POST /requests/{id}/replays` `{"url": …}` | send it to `url` and wait for the answer (or the error). `201` with the replay; admins only (`403 forbidden` for a user or the machine token). Optional: `"host": "received"` sends the caught `Host` line (default `"target"`: the URL's host and port), `"insecure_tls": true` accepts any https certificate, `"timeout_ms"` (default 30000, at most `-max-wait`). A target that refuses, times out or resets is still a replay, with `status` 0 and `error` set |
 | `GET /requests/{id}/replays` | its replays, newest first (the newest 50 are kept); `include=body` adds the answers' bodies |
 | `GET /replays/{id}` | one replay with its answer body |
-| `GET /replays/{id}/body` | the answer body as the target sent it (never decompressed, at most 1 MiB), with its `Content-Type`, always as a download |
+| `GET /replays/{id}/body` | the answer body as the target sent it (never decompressed, at most 1 MiB), with its `Content-Type`, always as a download; `404 not_kept` when it was dropped |
 
 Refusals: `409 body_not_kept` when the body was not kept whole (over the
 limit, or cut in Unmatched); `422 invalid` (field `url`, `host` or
 `timeout_ms`): not http or https, a user name or password in the URL, a
-timeout out of range; `422 target_refused` (field `url`): a link-local or
-cloud-metadata address, also through a name resolving to one, or a target
-outside `-replay-allow`, with the rule in the message; `503 busy` when 4
-replays are running or `-max-inflight` is spent (`Retry-After`). A request
-carries `"replays"`: how many it has.
+space or control character in the URL, a timeout out of range; `422
+target_refused` (field `url`): a link-local or cloud-metadata address, also
+through a name resolving to one, or a target outside `-replay-allow`, with
+the rule in the message; `503 busy` when 4 replays are running or
+`-max-inflight` is spent (`Retry-After`). A request carries `"replays"`: how
+many it has.
 
 ```json
 {"id":3,"request_id":12,"created_at":"2026-10-19T09:14:02.118Z","by":"ann","url":"http://localhost:3000/webhooks/github",
@@ -422,6 +472,53 @@ carries `"replays"`: how many it has.
  "headers":[["Content-Type","application/json"],["Content-Length","30"]],"body_size":30,"body_cut":false,
  "duration_ms":4,"ttfb_ms":3,"error":null,"body_text":"{\"error\":\"signature mismatch\"}"}
 ```
+
+### Recorder in the middle
+
+An endpoint whose behaviour has a `forward` block passes the requests that
+pass its checks and that no rule takes on to that receiver, byte for byte,
+and answers with the receiver's answer ([Recording a live
+integration](recorder.md)).
+
+```jsonc
+"forward": {
+  "url": "https://receiver.example/webhooks", // http(s), no query, no user name or password
+  "keep_host": false,                          // true: send the received Host (default: the receiver's)
+  "insecure_tls": false,                       // true: accept any certificate
+  "timeout_ms": 30000,                         // default 30 s, at most -max-wait
+  "on_failure": "gateway"                      // or "default": the default reply when the receiver fails
+}
+```
+
+- A rule's `"forward": true` lets the receiver get the requests it takes
+  too, while the sender gets the rule's answer; otherwise they are not
+  forwarded.
+- Once login is on, a `PUT` (or a setup import) that adds, changes or
+  removes `forward` needs an admin: `403 forbidden`, nothing changed. A PUT
+  replaces the whole behaviour, so send the stored `forward` unchanged to
+  edit the rest. `422 invalid` (field `forward`) for a URL with a query or
+  a user name, a timeout out of range, or a target the policy refuses
+  (`-replay-allow`, link-local and cloud-metadata addresses; `none` turns
+  forwarding off).
+- The behaviour's answer carries `warnings` while no enforced authorization
+  check stands (an open relay).
+- The sender gets the receiver's status, headers and body (up to 1 MiB,
+  never decompressed, redirects not followed), framed by the server, with
+  `Content-Security-Policy: sandbox` and `nosniff`; on a failure `502` or
+  `504` (or the default reply with `on_failure` `default`), `503` with
+  `Retry-After` when 64 forwards are running, `508` for a loop.
+
+| Route | Does |
+|---|---|
+| `GET /requests/{id}/forward` | the request's exchange with the receiver: what was sent (`line`, `sent`, `notes`, `host`), the receiver's `status`, `reason`, `headers` (order and case kept) and body (its first 64 KiB), `duration_ms`, `ttfb_ms`, `by_rule`, `error` |
+| `GET /requests/{id}/forward/body` | the receiver's body as it sent it (never decompressed, at most 64 KiB), with its `Content-Type`, always as a download; `404 not_kept` when it was dropped |
+
+Requests carry `forward`, the receiver's side: `target`, `status`,
+`error_kind` (dial, tls, timeout, reset, write, answer, refused, too_large,
+upgrade, busy), `fallback` (the sender got the failure answer),
+`sender_left_ms`, `ms`, `pending`; `not_forwarded` when a rule kept one
+from the receiver. Lists filter by `forward=ok` (the receiver answered
+2xx), `failed` or `none`. An endpoint names its receiver in `forwards_to`.
 
 ### Reports
 
@@ -446,6 +543,21 @@ curl -s -o report.pdf -w '%{http_code}\n' "$API/endpoints/1/report?format=pdf&sc
 # 200
 ```
 
+### Storage
+
+| Route | Does |
+|---|---|
+| `GET /storage` | the database's size against its limit: `used_bytes` (used pages), `limit_bytes` (`-max-db-size`, `null` without one), `pinned_bytes` (about what pinned requests hold, never dropped), `volume_free_bytes` and `volume_total_bytes` (`null` where the system does not tell), and `warnings` (at 90 % of the limit, pins over it or every request left pinned, the volume under 1 GiB or 5 % free) |
+
+<!-- docs-check: setup: api -->
+```sh
+curl -s $API/storage | jq -c '{limit_bytes, measured: (.used_bytes > 0)}'
+# {"limit_bytes":null,"measured":true}
+```
+
+See [Keeping requests](keeping.md#a-size-limit-for-the-database) for what
+the limit drops, and in what order.
+
 ### Users and tokens
 
 The caller, their tokens, and (for admins) users and everyone's tokens.
@@ -457,16 +569,19 @@ admin.
 
 | Route | Does |
 |---|---|
-| `GET /me` | who the caller is: `{"login":true,"name","role","via"}` (`via`: `session`, `token`, `machine token`), or `{"login":false}` while login is off |
-| `PUT /me/password` `{"current","new"}` | changes your password (at least 12 characters); your other logins end. `204`; `422` (field `current` or `new`) |
+| `GET /me` | who the caller is: `{"login":true,"name","role","via","email","password","identities"}` (`via`: `session`, `token`, `machine token`; `email` or `null`; `password`: whether one is set; `identities`: the providers linked, each `provider`, `label`, `issuer`, `email`, `linked_at`, `last_login_at`), or `{"login":false}` while login is off |
+| `PUT /me/password` `{"current","new"}` | changes your password (at least 12 characters); your other logins end. `204`; `422` (field `current` or `new`). Without a password yet (you sign in through a provider), leave `current` out: allowed within 10 minutes of signing in, else `422 reauth` |
+| `DELETE /me/identities/{provider}` | unlinks one of your provider identities; all your logins end. `204`; `409 last_way_in` when it is your only way in; `?issuer=` for a provider no longer configured |
 | `GET /me/tokens` | your tokens: `id`, `name`, `shown` (`hkw_<id>_…`), `created_at`, `last_used_at`; never the value |
 | `POST /me/tokens` `{"name"}` | makes a token; the answer's `token` is the value, **shown this once**. `201`; `409 exists` for a name you use |
 | `DELETE /me/tokens/{id}` | revokes one of yours: refused from its next request. `204` |
-| `GET /users` | users with `name`, `role`, `created_at`, `tokens` (admins) |
-| `POST /users` `{"name","role","password"}` | adds a user (`role` `user` by default). `201`; `409 exists`; `422` naming the field |
-| `PATCH /users/{name}` `{"role"?, "password"?}` | changes a role or sets a password; either ends that user's logins. `409 last_admin` for the last admin, `409 self_demotion` when you would make yourself a user |
+| `GET /users` | users with `name`, `role`, `email`, `password`, `identities`, `created_at`, `tokens` (admins) |
+| `POST /users` `{"name","role","password"?,"email"?}` | adds a user (`role` `user` by default); without a password, an email is needed (they sign in through a provider), except for the first user. `201`; `409 exists`, `409 email_taken`; `422` naming the field |
+| `PATCH /users/{name}` `{"role"?, "password"?, "email"?}` | changes a role, sets a password, or sets an email (`null` clears it); a role or a password ends that user's logins. `409 last_admin` for the last admin, `409 self_demotion` when you would make yourself a user, `409 email_taken` |
+| `DELETE /users/{name}/identities/{provider}` | unlinks a user's provider identity; their logins end. `204`; `409 last_way_in` for your own only way in; `?issuer=` for a provider no longer configured |
 | `DELETE /users/{name}` | removes a user with their tokens. `204`; `409 last_admin`, `409 self_removal` when it is you |
 | `GET /tokens`, `DELETE /tokens/{id}` | everyone's tokens, with their `owner`; revoke any (admins) |
+| `GET /login/providers` | open, without a login: the providers to sign in with, `[{"name","label"}]` ([Signing in with a provider](access.md#signing-in-with-google-microsoft-entra-id-or-another-provider)) |
 
 ### OpenAPI
 
@@ -579,6 +694,25 @@ HANDLER=${URL%/orders/events}/handler   # yours: http://localhost:3000/webhooks/
 curl -s -X POST $API/requests/$REQ/replays -H 'Content-Type: application/json' \
   -d "{\"url\":\"$HANDLER\"}" | jq -c '{status, error}'
 # {"status":200,"error":null}
+```
+
+### Pass a live integration through
+
+Put the endpoint between the sender and its receiver; here a second
+endpoint of the same server stands in for the receiver:
+
+<!-- docs-check: setup: api -->
+```sh
+RECEIVER=$(curl -s -X POST $API/endpoints -H 'Content-Type: application/json' -d '{"path":"/receiver"}' | jq -r .url)
+TAG=$(curl -sI $API/endpoints/$ID/behaviour | tr -d '\r' | awk 'tolower($1)=="etag:"{print $2}')
+curl -s -X PUT $API/endpoints/$ID/behaviour -H 'Content-Type: application/json' -H "If-Match: $TAG" \
+  -d "{\"forward\":{\"url\":\"$RECEIVER\"}}" | jq -c '{forward, warnings}'
+# {"forward":{"url":"http://127.0.0.1:8080/receiver"},"warnings":["anyone who reaches…
+curl -s -o /dev/null -w '%{http_code}\n' -d '{"id":1}' $URL
+# 200
+REQ=$(curl -s "$API/endpoints/$ID/requests?limit=1" | jq '.requests[0].id')
+curl -s $API/requests/$REQ/forward | jq -c '{status, line, error}'
+# {"status":200,"line":"POST /receiver HTTP/1.1","error":null}
 ```
 
 ## Testing a sender in Docker

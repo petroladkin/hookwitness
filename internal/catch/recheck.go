@@ -2,6 +2,9 @@ package catch
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
+	"time"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
 	"github.com/petroladkin/hookwitness/internal/emulate"
@@ -18,15 +21,53 @@ func Recheck(ctx context.Context, st *store.Store, ep store.Endpoint, keys emula
 	if err != nil {
 		return 0, err
 	}
+	marks, err := st.ForgetOrderMarks(ctx, ep.ID)
+	if err != nil {
+		return 0, err
+	}
 	n := 0
 	err = st.EachRequest(ctx, ep.ID, func(req store.Request) error {
+		if req.BodyDropped {
+			// Checked again without its body it would read as empty: the
+			// verdicts it has stay, with a note, and its order mark (given
+			// back when its body was dropped after the marks were dropped).
+			note := droppedNote(req.Verdicts)
+			mark, forgot := marks[req.ID]
+			if note == req.Verdicts && !forgot {
+				return nil
+			}
+			var back *float64
+			if forgot {
+				back = &mark
+			}
+			return st.NoteVerdicts(ctx, req.ID, note, back)
+		}
 		vs, _ := cfg.Verify(toEmulate(req), req.ReceivedAt, !req.TooLarge, keys)
 		n++
 		// Oldest first: a request's repeats are told against the earlier
 		// requests' signatures as this re-check recorded them.
-		return st.SetVerdicts(ctx, req.ID, emulate.Overall(vs), emulate.VerdictsJSON(vs), signatures(vs, keys), repeated(vs))
+		er := toEmulate(req)
+		return st.SetVerdicts(ctx, req.ID, emulate.Overall(vs), emulate.VerdictsJSON(vs), signatures(vs, keys), repeated(vs),
+			delivery(cfg, er, vs, req.ReceivedAt))
 	})
 	return n, err
+}
+
+// DroppedNote is the note a re-check leaves on the verdicts of a request
+// whose body was dropped.
+const DroppedNote = "body dropped to stay under the database size limit: not checked again"
+
+func droppedNote(verdicts string) string {
+	var vs []auth.Verdict
+	if json.Unmarshal([]byte(verdicts), &vs) != nil {
+		return verdicts
+	}
+	for i := range vs {
+		if !strings.Contains(vs[i].Note, DroppedNote) {
+			vs[i].Note = strings.TrimPrefix(vs[i].Note+" · "+DroppedNote, " · ")
+		}
+	}
+	return emulate.VerdictsJSON(vs)
 }
 
 // signatures are the digests of the signatures the verdicts read, as the
@@ -37,6 +78,29 @@ func signatures(vs []auth.Verdict, keys emulate.Keyring) []store.Signature {
 		out = append(out, store.Signature{Check: sg.Check, Digest: sg.Digest})
 	}
 	return out
+}
+
+// delivery gives the store a request's facts for the delivery checks and
+// the judge that finishes their verdicts in vs against the request's
+// relation to the earlier kept ones; nil when the endpoint has none. It
+// shares vs with repeated, so the stored verdicts carry both.
+func delivery(cfg emulate.Config, er emulate.Request, vs []auth.Verdict, received time.Time) *store.Delivery {
+	f := cfg.DeliveryFacts(er)
+	if f == nil {
+		return nil
+	}
+	return &store.Delivery{Event: f.Event, ByBody: f.ByBody, Missing: f.Missing != "", Order: f.Order, Group: f.Group,
+		OrderDef: f.OrderDef, Relate: func(rel store.Relation) (string, string) {
+			r := emulate.Relation{Attempt: rel.Attempt}
+			if rel.Prev != nil {
+				r.Prev = &emulate.Attempt{No: rel.Prev.No, At: rel.Prev.At, Outcome: emulate.ParseOutcome(rel.Prev.Outcome, rel.Prev.Status)}
+			}
+			if rel.High != nil {
+				r.High = &emulate.Mark{Value: rel.High.Value, No: rel.High.No}
+			}
+			cfg.JudgeDelivery(vs, *f, r, received)
+			return emulate.Overall(vs), emulate.VerdictsJSON(vs)
+		}}
 }
 
 // repeated notes the verdicts against the earlier requests the store found

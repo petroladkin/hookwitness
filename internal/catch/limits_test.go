@@ -103,7 +103,7 @@ func TestTemplateDataBeforeTheTransaction(t *testing.T) {
 	if data == nil {
 		t.Fatal("no template data before the transaction")
 	}
-	pl.decide(7)
+	pl.decide(store.DecideIn{Counter: 7, At: time.Now(), Attempt: 1})
 	if pl.data != data || data.N != 7 {
 		t.Fatalf("decide made new data or no number: %p %p %d", pl.data, data, data.N)
 	}

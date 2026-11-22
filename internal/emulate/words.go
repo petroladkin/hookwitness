@@ -19,6 +19,9 @@ func (ch Check) Summary() string {
 	if !ch.GivesVerdict() {
 		return ch.matchLabel() + " · else " + ch.Refusal()
 	}
+	if ch.IsDelivery() {
+		return ch.deliverySummary() + " · record only"
+	}
 	parts := []string{"secret " + ch.Secret}
 	if ch.kind() == KindSchema {
 		parts = nil
@@ -125,4 +128,49 @@ func SecretKindTitle(kind string) string {
 		return "token or password"
 	}
 	return "signing key"
+}
+
+// deliverySummary describes a delivery check's parameters.
+func (ch Check) deliverySummary() string {
+	switch ch.kind() {
+	case KindDuplicates:
+		return "a repeat after a 2xx answer fails"
+	case KindOrder:
+		w := "by " + ch.Order.Source.String() + " as a " + ch.Order.As
+		if ch.Group != nil {
+			w += ", per " + ch.Group.String()
+		}
+		return w
+	case KindBackoff:
+		var parts []string
+		if ch.FirstS > 0 {
+			p := secs(time.Duration(ch.FirstS*float64(time.Second))) + " × " + strconv.FormatFloat(ch.factor(), 'f', -1, 64)
+			if ch.MaxS > 0 {
+				p += ", at most " + secs(time.Duration(ch.MaxS*float64(time.Second)))
+			}
+			parts = append(parts, p)
+			if ch.MaxAttempts > 0 {
+				parts = append(parts, strconv.Itoa(ch.MaxAttempts)+" attempts")
+			}
+			parts = append(parts, "± "+strconv.Itoa(ch.tolerancePct())+" %")
+		}
+		if ch.honoursRetryAfter() {
+			parts = append(parts, "honours Retry-After")
+		}
+		return strings.Join(parts, ", ")
+	}
+	return ""
+}
+
+// EventWords says where an endpoint takes its event id from.
+func (c Config) EventWords() string {
+	if c.Event == nil {
+		return "none: attempts are counted per body"
+	}
+	for _, p := range EventPresets {
+		if p.Source == *c.Event {
+			return c.Event.String() + " (" + p.Name + ")"
+		}
+	}
+	return c.Event.String()
 }

@@ -8,13 +8,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/setup"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
 
 func (h *Handler) setupOptions() setup.Options {
-	return setup.Options{Reserved: h.o.Reserved, MaxWait: h.o.MaxWait}
+	return setup.Options{Reserved: h.o.Reserved, MaxWait: h.o.MaxWait, Keep: h.o.Keep}
 }
 
 // exportSetup answers the setup file of the endpoints named by id (all
@@ -65,7 +66,7 @@ func ExportSetup(eps []store.Endpoint) (setup.File, string, error) {
 		if err != nil {
 			return setup.File{}, "", err
 		}
-		src = append(src, setup.Source{Path: ep.Path, Config: cfg})
+		src = append(src, setup.Source{Path: ep.Path, Config: cfg, Retention: ep.Kept.Policy})
 	}
 	name := "endpoints.hookwitness.json"
 	if len(eps) == 1 {
@@ -106,6 +107,8 @@ func (h *Handler) importSetup(w http.ResponseWriter, r *http.Request) {
 		switch status {
 		case http.StatusConflict:
 			code = "duplicate_path"
+		case http.StatusForbidden:
+			code = "forbidden"
 		case http.StatusInternalServerError:
 			h.fail(w, "import setup", err)
 			return
@@ -114,6 +117,48 @@ func (h *Handler) importSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, status, map[string]any{"endpoints": res})
+}
+
+// receiverError refuses an import for its receiver: 403 (a user) or 422
+// (a target the policy refuses).
+type receiverError struct {
+	status int
+	err    error
+}
+
+func (e *receiverError) Error() string { return e.err.Error() }
+
+// receiverGuard judges, inside the import's transaction, an endpoint whose
+// receiver the file adds, changes or removes: an admin's only once login is
+// on, and a target the policy accepts.
+func (h *Handler) receiverGuard(r *http.Request) func(path string, before, after *emulate.Forward) error {
+	admin := true
+	if id := access.From(r.Context()); id != nil && !id.Admin() {
+		admin = false
+	}
+	return func(path string, before, after *emulate.Forward) error {
+		if !forwardChanged(before, after) {
+			return nil
+		}
+		if !admin {
+			return &receiverError{http.StatusForbidden, fmt.Errorf("%s: %s", path, ForwardAdminOnly)}
+		}
+		if after == nil {
+			return nil
+		}
+		u, err := after.Target()
+		if err == nil {
+			err = h.replay.Policy().CheckURL(u)
+		}
+		if err != nil {
+			msg := err.Error()
+			if strings.Contains(msg, "-replay-allow none") {
+				msg = "forwarding is off on this server (-replay-allow none)"
+			}
+			return &receiverError{http.StatusUnprocessableEntity, fmt.Errorf("%s: receiver: %s", path, msg)}
+		}
+		return nil
+	}
 }
 
 // ApplySetup parses and applies a setup file for a caller (the API and the
@@ -128,11 +173,18 @@ func (h *Handler) ApplySetup(r *http.Request, data []byte, plan setup.Plan) ([]s
 	return h.ApplyFile(r, f, plan)
 }
 
-// ApplyFile applies a parsed setup file, as ApplySetup.
+// ApplyFile applies a parsed setup file, as ApplySetup. A file that adds,
+// changes or removes an endpoint's receiver needs an admin once login is
+// on (403), and a receiver the target policy refuses is refused (422).
 func (h *Handler) ApplyFile(r *http.Request, f setup.File, plan setup.Plan) ([]setup.Result, int, error) {
-	res, err := setup.Apply(r.Context(), h.store, f, plan, h.setupOptions())
+	o := h.setupOptions()
+	o.Receiver = h.receiverGuard(r)
+	res, err := setup.Apply(r.Context(), h.store, f, plan, o)
+	var re *receiverError
 	var inv *setup.InvalidError
 	switch {
+	case errors.As(err, &re):
+		return nil, re.status, re.err
 	case errors.Is(err, store.ErrDuplicatePath):
 		path, _, _ := strings.Cut(err.Error(), ": ")
 		return nil, http.StatusConflict, fmt.Errorf("%s is already an endpoint; nothing was imported. Replace its behaviour (on_conflict=replace; its requests stay) or change the path in the file", path)

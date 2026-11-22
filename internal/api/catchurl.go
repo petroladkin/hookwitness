@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"strings"
 )
 
 // CatchURL says where senders reach the catch listener, for the URLs the
@@ -36,6 +37,10 @@ func (c CatchURL) Base(r *http.Request) string {
 		host = r.Host
 		if h, _, err := net.SplitHostPort(r.Host); err == nil {
 			host = h
+		} else {
+			// No port: an IPv6 literal keeps its brackets, which JoinHostPort
+			// adds again.
+			host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 		}
 	}
 	return "http://" + net.JoinHostPort(host, port)

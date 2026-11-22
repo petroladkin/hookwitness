@@ -17,7 +17,7 @@ func addBodies(t *testing.T, st *store.Store, ep int64, n, size int) []int64 {
 		body := `{"type":"order.paid","order_id":` + strings.Repeat("1", 1+i%3) + `,"pad":"` + strings.Repeat("x", size) + `"}`
 		r := &store.Request{EndpointID: ep, ReceivedAt: time.Now(), Method: "POST", Path: "/orders", Proto: "HTTP/1.1",
 			Headers: []store.Header{{Name: "Content-Type", Value: "application/json"}}, Body: []byte(body), Size: int64(len(body)), Status: 202}
-		if err := st.AddRequest(context.Background(), r, 1000, nil); err != nil {
+		if err := st.AddRequest(context.Background(), r, store.Keep{Normal: 1000}, nil); err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, r.ID)

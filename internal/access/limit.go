@@ -17,8 +17,10 @@ const (
 	maxTracked    = 10000 // addresses remembered; the oldest go first
 )
 
-// Limiter counts failed logins per client address. It lives in memory: a
-// restart forgets it.
+// Limiter counts failed logins per client: an IPv4 address, or an IPv6
+// address's /64, the block a host is normally given (counted per address,
+// a client holding a /64 would have 10 failures for each of its addresses).
+// It lives in memory: a restart forgets it.
 type Limiter struct {
 	now func() time.Time
 	mu  sync.Mutex
@@ -38,6 +40,20 @@ func NewLimiter(now func() time.Time) *Limiter {
 		now = time.Now
 	}
 	return &Limiter{now: now, fails: map[string][]time.Time{}, pending: map[string]int{}}
+}
+
+// limitKey is what the limit counts addr under: an IPv6 address's /64,
+// anything else (IPv4, an IPv4-mapped address, a name) as it is.
+func limitKey(addr string) string {
+	a, err := netip.ParseAddr(addr)
+	if err != nil || !a.Is6() || a.Is4In6() {
+		return addr
+	}
+	p, err := a.WithZone("").Prefix(64)
+	if err != nil {
+		return addr
+	}
+	return p.String()
 }
 
 // recent drops the failures of addr older than the window; the lock is held.
@@ -61,6 +77,7 @@ func (l *Limiter) recent(addr string, now time.Time) []time.Time {
 // Release. When not allowed, wait is how long until it may be (at least a
 // second while the attempts in flight are unsettled).
 func (l *Limiter) Allow(addr string) (ok bool, wait time.Duration) {
+	addr = limitKey(addr)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
@@ -87,6 +104,7 @@ func (l *Limiter) settle(addr string) {
 // Release settles an allowed attempt that neither failed nor succeeded (the
 // server was busy or failed).
 func (l *Limiter) Release(addr string) {
+	addr = limitKey(addr)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.settle(addr)
@@ -94,6 +112,7 @@ func (l *Limiter) Release(addr string) {
 
 // Fail settles an allowed attempt as a failed login from addr.
 func (l *Limiter) Fail(addr string) {
+	addr = limitKey(addr)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.settle(addr)
@@ -118,8 +137,9 @@ func (l *Limiter) Fail(addr string) {
 }
 
 // Success settles an allowed attempt as a login and clears addr's
-// failures.
+// failures (for IPv6, its /64's).
 func (l *Limiter) Success(addr string) {
+	addr = limitKey(addr)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.settle(addr)

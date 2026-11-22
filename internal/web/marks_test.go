@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,9 +14,11 @@ import (
 )
 
 type marksRead struct {
-	From     int64             `json:"from"`
-	KeptFrom *int64            `json:"kept_from"`
-	Marks    []json.RawMessage `json:"marks"`
+	From         int64             `json:"from"`
+	KeptFrom     *int64            `json:"kept_from"`
+	ThinnedUntil *int64            `json:"thinned_until"`
+	Thinned      string            `json:"thinned"`
+	Marks        []json.RawMessage `json:"marks"`
 }
 
 func (e env) marks(t *testing.T, path string) marksRead {
@@ -55,7 +58,7 @@ func TestMarksCoverTheRange(t *testing.T) {
 	}
 	var first []any
 	json.Unmarshal(a.Marks[0], &first)
-	if len(first) != 6 || first[3] != "bad" || first[4] != "fail" || first[5] == "" {
+	if len(first) != 7 || first[3] != "bad" || first[4] != "fail" || first[5] == "" || first[6] != false {
 		t.Fatalf("a mark: %v", first)
 	}
 	if a.KeptFrom != nil {
@@ -72,21 +75,39 @@ func TestMarksCoverTheRange(t *testing.T) {
 	}
 }
 
-// AC-3: the time before the oldest kept request, when older ones are gone,
-// is told to the strip.
+// AC-3: the time up to the newest request retention removed is told to
+// the strip: before it nothing is kept; with lanes, where only one lane
+// lost requests, only the other is.
 func TestMarksKeptFrom(t *testing.T) {
 	e := newEnv(t)
 	ep, _ := e.st.CreateEndpoint(context.Background(), "/small")
 	now := time.Now()
 	for i := range 4 {
 		r := &store.Request{EndpointID: ep.ID, ReceivedAt: now.Add(-time.Duration(40-i*10) * time.Minute), Method: "POST", Path: "/small", Status: 200}
-		if err := e.st.AddRequest(context.Background(), r, 3, nil); err != nil {
+		if err := e.st.AddRequest(context.Background(), r, store.Keep{Normal: 3}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
 	a := e.marks(t, "/admin/e/"+id(ep.ID)+"/marks?span=1h")
-	if a.KeptFrom == nil || *a.KeptFrom != now.Add(-30*time.Minute).UnixMilli() || len(a.Marks) != 3 {
-		t.Fatalf("kept from %v, %d marks", a.KeptFrom, len(a.Marks))
+	if a.KeptFrom == nil || *a.KeptFrom != now.Add(-40*time.Minute).UnixMilli() || a.ThinnedUntil != nil || len(a.Marks) != 3 {
+		t.Fatalf("kept from %v, thinned until %v, %d marks", a.KeptFrom, a.ThinnedUntil, len(a.Marks))
+	}
+	// Lanes: three normal requests and an anomaly, one normal kept: before
+	// the newest pruned normal one only anomalies are kept.
+	lanes, _ := e.st.CreateEndpoint(context.Background(), "/lanes")
+	for i := range 4 {
+		r := &store.Request{EndpointID: lanes.ID, ReceivedAt: now.Add(-time.Duration(40-i*10) * time.Minute), Method: "POST", Path: "/lanes",
+			Status: 200, Outcome: `{"action":"reply","status":200}`}
+		if i == 0 {
+			r.Status, r.Outcome = 500, `{"action":"reply","status":500}`
+		}
+		if err := e.st.AddRequest(context.Background(), r, store.Keep{Normal: 1, Anomalies: 5}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l := e.marks(t, "/admin/e/"+id(lanes.ID)+"/marks?span=1h")
+	if l.KeptFrom != nil || l.ThinnedUntil == nil || *l.ThinnedUntil != now.Add(-20*time.Minute).UnixMilli() || l.Thinned != "anomalies" || len(l.Marks) != 2 {
+		t.Fatalf("lanes: kept from %v, thinned until %v (%s), %d marks", l.KeptFrom, l.ThinnedUntil, l.Thinned, len(l.Marks))
 	}
 	un := e.marks(t, "/admin/e/unmatched/marks?span=2m")
 	if un.KeptFrom != nil || len(un.Marks) != 0 {
@@ -124,5 +145,61 @@ func TestStripRanges(t *testing.T) {
 	}
 	if !strings.Contains(e.do("GET", "/admin/e/unmatched", nil).Body.String(), `data-marks="/admin/e/unmatched/marks"`) {
 		t.Fatal("unmatched strip")
+	}
+}
+
+// With an event id, the register's retry chips, the request page and the
+// strip's groups follow the event, though the body changes on every
+// attempt; without one, a changed body is a new group, as before.
+func TestRetryGroupsFollowTheEvent(t *testing.T) {
+	e := newEnv(t)
+	ep, _ := e.st.CreateEndpoint(context.Background(), "/gh")
+	plain, _ := e.st.CreateEndpoint(context.Background(), "/plain")
+	var byEvent, byBody []*store.Request
+	for i, ev := range []string{"d-1", "d-1", "d-1", "d-2"} {
+		byEvent = append(byEvent, e.add(t, ep.ID, `{"attempt":`+strconv.Itoa(i+1)+`}`, func(r *store.Request) { r.Delivery = &store.Delivery{Event: ev} }))
+		byBody = append(byBody, e.add(t, plain.ID, `{"attempt":`+strconv.Itoa(i+1)+`}`, func(r *store.Request) { r.Delivery = &store.Delivery{ByBody: true} }))
+	}
+	row := func(page string, r *store.Request) string {
+		i := strings.Index(page, `id="req-`+id(r.ID)+`"`)
+		if i < 0 {
+			t.Fatalf("no row of request %d", r.ID)
+		}
+		j := strings.Index(page[i:], "</li>")
+		return page[i : i+j]
+	}
+	page := e.do("GET", "/admin/e/"+id(ep.ID), nil).Body.String()
+	for i, want := range []string{"", "retry 1", "retry 2", ""} {
+		got := row(page, byEvent[i])
+		if want != "" && !strings.Contains(got, `<span class="retry">`+want+`</span>`) || want == "" && strings.Contains(got, `class="retry"`) {
+			t.Errorf("by event, row %d: want %q in %s", i+1, want, got)
+		}
+	}
+	plainPage := e.do("GET", "/admin/e/"+id(plain.ID), nil).Body.String()
+	for _, r := range byBody {
+		if strings.Contains(row(plainPage, r), `class="retry"`) {
+			t.Errorf("by body, request %d has a retry chip though its body is new", r.No)
+		}
+	}
+	detail := e.do("GET", "/admin/e/"+id(ep.ID)+"/r/"+id(byEvent[2].ID), nil).Body.String()
+	if !strings.Contains(detail, "attempt <b>3</b> of event <code>d-1</code>") {
+		t.Error("the request page does not say attempt 3 of event d-1")
+	}
+	groups := func(endpoint int64) map[int64]string {
+		g := map[int64]string{}
+		for _, m := range e.marks(t, "/admin/e/"+id(endpoint)+"/marks?span=2m").Marks {
+			var f []any
+			json.Unmarshal(m, &f)
+			g[int64(f[0].(float64))] = f[5].(string)
+		}
+		return g
+	}
+	g := groups(ep.ID)
+	if a, b, c, d := g[byEvent[0].ID], g[byEvent[1].ID], g[byEvent[2].ID], g[byEvent[3].ID]; a == "" || a != b || b != c || c == d {
+		t.Errorf("strip groups by event: %q %q %q %q", a, b, c, d)
+	}
+	g = groups(plain.ID)
+	if a, b := g[byBody[0].ID], g[byBody[1].ID]; a == b {
+		t.Errorf("strip groups by body: two different bodies in one group %q", a)
 	}
 }

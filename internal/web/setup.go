@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/petroladkin/hookwitness/internal/api"
 	"github.com/petroladkin/hookwitness/internal/emulate"
@@ -32,10 +33,16 @@ type importItem struct {
 	Replace bool
 	Summary string // what the endpoint does, in a few words
 	Secrets []setup.Secret
+	// Retention is the file's retention for it (zero: the defaults);
+	// ToPrune how many requests of the endpoint at Target it would delete.
+	Retention store.Retention
+	ToPrune   int
+	// Receiver is where the endpoint forwards live traffic, "" when none.
+	Receiver string
 }
 
 func (h *Handler) setupOptions() setup.Options {
-	return setup.Options{Reserved: h.reserve, MaxWait: h.maxWait}
+	return setup.Options{Reserved: h.reserve, MaxWait: h.maxWait, Keep: h.keep}
 }
 
 // exportSetup downloads the setup file of one endpoint, or of all of them
@@ -133,6 +140,12 @@ func (h *Handler) importSetup(w http.ResponseWriter, r *http.Request) {
 	v := importView{Review: true, Text: text}
 	for i, e := range f.Endpoints {
 		it := importItem{I: i, Path: e.Path, Target: e.Path, Summary: setupSummary(e), Secrets: e.Secrets}
+		if e.Forward != nil {
+			it.Receiver = e.Forward.Where()
+		}
+		if e.Retention != nil {
+			it.Retention = *e.Retention
+		}
 		if r.PostFormValue("op") == "import" {
 			it.Target = strings.TrimSpace(r.PostFormValue("path_" + strconv.Itoa(i)))
 			it.Replace = r.PostFormValue("replace_"+strconv.Itoa(i)) != ""
@@ -225,14 +238,18 @@ func (h *Handler) keysOrNil() emulate.Sealer {
 
 func (h *Handler) markTaken(r *http.Request, items []importItem) error {
 	for i := range items {
-		_, _, _, err := h.store.EndpointByPath(r.Context(), items[i].Target)
+		id, _, _, err := h.store.EndpointByPath(r.Context(), items[i].Target)
 		switch {
 		case errors.Is(err, store.ErrNotFound):
-			items[i].Taken = false
+			items[i].Taken, items[i].ToPrune = false, 0
 		case err != nil:
 			return err
 		default:
 			items[i].Taken = true
+			// A replace sets the file's retention: say what it deletes.
+			if items[i].ToPrune, err = h.store.ToPrune(r.Context(), id, items[i].Retention, time.Now(), h.keep); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

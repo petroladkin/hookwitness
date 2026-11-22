@@ -338,3 +338,59 @@ func TestMCPBridgeWithToken(t *testing.T) {
 		t.Fatalf("tools through the bridge with a token: %v", err)
 	}
 }
+
+// hookwitness user with emails and provider identities.
+func TestUserCommandEmailsAndIdentities(t *testing.T) {
+	ctx := context.Background()
+	db := filepath.Join(t.TempDir(), "hw.db")
+	st, err := store.Open(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	if _, err := secret.Load("", db+".key"); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, e := userRun(t, db, testAdminPW, "add", "root", "-admin", "-email", "Root@Example.test"); code != exitOK {
+		t.Fatalf("add with an email: %d %s", code, e)
+	}
+	for _, c := range []struct {
+		args []string
+		code int
+		says string
+	}{
+		{[]string{"add", "pat", "-no-password"}, exitUsage, "-no-password needs -email"},
+		{[]string{"add", "pat", "-email", "no-at", "-no-password"}, exitUsage, "an email is an address"},
+		{[]string{"add", "pat", "-email", "root@example.test", "-no-password"}, exitRefused, "another user has the email"},
+		{[]string{"add", "pat", "-email", "pat@example.test", "-no-password"}, exitOK, "added pat (user)"},
+		{[]string{"email", "pat", "root@example.test"}, exitRefused, "another user has the email"},
+		{[]string{"email", "nobody", "x@example.test"}, exitNoUser, "no user nobody"},
+		{[]string{"email", "pat", "Pat.New@example.test"}, exitOK, "email of pat set to pat.new@example.test"},
+		{[]string{"unlink", "pat"}, exitUsage, "name the provider"},
+		{[]string{"unlink", "pat", "google"}, exitNoUser, "pat has no identity at google"},
+	} {
+		if code, _, e := userRun(t, db, "", c.args...); code != c.code || !strings.Contains(e, c.says) {
+			t.Errorf("user %v: %d %q, want %d %q", c.args, code, e, c.code, c.says)
+		}
+	}
+	st, _ = store.Open(ctx, db)
+	st.SignIn(ctx, store.SignInInput{Issuer: "https://accounts.google.test", Subject: "g-1", Provider: "google", Email: "pat.new@example.test", Verified: true})
+	st.SignIn(ctx, store.SignInInput{Issuer: "https://login.entra.test/t/v2.0", Subject: "e-1", Provider: "entra", Email: "pat.new@example.test", Verified: true})
+	st.Close()
+	code, out, _ := userRun(t, db, "", "list")
+	if code != exitOK || !strings.Contains(out, "EMAIL") || !strings.Contains(out, "pat.new@example.test") || !strings.Contains(out, "google,entra") || !strings.Contains(out, "password") {
+		t.Fatalf("list: %s", out)
+	}
+	code, out, _ = userRun(t, db, "", "list", "-json")
+	if code != exitOK || !strings.Contains(out, `"providers": [`) || !strings.Contains(out, `"password": false`) || !strings.Contains(out, `"email": "root@example.test"`) {
+		t.Fatalf("list -json: %s", out)
+	}
+	for _, args := range [][]string{{"unlink", "pat", "google"}, {"unlink", "pat", "https://login.entra.test/t/v2.0"}} {
+		if code, _, e := userRun(t, db, "", args...); code != exitOK || !strings.Contains(e, "their logins have ended") {
+			t.Fatalf("user %v: %d %s", args, code, e)
+		}
+	}
+	if code, _, e := userRun(t, db, "", "email", "pat"); code != exitOK || !strings.Contains(e, "email of pat cleared") {
+		t.Fatalf("clear: %d %s", code, e)
+	}
+}

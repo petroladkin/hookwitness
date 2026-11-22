@@ -4,7 +4,7 @@
     "title": "Hookwitness API",
     "version": "1",
     "summary": "Catch webhooks, script the answers, read the verdicts.",
-    "description": "JSON under <admin prefix>/api/v1 (/admin/api/v1 by default), with the UI's access rules: it answers on IP addresses, localhost and -admin-hosts names (a request with a valid token on any name); writes must be application/json. Once a user exists (or a machine token is configured) every route needs credentials: a personal token as Authorization: Bearer hkw_…, or the web UI's login cookie. Without users the API is open. Every error has one shape (Error). See docs/api.md for recipes.",
+    "description": "JSON under <admin prefix>/api/v1 (/admin/api/v1 by default), with the UI's access rules: it answers on IP addresses, localhost and -admin-hosts names (a request with a valid token on any name); writes must be application/json. Once a user exists (or a machine token is configured) every route needs credentials: a personal token as Authorization: Bearer hkw_\u2026, or the web UI's login cookie. Without users the API is open. Every error has one shape (Error). See docs/api.md for recipes.",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -191,8 +191,8 @@
       },
       "patch": {
         "operationId": "changeEndpoint",
-        "summary": "Change an endpoint's path or turn it on or off",
-        "description": "Give `path`, `enabled` or both; both change together or, on an error, neither. A new path is validated as the UI validates one; its requests and behaviour stay. Turning an endpoint off keeps everything it has; requests to its path are then answered 404 and kept in the Unmatched register.",
+        "summary": "Change an endpoint's path, turn it on or off, or set its retention",
+        "description": "Give `path`, `enabled` or both; both change together or, on an error, neither. A new path is validated as the UI validates one; its requests and behaviour stay. Turning an endpoint off keeps everything it has; requests to its path are then answered 404 and kept in the Unmatched register. `retention` (an object, or null for the server's defaults) is applied at once: requests over a lowered limit or past an age are removed, and the answer's `to_prune` says how many.",
         "requestBody": {
           "required": true,
           "content": {
@@ -206,6 +206,16 @@
                   "enabled": {
                     "type": "boolean",
                     "description": "`false` turns the endpoint off, `true` on."
+                  },
+                  "retention": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/Retention"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "additionalProperties": false,
@@ -452,6 +462,16 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Login is on, the caller is not an admin, and the PUT adds, changes or removes `forward` (`forbidden`). A PUT replaces the whole behaviour: send the stored `forward` unchanged to edit the rest.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -575,8 +595,8 @@
       ],
       "post": {
         "operationId": "resetCounter",
-        "summary": "Reset the rules' counter",
-        "description": "Send {} as application/json.",
+        "summary": "Reset the rules' counter and clock",
+        "description": "The rules count from zero again, their clock starts again at the next request, and rate limits are cleared. Send {} as application/json.",
         "requestBody": {
           "required": false,
           "content": {
@@ -881,6 +901,18 @@
           },
           {
             "$ref": "#/components/parameters/include"
+          },
+          {
+            "$ref": "#/components/parameters/pinned"
+          },
+          {
+            "$ref": "#/components/parameters/anomaly"
+          },
+          {
+            "$ref": "#/components/parameters/event"
+          },
+          {
+            "$ref": "#/components/parameters/forward"
           }
         ],
         "responses": {
@@ -1098,6 +1130,18 @@
           },
           {
             "$ref": "#/components/parameters/include"
+          },
+          {
+            "$ref": "#/components/parameters/pinned"
+          },
+          {
+            "$ref": "#/components/parameters/anomaly"
+          },
+          {
+            "$ref": "#/components/parameters/event"
+          },
+          {
+            "$ref": "#/components/parameters/forward"
           }
         ],
         "responses": {
@@ -1226,6 +1270,44 @@
         }
       }
     },
+    "/login/providers": {
+      "get": {
+        "operationId": "listLoginProviders",
+        "summary": "The providers people may sign in with",
+        "description": "Open: names and labels of the configured OpenID Connect providers, nothing secret.",
+        "security": [
+          {}
+        ],
+        "responses": {
+          "200": {
+            "description": "The providers, in the login page's order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/me": {
       "get": {
         "operationId": "me",
@@ -1263,7 +1345,8 @@
                 "type": "object",
                 "properties": {
                   "current": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "The current password; leave it out to set a first password (a user without one), which needs a sign-in from the last 10 minutes."
                   },
                   "new": {
                     "type": "string",
@@ -1271,7 +1354,6 @@
                   }
                 },
                 "required": [
-                  "current",
                   "new"
                 ],
                 "additionalProperties": false
@@ -1300,7 +1382,7 @@
             }
           },
           "422": {
-            "description": "The current password is wrong, or the new one is too short (`invalid`); `field` names it.",
+            "description": "The current password is wrong, or the new one is too short (`invalid`); `field` names it; or `reauth`: a first password needs a sign-in from the last 10 minutes (sign in again).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1509,6 +1591,66 @@
         }
       }
     },
+    "/me/identities/{provider}": {
+      "parameters": [
+        {
+          "name": "provider",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The configured provider's name; for an identity whose provider is no longer configured, any name with ?issuer=."
+        }
+      ],
+      "delete": {
+        "operationId": "unlinkOwnIdentity",
+        "summary": "Unlink one of your identities",
+        "description": "Needs a login (not a token). Refused when it is your only way to log in. Your logins end, this one too.",
+        "parameters": [
+          {
+            "name": "issuer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The identity's issuer (instead of a configured provider's)."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unlinked; the user's logins have ended."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such provider, or no such identity (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "You would have no way to log in (`last_way_in`): set a password first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/users": {
       "get": {
         "operationId": "listUsers",
@@ -1569,12 +1711,16 @@
                   },
                   "password": {
                     "type": "string",
-                    "minLength": 12
+                    "minLength": 12,
+                    "description": "Optional when email is set (a user who signs in through a provider only), except for the first user."
+                  },
+                  "email": {
+                    "type": "string",
+                    "description": "Optional: lets the user sign in through a provider by this address."
                   }
                 },
                 "required": [
-                  "name",
-                  "password"
+                  "name"
                 ],
                 "additionalProperties": false
               }
@@ -1599,7 +1745,7 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "409": {
-            "description": "A user with this name exists (`exists`).",
+            "description": "A user with this name exists (`exists`), or another user has this email (`email_taken`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1668,6 +1814,13 @@
                   "password": {
                     "type": "string",
                     "minLength": 12
+                  },
+                  "email": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The user's email; null clears it."
                   }
                 },
                 "required": [],
@@ -1704,7 +1857,7 @@
             }
           },
           "409": {
-            "description": "That would leave no admin (`last_admin`), or you would make yourself a user (`self_demotion`): another admin can.",
+            "description": "That would leave no admin (`last_admin`), or you would make yourself a user (`self_demotion`): another admin can; or another user has this email (`email_taken`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1771,6 +1924,69 @@
           },
           "409": {
             "description": "The last admin cannot be removed (`last_admin`), and nobody removes themselves (`self_removal`): another admin can.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{name}/identities/{provider}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/user"
+        },
+        {
+          "name": "provider",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The configured provider's name; for an identity whose provider is no longer configured, any name with ?issuer=."
+        }
+      ],
+      "delete": {
+        "operationId": "unlinkIdentity",
+        "summary": "Unlink a user's identity",
+        "description": "An admin's login. Ends that user's logins; your own last way in is refused.",
+        "parameters": [
+          {
+            "name": "issuer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The identity's issuer (instead of a configured provider's)."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unlinked; the user's logins have ended."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such provider, or no such identity (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "You would have no way to log in (`last_way_in`): set a password first.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2017,6 +2233,16 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Login is on, the caller is not an admin, and the file adds, changes or removes an endpoint's receiver (`forbidden`); nothing was imported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -2235,11 +2461,254 @@
             }
           },
           "404": {
-            "description": "No such replay (`not_found`).",
+            "description": "No such replay (`not_found`), or its answer body was dropped with the request's body to stay under the database size limit (`not_kept`).",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/requests/{id}/pin": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "put": {
+        "operationId": "pinRequest",
+        "summary": "Pin a request: retention never prunes it",
+        "description": "Clearing the register or deleting its endpoint still removes it.",
+        "responses": {
+          "204": {
+            "description": "Pinned."
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "unpinRequest",
+        "summary": "Unpin a request: it returns to its lane",
+        "responses": {
+          "204": {
+            "description": "Unpinned."
+          },
+          "404": {
+            "description": "No such endpoint or request (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/unmatched": {
+      "get": {
+        "operationId": "getUnmatched",
+        "summary": "The Unmatched register's summary and retention",
+        "responses": {
+          "200": {
+            "description": "The Unmatched register.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Unmatched"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "changeUnmatched",
+        "summary": "Set the Unmatched register's retention",
+        "description": "`retention` (normal only: Unmatched has no anomaly lane), or null for the server's defaults; applied at once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "retention": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/Retention"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "retention"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Unmatched register; `to_prune` says how many requests the change removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Unmatched"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not the JSON expected (`bad_json`, `unknown_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "A write was not sent as `application/json` (`unsupported_media_type`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A parameter or field is not valid (`invalid`); `field` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/requests/{id}/forward": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getForward",
+        "summary": "Read a request's exchange with its endpoint's receiver",
+        "responses": {
+          "200": {
+            "description": "The exchange, with the receiver's body (its first 64 KiB).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForwardExchange"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No exchange (`not_found`): the request was not forwarded, its exchange has not ended, or it was cleared or pruned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/requests/{id}/forward/body": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        }
+      ],
+      "get": {
+        "operationId": "getForwardBody",
+        "summary": "The receiver's answer body exactly as it sent it",
+        "description": "With the receiver's Content-Type, never decompressed, always as an attachment (nosniff, CSP sandbox). At most the first 64 KiB.",
+        "responses": {
+          "200": {
+            "description": "The body.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No exchange (`not_found`), or the answer body was dropped with the request's body to stay under the database size limit (`not_kept`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/storage": {
+      "get": {
+        "operationId": "getStorage",
+        "summary": "The database's size, its limit and the volume's free space",
+        "responses": {
+          "200": {
+            "description": "The numbers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Storage"
                 }
               }
             }
@@ -2307,6 +2776,17 @@
             "type": "integer",
             "description": "Requests that passed its checks since the counter was reset; the rules count these."
           },
+          "started_at": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the rules' clock started: the first request that reached the rules after the last reset; null before it. Rules by time count from here."
+          },
           "enabled": {
             "type": "boolean",
             "description": "On: it catches. Off: it keeps its path, behaviour, secrets, requests and counter, and requests to its path are answered 404 and kept in the Unmatched register."
@@ -2317,6 +2797,34 @@
           "last_request_at": {
             "$ref": "#/components/schemas/Timestamp",
             "description": "The newest kept request; absent when none."
+          },
+          "retention": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Retention"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its own policy; null: the server's defaults."
+          },
+          "retention_effective": {
+            "$ref": "#/components/schemas/RetentionEffective"
+          },
+          "kept": {
+            "$ref": "#/components/schemas/Kept"
+          },
+          "pruned": {
+            "$ref": "#/components/schemas/Pruned"
+          },
+          "to_prune": {
+            "type": "integer",
+            "description": "In the answer to a change of `retention`: the requests the change removed."
+          },
+          "forwards_to": {
+            "type": "string",
+            "description": "The receiver its requests are passed through to (origin and path); absent when it answers them itself."
           }
         },
         "required": [
@@ -2325,8 +2833,13 @@
           "url",
           "requests",
           "counter",
+          "started_at",
           "enabled",
-          "created_at"
+          "created_at",
+          "retention",
+          "retention_effective",
+          "kept",
+          "pruned"
         ],
         "additionalProperties": false
       },
@@ -2386,22 +2899,62 @@
       },
       "Condition": {
         "type": "object",
+        "description": "When a rule takes a request. By count: every, first, random. By the endpoint's clock, which starts at the first request that reaches the rules after a reset: window, flap (by time or by count), rate. By the request's attempt of its event (the event source's id, else the same body): attempts. Times are seconds, at most 604800 (a week).",
         "properties": {
           "kind": {
             "type": "string",
             "enum": [
               "every",
               "first",
-              "random"
+              "random",
+              "window",
+              "flap",
+              "rate",
+              "attempts"
             ]
           },
           "n": {
             "type": "integer",
-            "description": "every N, first N."
+            "minimum": 1,
+            "description": "every N, first N; rate: the requests allowed within per_s (1-1000); attempts: the first N attempts of each event (1-1000)."
           },
           "percent": {
             "type": "number",
             "description": "random: 0 < percent <= 100."
+          },
+          "from_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "window: from this many seconds after the start (default 0)."
+          },
+          "to_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "window: until this many seconds after the start, not included; absent: for ever. Above from_s."
+          },
+          "down": {
+            "type": "number",
+            "description": "flap: the down part, first in each cycle: seconds, or whole requests."
+          },
+          "up": {
+            "type": "number",
+            "description": "flap: the up part that follows it."
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "s",
+              "requests"
+            ],
+            "description": "flap: the cycle runs by time since the start, or by the counter."
+          },
+          "per_s": {
+            "type": "number",
+            "description": "rate: more than n requests within this many seconds trip it."
+          },
+          "block_s": {
+            "type": "number",
+            "description": "rate: it then holds for this many seconds from the request that tripped it; afterwards the count starts again."
           }
         },
         "required": [
@@ -2425,6 +2978,10 @@
           },
           "reply": {
             "$ref": "#/components/schemas/Reply"
+          },
+          "forward": {
+            "type": "boolean",
+            "description": "On an endpoint that forwards: the receiver gets the requests this rule takes too, while the sender gets the rule's answer. Off: the receiver never sees them."
           }
         },
         "required": [
@@ -2498,7 +3055,7 @@
         "properties": {
           "kind": {
             "type": "string",
-            "description": "Absent or header: a required header.",
+            "description": "Absent or header: a required header. duplicates, order and backoff judge how a sender delivers (never enforced).",
             "enum": [
               "header",
               "github",
@@ -2507,7 +3064,10 @@
               "hmac",
               "bearer",
               "basic",
-              "schema"
+              "schema",
+              "duplicates",
+              "order",
+              "backoff"
             ]
           },
           "header": {
@@ -2582,6 +3142,69 @@
           },
           "select": {
             "$ref": "#/components/schemas/Select"
+          },
+          "order": {
+            "type": "object",
+            "description": "order: the value to order by: a sequence number or a time (RFC 3339, or unix seconds).",
+            "properties": {
+              "from": {
+                "type": "string",
+                "enum": [
+                  "header",
+                  "body"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "as": {
+                "type": "string",
+                "enum": [
+                  "number",
+                  "time"
+                ]
+              }
+            },
+            "required": [
+              "from",
+              "key",
+              "as"
+            ],
+            "additionalProperties": false
+          },
+          "group": {
+            "$ref": "#/components/schemas/ValueSource",
+            "description": "order: judge the order within each value of this (e.g. /data/object/id)."
+          },
+          "first_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "backoff: the expected gap before attempt 2, in seconds; 0: judge only Retry-After."
+          },
+          "factor": {
+            "type": "number",
+            "minimum": 1,
+            "description": "backoff: each gap is this times the last (default 2)."
+          },
+          "max_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "backoff: the longest expected gap, in seconds."
+          },
+          "max_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "backoff: more attempts fail."
+          },
+          "tolerance_pct": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "backoff: how far a gap may be from the expected one (default 25 %)."
+          },
+          "retry_after": {
+            "type": "boolean",
+            "description": "backoff: a retry before the previous answer's Retry-After fails (default true)."
           }
         },
         "additionalProperties": false
@@ -2697,6 +3320,20 @@
               "$ref": "#/components/schemas/Secret"
             },
             "description": "Read-only here; set them on the secrets route. Sent back as read, it is ignored."
+          },
+          "event": {
+            "$ref": "#/components/schemas/ValueSource",
+            "description": "Where the sender puts an event's id, the same on every retry (e.g. header X-GitHub-Delivery, body /id): attempts and retry groups follow it. Absent: per body."
+          },
+          "forward": {
+            "$ref": "#/components/schemas/Forward"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "In answers: what the configuration risks, such as a receiver without an enforced authorization check (an open relay). Ignored in a PUT."
           }
         },
         "additionalProperties": false
@@ -2770,7 +3407,7 @@
           },
           "body_kept": {
             "type": "boolean",
-            "description": "False when the body was over the limit (413) or the server was busy reading other bodies (503)."
+            "description": "False when the body was over the limit (413), the server was busy reading other bodies (503), or the body was dropped later to stay under the database size limit (body_dropped)."
           },
           "body_cut": {
             "type": "boolean",
@@ -2790,6 +3427,39 @@
           "replays": {
             "type": "integer",
             "description": "How many replays of it are kept (GET /requests/{id}/replays); the newest 50."
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Never pruned by retention (PUT or DELETE /requests/{id}/pin)."
+          },
+          "anomaly": {
+            "type": "boolean",
+            "description": "In the anomaly lane: not answered 2xx, a failed verdict, or a redelivery."
+          },
+          "event": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its event id, read from the endpoint's event source; null: none."
+          },
+          "attempt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Its attempt among the kept requests of its event (or of its body when the endpoint names no event source); null: not counted."
+          },
+          "forward": {
+            "$ref": "#/components/schemas/ForwardNote"
+          },
+          "not_forwarded": {
+            "type": "boolean",
+            "description": "On an endpoint that forwards: a rule kept this request from the receiver."
+          },
+          "body_dropped": {
+            "type": "boolean",
+            "description": "The body was kept when caught and dropped later to stay under the database size limit: body_kept is false, body_size and the digest stay."
           }
         },
         "required": [
@@ -2804,7 +3474,11 @@
           "body_size",
           "body_kept",
           "content_type",
-          "replays"
+          "replays",
+          "pinned",
+          "anomaly",
+          "event",
+          "attempt"
         ],
         "additionalProperties": false
       },
@@ -2879,6 +3553,43 @@
           "path",
           "size"
         ]
+      },
+      "Identity": {
+        "type": "object",
+        "description": "An identity at an OpenID Connect provider linked to a user: signing in there signs in as this user.",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "description": "The configured provider's name (or the name it had at the last sign-in when no longer configured)."
+          },
+          "label": {
+            "type": "string",
+            "description": "The provider's label, as the login page shows it."
+          },
+          "issuer": {
+            "type": "string",
+            "description": "The provider's issuer; with ?issuer= it addresses an identity whose provider is no longer configured."
+          },
+          "email": {
+            "type": "string",
+            "description": "The email the provider sent at the last sign-in."
+          },
+          "linked_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "last_login_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "provider",
+          "label",
+          "issuer",
+          "email",
+          "linked_at",
+          "last_login_at"
+        ],
+        "additionalProperties": false
       },
       "Verdict": {
         "type": "object",
@@ -3016,7 +3727,7 @@
           },
           "body_kept": {
             "type": "boolean",
-            "description": "False when the body was over the limit (413) or the server was busy reading other bodies (503)."
+            "description": "False when the body was over the limit (413), the server was busy reading other bodies (503), or the body was dropped later to stay under the database size limit (body_dropped)."
           },
           "body_cut": {
             "type": "boolean",
@@ -3056,7 +3767,7 @@
               "object",
               "null"
             ],
-            "description": "What was done: source (default, rule, check, limit, busy, unmatched — no endpoint at the path, off — the path is an endpoint's that is off), action (reply, timeout, drop, refused, error, abandoned — the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB; withheld says what of the configured reply HTTP did not send — a body and some headers with 204 or 304, a body to HEAD), delay_ms, waited_ms, counter."
+            "description": "What was done: source (default, rule, check, limit, busy, unmatched \u2014 no endpoint at the path, off \u2014 the path is an endpoint's that is off), action (reply, timeout, drop, refused, error, abandoned \u2014 the sender left during the reply's delay, nothing sent; would_status names the reply it would have got), the reply sent (its body as body, or as body_base64 when it is not UTF-8; cut marks the first 64 KiB; withheld says what of the configured reply HTTP did not send \u2014 a body and some headers with 204 or 304, a body to HEAD), delay_ms, waited_ms, counter; for a rule by time or state, elapsed_ms (since the clock started) and, for a rate rule, block_until. On an endpoint that forwards: source forward with action forward (the receiver's answer, or the failure answer, was sent), source loop (508: the request came back on the server's own forward), forward (the receiver's side, as the request's forward) and not_forwarded (a rule kept it from the receiver)."
           },
           "verdicts": {
             "type": "array",
@@ -3073,6 +3784,39 @@
           "replays": {
             "type": "integer",
             "description": "How many replays of it are kept (GET /requests/{id}/replays); the newest 50."
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Never pruned by retention (PUT or DELETE /requests/{id}/pin)."
+          },
+          "anomaly": {
+            "type": "boolean",
+            "description": "In the anomaly lane: not answered 2xx, a failed verdict, or a redelivery."
+          },
+          "event": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its event id, read from the endpoint's event source; null: none."
+          },
+          "attempt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Its attempt among the kept requests of its event (or of its body when the endpoint names no event source); null: not counted."
+          },
+          "forward": {
+            "$ref": "#/components/schemas/ForwardNote"
+          },
+          "not_forwarded": {
+            "type": "boolean",
+            "description": "On an endpoint that forwards: a rule kept this request from the receiver."
+          },
+          "body_dropped": {
+            "type": "boolean",
+            "description": "The body was kept when caught and dropped later to stay under the database size limit: body_kept is false, body_size and the digest stay."
           }
         },
         "required": [
@@ -3093,7 +3837,11 @@
           "outcome",
           "verdicts",
           "images",
-          "replays"
+          "replays",
+          "pinned",
+          "anomaly",
+          "event",
+          "attempt"
         ],
         "additionalProperties": false
       },
@@ -3142,7 +3890,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "Suggested: the schema the shared discriminator value maps to, else one from that value (order.paid → OrderPaid), else from the endpoint's path."
+            "description": "Suggested: the schema the shared discriminator value maps to, else one from that value (order.paid \u2192 OrderPaid), else from the endpoint's path."
           },
           "text": {
             "type": "string",
@@ -3228,6 +3976,23 @@
               "admin"
             ]
           },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lower-case; a provider sign-in with this verified address links to the user once. null when not set."
+          },
+          "password": {
+            "type": "boolean",
+            "description": "Whether a password is set (never the password); a user without one signs in through a provider."
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Identity"
+            }
+          },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
           },
@@ -3239,6 +4004,9 @@
         "required": [
           "name",
           "role",
+          "email",
+          "password",
+          "identities",
           "created_at",
           "tokens"
         ],
@@ -3261,7 +4029,7 @@
           },
           "shown": {
             "type": "string",
-            "description": "How it is shown: hkw_<id>_…"
+            "description": "How it is shown: hkw_<id>_\u2026"
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -3309,6 +4077,23 @@
               "user",
               "admin"
             ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lower-case; a provider sign-in with this verified address links to the user once. null when not set."
+          },
+          "password": {
+            "type": "boolean",
+            "description": "Whether a password is set (never the password); a user without one signs in through a provider."
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Identity"
+            }
           },
           "via": {
             "type": "string",
@@ -3384,6 +4169,18 @@
             "items": {
               "$ref": "#/components/schemas/SetupSecret"
             }
+          },
+          "retention": {
+            "$ref": "#/components/schemas/Retention",
+            "description": "The endpoint's own retention (format 2); absent: the importing server's defaults."
+          },
+          "event": {
+            "$ref": "#/components/schemas/ValueSource",
+            "description": "Where the sender puts an event's id (format 2)."
+          },
+          "forward": {
+            "$ref": "#/components/schemas/Forward",
+            "description": "The receiver requests are passed through to (format 2), as configured. Importing one that adds or changes a receiver needs an admin once login is on."
           }
         },
         "required": [
@@ -3398,8 +4195,11 @@
         "properties": {
           "hookwitness": {
             "type": "integer",
-            "const": 1,
-            "description": "The format marker and version. A file of a newer format is refused."
+            "enum": [
+              1,
+              2
+            ],
+            "description": "The format marker and version: 1, or 2 when an endpoint carries its own retention, an event source, a delivery check, a rule by time or state, a receiver or a rule's forward switch. A file of a newer format is refused; an export writes the lowest version that holds it."
           },
           "endpoints": {
             "type": "array",
@@ -3444,6 +4244,10 @@
                     "type": "string"
                   },
                   "description": "Secrets of the endpoint without a value: set them on the secrets route."
+                },
+                "pruned": {
+                  "type": "integer",
+                  "description": "Requests its retention removed at once (absent: none)."
                 }
               },
               "required": [
@@ -3548,7 +4352,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Where the request sent differs from the one caught (HTTP/1.0 sent as 1.1, a chunked body as one chunk, a Host added)."
+            "description": "Where the request sent differs from the one caught (HTTP/1.0 sent as 1.1, a chunked body as one chunk and without Content-Length, a Host added)."
           },
           "proto": {
             "type": "string",
@@ -3580,6 +4384,10 @@
           "body_cut": {
             "type": "boolean",
             "description": "Only the first 1 MiB (or what arrived) is kept."
+          },
+          "body_dropped": {
+            "type": "boolean",
+            "description": "Present and true when the answer body was dropped with the request's body to stay under the database size limit (-max-db-size): no body_text or body_base64, and its body route answers 404 not_kept; body_size is what it was."
           },
           "duration_ms": {
             "type": "integer",
@@ -3661,6 +4469,516 @@
         },
         "required": [
           "replays"
+        ],
+        "additionalProperties": false
+      },
+      "RetentionLane": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000,
+            "description": "Keep the newest this many (normal: at least 1; anomalies: 0 means no anomaly lane)."
+          },
+          "max_age": {
+            "type": "string",
+            "pattern": "^[0-9]+[mhd]$",
+            "description": "An age such as `90m`, `36h` or `7d`, from 1 h to 3650 d."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Retention": {
+        "type": "object",
+        "description": "A register's own retention; each field left out takes the server's default (`-retention`, `-retention-anomalies`; no age limit).",
+        "properties": {
+          "normal": {
+            "$ref": "#/components/schemas/RetentionLane"
+          },
+          "anomalies": {
+            "$ref": "#/components/schemas/RetentionLane",
+            "description": "Requests not answered 2xx, with a failed verdict, or redelivered (a repeated signature). Not for the Unmatched register."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RetentionEffective": {
+        "type": "object",
+        "description": "The register's retention resolved against the server's defaults.",
+        "properties": {
+          "normal": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "max_age": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "null: no age limit."
+              }
+            },
+            "required": [
+              "count",
+              "max_age"
+            ],
+            "additionalProperties": false
+          },
+          "anomalies": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "type": "integer"
+                  },
+                  "max_age": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "null: no age limit."
+                  }
+                },
+                "required": [
+                  "count",
+                  "max_age"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null: no anomaly lane (anomalies count as normal requests)."
+          }
+        },
+        "required": [
+          "normal",
+          "anomalies"
+        ],
+        "additionalProperties": false
+      },
+      "Kept": {
+        "type": "object",
+        "description": "Requests kept, per lane; pinned ones are never pruned by retention.",
+        "properties": {
+          "normal": {
+            "type": "integer"
+          },
+          "anomalies": {
+            "type": "integer"
+          },
+          "pinned": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "normal",
+          "anomalies",
+          "pinned"
+        ],
+        "additionalProperties": false
+      },
+      "Pruned": {
+        "type": "object",
+        "description": "What retention removed: how many, and up to when each lane lost requests (before it the register holds only what the other lane or a pin kept).",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "normal_until": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The newest normal request pruned (or the last clear); null: none."
+          },
+          "anomalies_until": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The newest anomaly pruned (or the last clear); null: none."
+          }
+        },
+        "required": [
+          "count",
+          "normal_until",
+          "anomalies_until"
+        ],
+        "additionalProperties": false
+      },
+      "Unmatched": {
+        "type": "object",
+        "description": "The Unmatched register: requests to paths with no endpoint (or an endpoint that is off). It has one lane.",
+        "properties": {
+          "requests": {
+            "type": "integer",
+            "description": "Requests kept."
+          },
+          "last_request_at": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "The newest kept request; absent when none."
+          },
+          "retention": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Retention"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its own policy; null: the server's defaults."
+          },
+          "retention_effective": {
+            "$ref": "#/components/schemas/RetentionEffective"
+          },
+          "kept": {
+            "$ref": "#/components/schemas/Kept"
+          },
+          "pruned": {
+            "$ref": "#/components/schemas/Pruned"
+          },
+          "to_prune": {
+            "type": "integer",
+            "description": "In the answer to a change of `retention`: the requests the change removed."
+          }
+        },
+        "required": [
+          "requests",
+          "retention",
+          "retention_effective",
+          "kept",
+          "pruned"
+        ],
+        "additionalProperties": false
+      },
+      "ValueSource": {
+        "type": "object",
+        "description": "Where a request carries a value: a header, or a JSON pointer into its body.",
+        "properties": {
+          "from": {
+            "type": "string",
+            "enum": [
+              "header",
+              "body"
+            ]
+          },
+          "key": {
+            "type": "string",
+            "description": "The header name, or the JSON pointer such as /id."
+          }
+        },
+        "required": [
+          "from",
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      "Forward": {
+        "type": "object",
+        "description": "The receiver this endpoint passes requests through to (the recorder in the middle): each request that passes its checks and that no rule takes is sent there byte for byte, and its answer goes back to the sender. Adding, changing or removing it needs an admin once login is on.",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "http(s)://host[:port]/path, with no query (the sender's own query is sent with each request) and no user name or password."
+          },
+          "keep_host": {
+            "type": "boolean",
+            "description": "Send the Host line as received; by default the target's host and port."
+          },
+          "insecure_tls": {
+            "type": "boolean",
+            "description": "https: accept any certificate."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "The exchange's timeout, from 100 ms to -max-wait; absent or 0: 30 s, or -max-wait if shorter."
+          },
+          "on_failure": {
+            "type": "string",
+            "enum": [
+              "gateway",
+              "default"
+            ],
+            "description": "What the sender gets when the receiver fails: a gateway error (502, or 504 for a timeout; the default) or the endpoint's default reply."
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "ForwardNote": {
+        "type": "object",
+        "description": "The receiver's side of a request on an endpoint that forwards; the whole exchange is at /requests/{id}/forward.",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "The receiver's origin and path at the time."
+          },
+          "status": {
+            "type": "integer",
+            "description": "The receiver's status; absent when it gave none."
+          },
+          "error_kind": {
+            "type": "string",
+            "enum": [
+              "dial",
+              "tls",
+              "timeout",
+              "reset",
+              "write",
+              "answer",
+              "refused",
+              "too_large",
+              "upgrade",
+              "busy"
+            ],
+            "description": "Why there was no answer to pass back: the receiver could not be reached (dial, tls), did not answer in time (timeout), closed early (reset), the request could not be written (write) or the answer read (answer), the target policy refused it (refused), the answer is over 1 MiB (too_large), it switched protocols (upgrade, 101), or all 64 forward slots were busy (busy)."
+          },
+          "fallback": {
+            "type": "boolean",
+            "description": "The sender got the failure answer (a gateway error, or the default reply)."
+          },
+          "sender_left_ms": {
+            "type": "integer",
+            "description": "The sender left this long after the exchange began, before the answer: it got nothing."
+          },
+          "ms": {
+            "type": "integer",
+            "description": "The exchange's duration."
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "The exchange has not ended yet (forwarding\u2026)."
+          }
+        },
+        "required": [
+          "target",
+          "ms"
+        ],
+        "additionalProperties": false
+      },
+      "ForwardExchange": {
+        "type": "object",
+        "description": "A request's exchange with its endpoint's receiver: what was sent and what the receiver answered. status 0 with error set: there was no (complete) answer to pass back.",
+        "properties": {
+          "request_id": {
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "url": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "enum": [
+              "target",
+              "received"
+            ]
+          },
+          "insecure_tls": {
+            "type": "boolean"
+          },
+          "timeout_ms": {
+            "type": "integer"
+          },
+          "line": {
+            "type": "string",
+            "description": "The request line sent: the method, the receiver's path and the caught query, HTTP/1.1; empty when nothing was sent (the target policy, no slot)."
+          },
+          "sent": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "The header lines written, in order: the caught ones, with Host as chosen."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Where the request sent differs from the one caught (HTTP/1.0 sent as 1.1, a chunked body as one chunk and without Content-Length, a Host added)."
+          },
+          "proto": {
+            "type": "string",
+            "description": "The answer's protocol; empty without an answer."
+          },
+          "status": {
+            "type": "integer",
+            "description": "The answer's status; 0 without an answer. Redirects are not followed."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "The answer's header lines as received: order, case and repeats kept."
+          },
+          "body_size": {
+            "type": "integer",
+            "description": "The answer body's bytes; -1 when it was cut before its end (timeout or reset)."
+          },
+          "body_cut": {
+            "type": "boolean",
+            "description": "Only the first 64 KiB are kept."
+          },
+          "body_dropped": {
+            "type": "boolean",
+            "description": "Present and true when the answer body was dropped with the request's body to stay under the database size limit (-max-db-size): no body_text or body_base64, and its body route answers 404 not_kept; body_size is what it was."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "description": "From the first byte written to the last byte read."
+          },
+          "ttfb_ms": {
+            "type": "integer",
+            "description": "From the first byte written to the first byte of the answer."
+          },
+          "error": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "dial",
+                  "tls",
+                  "timeout",
+                  "reset",
+                  "write",
+                  "answer",
+                  "refused",
+                  "too_large",
+                  "upgrade",
+                  "busy"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          "body_text": {
+            "type": "string",
+            "description": "The answer body when it is UTF-8 text, as it arrived (never decompressed). In a list only with include=body."
+          },
+          "body_base64": {
+            "type": "string",
+            "description": "The answer body in base64 when it is not UTF-8."
+          },
+          "by_rule": {
+            "type": "integer",
+            "description": "The rule that let the receiver get the request too (its forward switch); 0: forwarded because no rule took it."
+          }
+        },
+        "required": [
+          "request_id",
+          "created_at",
+          "url",
+          "host",
+          "insecure_tls",
+          "timeout_ms",
+          "line",
+          "sent",
+          "notes",
+          "proto",
+          "status",
+          "reason",
+          "headers",
+          "body_size",
+          "body_cut",
+          "duration_ms",
+          "ttfb_ms",
+          "error",
+          "by_rule"
+        ],
+        "additionalProperties": false
+      },
+      "Storage": {
+        "type": "object",
+        "description": "The database's size against its size limit (-max-db-size), and the free space of its volume.",
+        "properties": {
+          "used_bytes": {
+            "type": "integer",
+            "description": "Bytes in the database's used pages (the WAL is not counted)."
+          },
+          "limit_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The size limit; null: none. Over it the oldest bodies, then requests, are dropped at the minute tick: normal ones before anomalies, pinned never."
+          },
+          "pinned_bytes": {
+            "type": "integer",
+            "description": "About what pinned requests hold; never dropped."
+          },
+          "volume_free_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Free bytes on the database's volume, for this user; null where the system does not tell (only Linux and macOS do)."
+          },
+          "volume_total_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At 90 % of the limit or more; pinned requests over the limit; the volume under 1 GiB or 5 % free."
+          }
+        },
+        "required": [
+          "used_bytes",
+          "limit_bytes",
+          "pinned_bytes",
+          "volume_free_bytes",
+          "volume_total_bytes",
+          "warnings"
         ],
         "additionalProperties": false
       }
@@ -3901,6 +5219,49 @@
           "type": "string"
         },
         "description": "The user's name (case does not matter)."
+      },
+      "pinned": {
+        "name": "pinned",
+        "in": "query",
+        "description": "Only pinned requests.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "true"
+          ]
+        }
+      },
+      "anomaly": {
+        "name": "anomaly",
+        "in": "query",
+        "description": "Only anomalies.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "true"
+          ]
+        }
+      },
+      "event": {
+        "name": "event",
+        "in": "query",
+        "description": "Only the requests of this event id (every attempt).",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "forward": {
+        "name": "forward",
+        "in": "query",
+        "description": "Only requests forwarded and answered 2xx by the receiver (ok), forwarded and failed or answered otherwise (failed), or not forwarded (none).",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "failed",
+            "none"
+          ]
+        }
       }
     },
     "securitySchemes": {

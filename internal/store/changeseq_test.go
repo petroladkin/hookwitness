@@ -16,8 +16,8 @@ func TestChangeSeqOrdersUpdates(t *testing.T) {
 	s := openTemp(t)
 	ep, _ := s.CreateEndpoint(ctx, "/seq")
 	a, b := sample(ep.ID, "a"), sample(ep.ID, "b")
-	s.AddRequest(ctx, a, 100, nil)
-	s.AddRequest(ctx, b, 100, nil)
+	s.AddRequest(ctx, a, Keep{Normal: 100}, nil)
+	s.AddRequest(ctx, b, Keep{Normal: 100}, nil)
 	start, err := s.ChangeSeq(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -25,7 +25,7 @@ func TestChangeSeqOrdersUpdates(t *testing.T) {
 	if err := s.UpdateOutcome(ctx, b.ID, 504, `{"action":"timeout"}`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetVerdicts(ctx, a.ID, "fail", `[{"result":"fail"}]`, nil, nil); err != nil {
+	if err := s.SetVerdicts(ctx, a.ID, "fail", `[{"result":"fail"}]`, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	// The clocks disagree with the commit order: a's change is stamped
@@ -65,7 +65,7 @@ func TestChangeSeqConcurrentWriters(t *testing.T) {
 	var reqs []*Request
 	for i := range 20 {
 		r := sample(ep.ID, string(rune('a'+i)))
-		s.AddRequest(ctx, r, 100, nil)
+		s.AddRequest(ctx, r, Keep{Normal: 100}, nil)
 		reqs = append(reqs, r)
 	}
 	start, _ := s.ChangeSeq(ctx)
@@ -77,7 +77,7 @@ func TestChangeSeqConcurrentWriters(t *testing.T) {
 			if i%2 == 0 {
 				s.UpdateOutcome(ctx, r.ID, 200, `{}`)
 			} else {
-				s.SetVerdicts(ctx, r.ID, "pass", `[]`, nil, nil)
+				s.SetVerdicts(ctx, r.ID, "pass", `[]`, nil, nil, nil)
 			}
 		}()
 	}

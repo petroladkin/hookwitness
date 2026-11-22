@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/petroladkin/hookwitness/internal/auth"
+	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/picture"
 	"github.com/petroladkin/hookwitness/internal/store"
 )
@@ -27,20 +28,30 @@ const (
 
 // summaryJSON is a caught request in a list.
 type summaryJSON struct {
-	ID          int64  `json:"id"`
-	EndpointID  *int64 `json:"endpoint_id"` // null for the Unmatched register
-	No          int64  `json:"no"`          // number within its register
-	ReceivedAt  stamp  `json:"received_at"`
-	Method      string `json:"method"`
-	Path        string `json:"path"`
-	Query       string `json:"query"`
-	Status      int    `json:"status"`  // what hookwitness answered; 0 while nothing was sent
-	Verdict     string `json:"verdict"` // pass, fail, n/v; "" without authorization checks
-	BodySize    int64  `json:"body_size"`
-	BodyKept    bool   `json:"body_kept"`          // false when the body was over the limit (413) or the server was busy (503)
-	BodyCut     bool   `json:"body_cut,omitempty"` // only the head was kept (Unmatched): body_size is the whole
-	ContentType string `json:"content_type"`
-	Replays     int    `json:"replays"` // replays kept of it (GET /requests/{id}/replays)
+	ID          int64   `json:"id"`
+	EndpointID  *int64  `json:"endpoint_id"` // null for the Unmatched register
+	No          int64   `json:"no"`          // number within its register
+	ReceivedAt  stamp   `json:"received_at"`
+	Method      string  `json:"method"`
+	Path        string  `json:"path"`
+	Query       string  `json:"query"`
+	Status      int     `json:"status"`  // what hookwitness answered; 0 while nothing was sent
+	Verdict     string  `json:"verdict"` // pass, fail, n/v; "" without authorization checks
+	BodySize    int64   `json:"body_size"`
+	BodyKept    bool    `json:"body_kept"`              // false when the body was over the limit (413), the server was busy (503), or it was dropped
+	BodyDropped bool    `json:"body_dropped,omitempty"` // dropped later to stay under the database size limit (size and sha256 stay)
+	BodyCut     bool    `json:"body_cut,omitempty"`     // only the head was kept (Unmatched): body_size is the whole
+	ContentType string  `json:"content_type"`
+	Replays     int     `json:"replays"` // replays kept of it (GET /requests/{id}/replays)
+	Pinned      bool    `json:"pinned"`  // never pruned by retention
+	Anomaly     bool    `json:"anomaly"` // kept in the anomaly lane: not answered 2xx, a failed verdict, a redelivery
+	Event       *string `json:"event"`   // its event id (the endpoint's event source); null: none
+	Attempt     *int    `json:"attempt"` // its attempt among the kept requests of its event (or body); null: not counted
+	// Forward is the receiver's side on an endpoint that forwards (the
+	// whole exchange at /requests/{id}/forward); NotForwarded: a rule kept
+	// the request from the receiver.
+	Forward      *emulate.ForwardNote `json:"forward,omitempty"`
+	NotForwarded bool                 `json:"not_forwarded,omitempty"`
 }
 
 // requestJSON is one caught request in full.
@@ -64,7 +75,7 @@ type bodyJSON struct {
 
 func bodyView(req store.Request) bodyJSON {
 	var v bodyJSON
-	if req.TooLarge {
+	if req.TooLarge || req.BodyDropped {
 		return v
 	}
 	if utf8.Valid(req.Body) {
@@ -99,8 +110,19 @@ type imageJSON struct {
 
 func summaryView(req store.Request) summaryJSON {
 	v := summaryJSON{ID: req.ID, No: req.No, ReceivedAt: stamp(req.ReceivedAt), Method: req.Method, Path: req.Path,
-		Query: req.RawQuery, Status: req.Status, Verdict: req.Verdict, BodySize: req.Size, BodyKept: !req.TooLarge,
-		BodyCut: !req.TooLarge && req.Kept < req.Size, Replays: req.Replays}
+		Query: req.RawQuery, Status: req.Status, Verdict: req.Verdict, BodySize: req.Size, BodyKept: !req.TooLarge && !req.BodyDropped,
+		BodyDropped: req.BodyDropped, BodyCut: !req.TooLarge && !req.BodyDropped && req.Kept < req.Size, Replays: req.Replays, Pinned: req.Pinned, Anomaly: req.Anomaly}
+	if req.Event != nil && *req.Event != "" {
+		v.Event = req.Event
+	}
+	if req.Attempt > 0 {
+		n := req.Attempt
+		v.Attempt = &n
+	}
+	if strings.Contains(req.Outcome, "forward") {
+		o := emulate.ParseOutcome(req.Outcome, req.Status)
+		v.Forward, v.NotForwarded = o.Forward, o.NotForwarded
+	}
 	if req.EndpointID != store.Unmatched {
 		id := req.EndpointID
 		v.EndpointID = &id
@@ -129,7 +151,7 @@ func requestView(req store.Request, base string) requestJSON {
 		v.Verdicts = append(v.Verdicts, verdictJSON{Verdict: vd, At: stamp(vd.At)})
 	}
 	v.Images = []imageJSON{}
-	if !req.TooLarge {
+	if !req.TooLarge && !req.BodyDropped {
 		for _, f := range picture.Find(req.Body, v.ContentType, vs) {
 			img := imageJSON{Image: f.Image, Source: f.Source}
 			if f.Type != "" {
@@ -156,6 +178,10 @@ func (h *Handler) getImage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		h.fail(w, "image", err)
+		return
+	}
+	if req.BodyDropped {
+		WriteError(w, http.StatusNotFound, "not_kept", store.DroppedReason, "")
 		return
 	}
 	if req.TooLarge {
@@ -207,11 +233,16 @@ type listQuery struct {
 	contains      []byte      // q
 	match         []jsonMatch // json, all of them
 	bodies        bool        // include=body
+	event         *string     // event=<id>
+	pinned        bool        // pinned=true
+	anomaly       bool        // anomaly=true
+	forward       string      // forward=ok|failed|none
 }
 
 func (l listQuery) store() store.ListQuery {
 	q := store.ListQuery{Before: l.before, After: l.after, HasAfter: l.hasAfter, Limit: l.limit,
-		Verdict: l.verdict, Status: l.status, Contains: l.contains, WithBody: l.bodies}
+		Verdict: l.verdict, Status: l.status, Contains: l.contains, WithBody: l.bodies, Pinned: l.pinned, Anomaly: l.anomaly, Event: l.event,
+		Forward: l.forward}
 	if len(l.match) > 0 {
 		q.Match = matchAll(l.match)
 	}
@@ -266,6 +297,28 @@ func parseList(w http.ResponseWriter, r *http.Request) (listQuery, bool) {
 		l.status = n
 		if n == 0 {
 			l.status = -1 // filter on "nothing sent"
+		}
+	}
+	if q.Has("event") {
+		if q.Get("event") == "" {
+			return bad("event", "event is an event id")
+		}
+		ev := q.Get("event")
+		l.event = &ev
+	}
+	if q.Has("forward") {
+		switch l.forward = q.Get("forward"); l.forward {
+		case store.ForwardOK, store.ForwardFailed, store.ForwardNone:
+		default:
+			return bad("forward", "forward is ok (the receiver answered 2xx), failed (it failed or answered otherwise) or none (not forwarded)")
+		}
+	}
+	for name, dst := range map[string]*bool{"pinned": &l.pinned, "anomaly": &l.anomaly} {
+		if q.Has(name) {
+			if q.Get(name) != "true" {
+				return bad(name, name+" is true (only those requests)")
+			}
+			*dst = true
 		}
 	}
 	if q.Has("q") {

@@ -122,6 +122,20 @@ what arrived.
 Fault scripting (same PUT, add `rules`): `{"when":{"kind":"first","n":2},"do":"reply","reply":{"status":503}}`
 fails the first two deliveries (retries); `"do":"timeout"` hangs; `"do":"drop"`
 resets the connection; `{"kind":"every","n":3}`, `{"kind":"random","percent":10}`.
+By time since the first request after a reset (`POST $API/endpoints/<id>/reset-counter`
+starts the clock again): `{"kind":"window","to_s":30}` (down for 30 s; `from_s`
+without `to_s`: gone from then on), `{"kind":"flap","down":10,"up":20,"unit":"s"}`,
+`{"kind":"rate","n":5,"per_s":10,"block_s":30}` (429 with header
+`Retry-After: {{.RetryAfter}}`), and `{"kind":"attempts","n":1}` (each event's first
+attempt fails). A backoff check then judges whether the sender waited.
+
+Record a live integration instead of mocking it: the same PUT with
+`"forward":{"url":"https://receiver.example/webhooks"}` passes each request no rule
+takes on to that receiver byte for byte and answers with its answer; a rule's
+`"forward":true` lets the receiver have the requests it takes too (the sender gets
+the fault). Requests then carry `forward` (the receiver's status or `error_kind`);
+`GET $API/requests/<id>/forward` has the whole exchange. Live traffic leaves the
+server: only an admin may set it once login is on; add an enforced signature check.
 
 ## 4. Trigger the sender, then wait for what arrived
 
@@ -175,6 +189,11 @@ jq '.outcome | {source, action, status, check}' req.json   # what was done: defa
   `{name, value}`, `body`).
 - `status` `401` with `verdict` `fail` = refused by an enforced check;
   `verdicts[].reason` says why (wrong password, missing header, bad signature).
+- Retries and duplicates: give the endpoint's behaviour an `event`
+  (`{"from":"header","key":"X-GitHub-Delivery"}`, Stripe `{"from":"body","key":"/id"}`)
+  and the checks `{"kind":"duplicates"}` and `{"kind":"backoff","first_s":5}`;
+  each request then carries `event` and `attempt`, and
+  `$API/endpoints/$ID/requests?event=<id>` lists one event's attempts.
 
 ## Pitfalls
 

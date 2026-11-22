@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 	"testing/fstest"
 )
 
-func tempDB(t *testing.T) string {
+func tempDB(t testing.TB) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "hw.db")
 }
@@ -196,8 +197,41 @@ func TestPathWithURICharacters(t *testing.T) {
 	}
 }
 
+// TestNewConnectionReadsDuringWrite: setting up a connection writes
+// nothing, so a read on a new connection does not wait for a write in
+// progress. When every connection set auto_vacuum at its start (a write),
+// such a read waited busy_timeout and failed with SQLITE_BUSY, and a burst
+// of caught requests, opening connections while others were stored, was
+// answered 500.
+func TestNewConnectionReadsDuringWrite(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	tx, err := s.db.BeginTx(ctx, nil) // IMMEDIATE (_txlock): the write lock is held
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO endpoints (path, created_at) VALUES ('/held', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	// Another pool on the same file: each of its connections is new.
+	other, err := sql.Open("sqlite", dsn(s.path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	var n int
+	if err := other.QueryRowContext(ctx, `SELECT COUNT(*) FROM endpoints`).Scan(&n); err != nil {
+		t.Fatalf("a read on a new connection while a write is held: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("the read saw %d endpoints, want 0 (the write is not committed)", n)
+	}
+}
+
 // Two processes starting on one new database must not both apply the same
-// migration; here two pools stand in for the two processes.
+// migration, and the database they make has incremental auto-vacuum; here
+// pools stand in for the processes.
 func TestConcurrentOpenAppliesOnce(t *testing.T) {
 	ctx := context.Background()
 	p := tempDB(t)
@@ -228,5 +262,8 @@ func TestConcurrentOpenAppliesOnce(t *testing.T) {
 	}
 	if _, count := newest(t); rows != count {
 		t.Fatalf("%d migration rows, want %d", rows, count)
+	}
+	if mode, err := s.AutoVacuum(ctx); err != nil || mode != "incremental" {
+		t.Fatalf("auto_vacuum %q (%v), want incremental", mode, err)
 	}
 }

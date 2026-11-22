@@ -3,6 +3,7 @@ package catch
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/petroladkin/hookwitness/internal/forward"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/wire"
@@ -24,7 +26,8 @@ func setup(t *testing.T, maxBody int64) (*Handler, *store.Store, *bytes.Buffer) 
 	}
 	t.Cleanup(func() { st.Close() })
 	var logs bytes.Buffer
-	h := &Handler{Store: st, Live: live.New(), Log: slog.New(slog.NewTextHandler(&logs, nil)), MaxBody: maxBody, Retention: 1000}
+	h := &Handler{Store: st, Live: live.New(), Log: slog.New(slog.NewTextHandler(&logs, nil)), MaxBody: maxBody, Retention: store.Keep{Normal: 1000}}
+	h.Forward = forward.New(h.Log, forward.Options{MaxWait: h.maxWait(), Budget: h}) // the default policy: loopback receivers allowed
 	return h, st, &logs
 }
 
@@ -171,6 +174,43 @@ func TestUnreadableBodyIsNotKept(t *testing.T) {
 	}
 }
 
+// TestNotKeptAnswers503: a request the store cannot keep, at the endpoint's
+// lookup or when it is stored, is answered 503 with Retry-After (senders
+// retry it), and the log says why.
+func TestNotKeptAnswers503(t *testing.T) {
+	for _, c := range []struct{ name, broken, logged string }{
+		{"lookup", `ALTER TABLE endpoints RENAME TO gone`, "endpoint lookup failed"},
+		{"store", `ALTER TABLE requests RENAME TO gone`, "request not stored"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "hw.db")
+			st, err := store.Open(context.Background(), p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			var logs bytes.Buffer
+			h := &Handler{Store: st, Live: live.New(), Log: slog.New(slog.NewTextHandler(&logs, nil)), MaxBody: 1 << 20, Retention: store.Keep{Normal: 1000}}
+			st.CreateEndpoint(context.Background(), "/x")
+			db, err := sql.Open("sqlite", p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err := db.Exec(c.broken); err != nil {
+				t.Fatal(err)
+			}
+			rec := send(h, "POST", "/x", strings.NewReader(`{"a":1}`))
+			if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != retryAfter {
+				t.Fatalf("status %d, Retry-After %q; want 503 and %s", rec.Code, rec.Header().Get("Retry-After"), retryAfter)
+			}
+			if l := logs.String(); !strings.Contains(l, c.logged) || !strings.Contains(l, "no such table") {
+				t.Fatalf("the log does not say why: %s", l)
+			}
+		})
+	}
+}
+
 func TestPublishesToItsRegister(t *testing.T) {
 	h, st, _ := setup(t, 1<<20)
 	ep, _ := st.CreateEndpoint(context.Background(), "/x")
@@ -205,6 +245,9 @@ func TestSessionCookieNeverRecorded(t *testing.T) {
 		"a=hookwitness_session":                             "a=hookwitness_session",
 		"a=1;hookwitness_session=x;b":                       "a=1;hookwitness_session=[hookwitness session];b",
 		"a=1; hookwitness_session=x; hookwitness_session=y": "a=1; hookwitness_session=[hookwitness session]; hookwitness_session=[hookwitness session]",
+		// A provider sign-in's flow cookie too.
+		"hookwitness_oidc=flow-id; a=1": "hookwitness_oidc=[hookwitness session]; a=1",
+		"hookwitness_oidc_x=y":          "hookwitness_oidc_x=y",
 	} {
 		if got := RedactSession(in); got != want {
 			t.Errorf("RedactSession(%q) = %q, want %q", in, got, want)

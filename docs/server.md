@@ -126,8 +126,8 @@ addresses and `localhost`), which keeps a hostile web page from reaching it
 through a name of its own; see [Reaching it from other
 machines](deployment.md#reaching-it-from-other-machines).
 
-Logins from the internet are limited per address: ten failures in 15
-minutes pause that address. Behind Caddy every login comes from Caddy's
+Logins from the internet are limited per address (an IPv6 address with its
+/64): ten failures in 15 minutes pause that address. Behind Caddy every login comes from Caddy's
 address, so one guesser would pause everyone. Name Caddy as a trusted proxy
 with the subnet of the compose network, which `docker network inspect`
 prints once the stack is up:

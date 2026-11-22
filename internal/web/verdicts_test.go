@@ -172,7 +172,7 @@ func TestLiveCounts(t *testing.T) {
 		t.Fatalf("after a request %v", c)
 	}
 	// A re-check turns the failed one into a pass: an update, then counts.
-	e.st.SetVerdicts(context.Background(), failed.ID, "pass", `[]`, nil, nil)
+	e.st.SetVerdicts(context.Background(), failed.ID, "pass", `[]`, nil, nil, nil)
 	e.lv.Publish(ep.ID)
 	if c := next("for an update"); c["pass"] != 2 || c["fail"] != 0 || c["kept"] != 3 {
 		t.Fatalf("after an update %v", c)

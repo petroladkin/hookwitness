@@ -85,6 +85,23 @@ func TestReplayAPI(t *testing.T) {
 	wantError(t, e.do("POST", base, `{}`), 422, "invalid", "url")
 	wantError(t, e.do("POST", base, `{"url":"ftp://x/"}`), 422, "invalid", "url")
 	wantError(t, e.do("POST", base, `{"url":"http://user:pw@127.0.0.1/"}`), 422, "invalid", "url")
+	// A raw space would fail only when written: refused before, nothing recorded.
+	count := func() int {
+		return len(decodeAs[struct {
+			Replays []replayJSON `json:"replays"`
+		}](t, e.do("GET", base, "")).Replays)
+	}
+	before := count()
+	if before == 0 {
+		t.Fatal("no replays recorded before the refusal: the check below would prove nothing")
+	}
+	sp := wantError(t, e.do("POST", base, `{"url":"http://127.0.0.1:1/p?a b"}`), 422, "invalid", "url")
+	if !strings.Contains(sp.Error.Message, "space or control character") {
+		t.Fatalf("raw space: %s", sp.Error.Message)
+	}
+	if after := count(); after != before {
+		t.Fatalf("a refused URL recorded a replay: %d -> %d", before, after)
+	}
 	wantError(t, e.do("POST", base, `{"url":"http://127.0.0.1/","host":"mine"}`), 422, "invalid", "host")
 	wantError(t, e.do("POST", base, `{"url":"http://127.0.0.1/","timeout_ms":3600000}`), 422, "invalid", "timeout_ms")
 	wantError(t, e.do("POST", base, `{"url":"http://127.0.0.1/","headers":[]}`), 400, "unknown_field", "headers")
@@ -136,7 +153,7 @@ func TestReplayNeedsLogin(t *testing.T) {
 	ep, _ := e.st.CreateEndpoint(ctx, "/a")
 	r := &store.Request{EndpointID: ep.ID, Method: "POST", Path: "/a", Proto: "HTTP/1.1", Body: []byte("{}"), Size: 2,
 		Headers: []store.Header{{Name: "Content-Length", Value: "2"}}}
-	if err := e.st.AddRequest(ctx, r, 100, nil); err != nil {
+	if err := e.st.AddRequest(ctx, r, store.Keep{Normal: 100}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.st.AddUser(ctx, "ann", "admin", e.auth.HashPassword("admin-password-1234")); err != nil {

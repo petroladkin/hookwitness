@@ -35,8 +35,9 @@ type replayJSON struct {
 	Status      int         `json:"status"`
 	Reason      string      `json:"reason"`
 	Headers     [][2]string `json:"headers"`
-	BodySize    int64       `json:"body_size"` // -1 when the answer was cut before its end
-	BodyCut     bool        `json:"body_cut"`  // only the first 1 MiB (or what arrived) is kept
+	BodySize    int64       `json:"body_size"`              // -1 when the answer was cut before its end
+	BodyCut     bool        `json:"body_cut"`               // only the first 1 MiB (or what arrived) is kept
+	BodyDropped bool        `json:"body_dropped,omitempty"` // dropped with the request's body (the size limit)
 	DurationMS  int64       `json:"duration_ms"`
 	TTFBMS      int64       `json:"ttfb_ms"`
 	Error       *replayErr  `json:"error"`
@@ -60,7 +61,7 @@ func pairsOf(hs []store.Header) [][2]string {
 func replayView(rp store.Replay, withBody bool) replayJSON {
 	v := replayJSON{ID: rp.ID, RequestID: rp.RequestID, CreatedAt: stamp(rp.CreatedAt), By: rp.By, URL: rp.URL, Line: rp.Line,
 		Sent: pairsOf(rp.Sent), Notes: rp.Notes, Proto: rp.Proto, Status: rp.Status, Reason: rp.Reason,
-		Headers: pairsOf(rp.Headers), BodySize: rp.Size, BodyCut: rp.Truncated, DurationMS: rp.Duration.Milliseconds(),
+		Headers: pairsOf(rp.Headers), BodySize: rp.Size, BodyCut: rp.Truncated, BodyDropped: rp.BodyDropped, DurationMS: rp.Duration.Milliseconds(),
 		TTFBMS: rp.TTFB.Milliseconds()}
 	if v.Notes == nil {
 		v.Notes = []string{}
@@ -75,7 +76,7 @@ func replayView(rp store.Replay, withBody bool) replayJSON {
 	if rp.ErrorKind != "" {
 		v.Error = &replayErr{rp.ErrorKind, rp.Error}
 	}
-	if withBody && rp.Body != nil {
+	if withBody && rp.Body != nil && !rp.BodyDropped {
 		if utf8.Valid(rp.Body) {
 			s := string(rp.Body)
 			v.BodyText = &s
@@ -240,6 +241,10 @@ func (h *Handler) getReplay(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) replayBody(w http.ResponseWriter, r *http.Request) {
 	rp, ok := h.loadReplay(w, r)
 	if !ok {
+		return
+	}
+	if rp.BodyDropped {
+		WriteError(w, http.StatusNotFound, "not_kept", store.AnswerDropped, "")
 		return
 	}
 	ct := "application/octet-stream"

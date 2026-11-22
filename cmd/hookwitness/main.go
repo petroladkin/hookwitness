@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/petroladkin/hookwitness/internal/emulate"
 	"io"
 	"log/slog"
 	"net"
@@ -22,10 +21,14 @@ import (
 	"github.com/petroladkin/hookwitness/internal/api"
 	"github.com/petroladkin/hookwitness/internal/catch"
 	"github.com/petroladkin/hookwitness/internal/config"
+	"github.com/petroladkin/hookwitness/internal/emulate"
+	"github.com/petroladkin/hookwitness/internal/forward"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/mcp"
+	"github.com/petroladkin/hookwitness/internal/oidc"
 	"github.com/petroladkin/hookwitness/internal/replay"
 	"github.com/petroladkin/hookwitness/internal/secret"
+	"github.com/petroladkin/hookwitness/internal/send"
 	"github.com/petroladkin/hookwitness/internal/server"
 	"github.com/petroladkin/hookwitness/internal/setup"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -95,6 +98,20 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 		fmt.Fprintln(stderr, "hookwitness:", err)
 		return 2
 	}
+	// The providers' client secrets: read once, kept in memory only.
+	secrets := map[string]string{}
+	var secretWarns []string
+	for _, p := range cfg.OIDC {
+		s, warn, err := access.ReadSecretFile(p.Env+"CLIENT_SECRET_FILE", p.SecretFile, 1)
+		if err != nil {
+			fmt.Fprintln(stderr, "hookwitness:", err)
+			return 2
+		}
+		secrets[p.Name] = s
+		if warn != "" {
+			secretWarns = append(secretWarns, warn)
+		}
+	}
 	log := newLogger(cfg.LogFormat, stderr)
 
 	st, err := store.Open(ctx, cfg.DBPath)
@@ -110,21 +127,6 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	if mode, err := st.AutoVacuum(ctx); err == nil && mode != "incremental" {
 		log.Warn("the database file does not shrink after clearing or pruning (made by an older version): stop the server and run hookwitness db compact", "db", cfg.DBPath)
 	}
-	// Space freed by pruning goes back to the file system once a minute;
-	// stopped before the database closes.
-	hkCtx, hkStop := context.WithCancel(ctx)
-	hkDone := make(chan struct{})
-	go func() {
-		defer close(hkDone)
-		st.Housekeep(hkCtx, time.Minute, func(freed int64, err error) {
-			if err != nil {
-				log.Warn("could not give free space back", "err", err)
-				return
-			}
-			log.Info("free space given back to the file system", "bytes", freed)
-		})
-	}()
-	defer func() { hkStop(); <-hkDone }()
 
 	// Endpoint secrets are sealed or hashed with this key; a database copied
 	// without it reveals none of them.
@@ -147,7 +149,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	if cfg.AdminAddr != "" {
 		reserved = ""
 	}
-	if cfg.Import != "" && !importSetup(ctx, st, cfg.Import, setup.Options{Reserved: reserved, MaxWait: cfg.MaxWait}, log) {
+	if cfg.Import != "" && !importSetup(ctx, st, cfg.Import, setup.Options{Reserved: reserved, MaxWait: cfg.MaxWait, Keep: store.Keep{Normal: cfg.Retention, Anomalies: cfg.RetentionAnomalies}}, log) {
 		return 1
 	}
 
@@ -197,7 +199,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	attrs = append(attrs, "db", cfg.DBPath, "schema", schema,
 		"ui", "http://"+adminLn.Addr().String()+cfg.AdminPrefix+"/",
 		"api", "http://"+adminLn.Addr().String()+api.Base(cfg.AdminPrefix),
-		"max_body", cfg.MaxBody, "max_inflight", cfg.MaxInFlight, "retention", cfg.Retention, "secret_key", keySource,
+		"max_body", cfg.MaxBody, "max_inflight", cfg.MaxInFlight, "retention", cfg.Retention, "retention_anomalies", cfg.RetentionAnomalies, "secret_key", keySource,
 		"replay", cfg.ReplayAllow.String())
 	if len(users) > 0 {
 		attrs = append(attrs, "login", "on", "users", len(users))
@@ -207,6 +209,13 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	if machine != "" {
 		attrs = append(attrs, "machine_token", "on")
 	}
+	if len(cfg.OIDC) > 0 {
+		var names []string
+		for _, p := range cfg.OIDC {
+			names = append(names, p.Name)
+		}
+		attrs = append(attrs, "oidc", strings.Join(names, ","))
+	}
 	log.Info("hookwitness started", attrs...)
 	if boot != nil {
 		log.Info(boot[0].(string), boot[1:]...)
@@ -214,20 +223,91 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 	if machineWarn != "" {
 		log.Warn(machineWarn)
 	}
+	// The redirect URI to register at each provider; the client id, never
+	// the secret.
+	for _, p := range cfg.OIDC {
+		log.Info("oidc provider configured", "name", p.Name, "issuer", p.Issuer, "client_id", p.ClientID,
+			"redirect_uri", cfg.RedirectURI(p), "allowed_domains", strings.Join(p.AllowedDomains, ","))
+	}
+	for _, w := range secretWarns {
+		log.Warn(w)
+	}
+	if len(cfg.OIDC) > 0 && len(users) == 0 {
+		log.Warn("OIDC providers are configured but login is off: add the first admin (HOOKWITNESS_ADMIN_USER, hookwitness user add, or the Users page); until then nobody signs in through a provider")
+	}
 	if len(users) == 0 && !loopback(adminLn.Addr()) {
 		log.Warn("the admin is open without login on this address: if it is reachable, anyone can read every caught request and change every endpoint; "+
 			"add a user to turn login on (HOOKWITNESS_ADMIN_USER, hookwitness user add, or the Users page)", "admin_addr", adminLn.Addr().String())
 	}
 
 	broker := live.New()
+	// Once a minute: retention by age (and counts after a limit was
+	// lowered), then the space freed goes back to the file system; stopped
+	// before the database closes.
+	keep := store.Keep{Normal: cfg.Retention, Anomalies: cfg.RetentionAnomalies}
+	hkCtx, hkStop := context.WithCancel(ctx)
+	hkDone := make(chan struct{})
+	go func() {
+		defer close(hkDone)
+		st.Housekeep(hkCtx, store.Housekeeping{Interval: time.Minute, Keep: keep,
+			Pruned: func(reg int64, n int) {
+				broker.Publish(reg)
+				log.Info("requests pruned by retention", "register", reg, "requests", n)
+			},
+			Report: func(freed int64, err error) {
+				if err != nil {
+					log.Warn("housekeeping", "err", err)
+					return
+				}
+				log.Info("free space given back to the file system", "bytes", freed)
+			},
+			MaxSize: cfg.MaxDBSize,
+			Evicted: func(e store.Evicted) {
+				for reg := range e.Registers {
+					broker.Publish(reg)
+				}
+				attrs := []any{"bodies", e.Bodies, "requests", e.Rows, "used", e.After, "limit", cfg.MaxDBSize}
+				if e.Stuck {
+					log.Warn("size limit: every request left is pinned; nothing more can be dropped", attrs...)
+					return
+				}
+				log.Warn("size limit: the oldest bodies and requests dropped", attrs...)
+			}})
+	}()
+	defer func() { hkStop(); <-hkDone }()
+	if cfg.MaxDBSize > 0 {
+		used, _ := st.Usage(ctx)
+		log.Info("database size limit", "limit", cfg.MaxDBSize, "used", used)
+	}
 	catcher := &catch.Handler{Store: st, Live: broker, Log: log, MaxBody: cfg.MaxBody, MaxInFlight: cfg.MaxInFlight,
-		Retention: cfg.Retention, MaxWait: cfg.MaxWait, Keys: keys}
-	replays := replay.New(st, log, replay.Options{Policy: cfg.ReplayAllow, MaxWait: cfg.MaxWait, Budget: catcher})
+		Retention: keep, MaxWait: cfg.MaxWait, Keys: keys}
+	replays := replay.New(st, log, replay.Options{Policy: cfg.ReplayAllow, MaxWait: cfg.MaxWait, Budget: catcher, Live: broker})
+	// Forwards share replay's target policy (-replay-allow) and the bytes
+	// budget; the catcher stops them with its own holds.
+	forwards := forward.New(log, forward.Options{Policy: cfg.ReplayAllow, MaxWait: cfg.MaxWait, Budget: catcher})
+	catcher.Forward = forwards
+	if line, err := forwardNotice(ctx, st, cfg.ReplayAllow); err != nil {
+		log.Error("endpoints not read", "err", err)
+		return 1
+	} else if line != nil {
+		if cfg.ReplayAllow.Off() {
+			log.Warn(line[0].(string), line[1:]...)
+		} else {
+			log.Info(line[0].(string), line[1:]...)
+		}
+	}
+	var providers []*oidc.Provider
+	for _, p := range cfg.OIDC {
+		providers = append(providers, oidc.NewProvider(oidc.Config{Name: p.Name, Label: p.Label, Issuer: p.Issuer, ClientID: p.ClientID,
+			ClientSecret: secrets[p.Name], RedirectURI: cfg.RedirectURI(p), AllowedDomains: p.AllowedDomains}))
+	}
 	ui := web.New(st, broker, log, web.Options{
 		Prefix: cfg.AdminPrefix, Separate: separate, PublicURL: cfg.PublicURL, CatchAddr: ln.Addr().String(),
-		MaxBody: cfg.MaxBody, Retention: cfg.Retention, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
-		Access: auth, Proxies: cfg.TrustedProxies, Replay: replays, MCPMaxSessions: cfg.MCPMaxSessions,
+		MaxBody: cfg.MaxBody, Retention: keep, Hosts: cfg.AdminHosts, MaxWait: cfg.MaxWait, Keys: keys,
+		Access: auth, Proxies: cfg.TrustedProxies, Replay: replays, MCPMaxSessions: cfg.MCPMaxSessions, MaxDBSize: cfg.MaxDBSize,
+		OIDC: providers, AdminURL: cfg.AdminOrigin(),
 	})
+	ui.DiscoverProviders(ctx)
 	o := server.Options{DB: st, Log: log, AdminPrefix: cfg.AdminPrefix, Admin: ui, Catch: catcher}
 	if !separate {
 		err = server.Serve(ctx, ln, server.New(o), log, ui.StopStreams, catcher.Stop)
@@ -238,14 +318,40 @@ func serve(ctx context.Context, args []string, getenv func(string) string, stder
 				return server.Serve(ctx, adminLn, server.AdminRoot(o), log, ui.StopStreams)
 			})
 	}
-	catcher.Wait() // timeouts and drops record their outcome before the store closes
-	replays.Wait() // so do replays
+	catcher.Wait()  // timeouts and drops record their outcome before the store closes
+	forwards.Wait() // so do forwards
+	replays.Wait()  // and replays
 	if err != nil {
 		log.Error("server stopped with an error", "err", err)
 		return 1
 	}
 	log.Info("stopped")
 	return 0
+}
+
+// forwardNotice is the start-up line about endpoints that forward live
+// traffic to a receiver (message, then attributes), or nil when none does:
+// with sending off (-replay-allow none) their requests get the failure
+// answer, which is a warning.
+func forwardNotice(ctx context.Context, st *store.Store, p send.Policy) ([]any, error) {
+	eps, err := st.Endpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, ep := range eps {
+		if c, err := emulate.Parse(ep.Config); err == nil && c.Forward != nil {
+			paths = append(paths, ep.Path+" -> "+c.Forward.Origin())
+		}
+	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	if p.Off() {
+		return []any{"forwarding is off on this server (-replay-allow none): requests to these endpoints get the failure answer, not the receiver's",
+			"endpoints", strings.Join(paths, ", ")}, nil
+	}
+	return []any{"endpoints forward live traffic to receivers", "endpoints", strings.Join(paths, ", "), "policy", p.String()}, nil
 }
 
 // loopback reports whether a listener only takes connections from this
@@ -279,12 +385,18 @@ func bootstrap(ctx context.Context, st *store.Store, auth *access.Authenticator,
 	if err := access.CheckPassword(pw); err != nil {
 		return nil, fmt.Errorf("HOOKWITNESS_ADMIN_PASSWORD_FILE: %w", err)
 	}
+	email := ""
+	if e := getenv("HOOKWITNESS_ADMIN_EMAIL"); e != "" {
+		if email, err = access.CheckEmail(e); err != nil {
+			return nil, fmt.Errorf("HOOKWITNESS_ADMIN_EMAIL: %w", err)
+		}
+	}
 	if on, err := st.HasUsers(ctx); err != nil {
 		return nil, err
 	} else if on {
 		return []any{"admin bootstrap skipped: the database already has users (the password file is read only then)", "user", n}, nil
 	}
-	if _, err := st.AddUser(ctx, n, store.RoleAdmin, auth.HashPassword(pw)); err != nil {
+	if _, err := st.AddUserWithEmail(ctx, n, store.RoleAdmin, auth.HashPassword(pw), email); err != nil {
 		return nil, err
 	}
 	return []any{"admin user created from HOOKWITNESS_ADMIN_USER: login is on", "user", n}, nil

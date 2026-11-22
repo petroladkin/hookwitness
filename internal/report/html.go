@@ -86,21 +86,22 @@ func fontFaces(fonts fs.FS) string {
 }
 
 var htmlTemplates = template.Must(template.New("report").Funcs(template.FuncMap{
-	"stamp":    stamp,
-	"num":      num,
-	"gap":      gap,
-	"span":     rangeLine,
-	"alarm":    func(stamp string) bool { return !strings.HasPrefix(stamp, "2") },
-	"note":     bodyNote,
-	"answer":   answerLine,
-	"target":   target,
-	"ordinal":  ordinal,
-	"pointer":  pointer,
-	"short":    func(s string) string { return s[:min(16, len(s))] + "…" },
-	"sub":      func(a, b int) int { return a - b },
-	"lower":    strings.ToLower,
-	"imgLabel": imageLabel,
-	"imgNote":  imageNote,
+	"stamp":        stamp,
+	"num":          num,
+	"gap":          gap,
+	"span":         rangeLine,
+	"alarm":        func(stamp string) bool { return !strings.HasPrefix(stamp, "2") },
+	"note":         bodyNote,
+	"receiverNote": receiverBodyNote,
+	"answer":       answerLine,
+	"target":       target,
+	"ordinal":      ordinal,
+	"pointer":      pointer,
+	"short":        func(s string) string { return s[:min(16, len(s))] + "…" },
+	"sub":          func(a, b int) int { return a - b },
+	"lower":        strings.ToLower,
+	"imgLabel":     imageLabel,
+	"imgNote":      imageNote,
 	"dataURI": func(img ItemImage) template.URL {
 		return template.URL("data:" + img.Type + ";base64," + base64.StdEncoding.EncodeToString(img.Data))
 	},
@@ -188,10 +189,12 @@ const htmlSource = `{{define "head" -}}
 <table class="retries">
 <caption>Retries · the same body delivered more than once</caption>
 {{if .Retries}}<tr><th scope="col">Deliveries</th><th scope="col">Gaps</th><th scope="col">Body SHA-256</th></tr>
-{{range .Retries}}<tr><td>{{range $i, $n := .Nos}}{{if $i}}, {{end}}<a href="#r{{$n}}">#{{$n}}</a>{{end}}</td><td>{{range $i, $g := .Gaps}}{{if $i}}, {{end}}{{gap $g}}{{end}}</td><td><code title="{{.SHA256}}">{{short .SHA256}}</code></td></tr>
+{{range .Retries}}<tr><td>{{range $i, $n := .Nos}}{{if $i}}, {{end}}<a href="#r{{$n}}">#{{$n}}</a>{{end}}</td><td>{{range $i, $g := .Gaps}}{{if $i}}, {{end}}{{gap $g}}{{end}}</td><td>{{if .Event}}event <code>{{.Event}}</code>{{else}}<code title="{{.SHA256}}">{{short .SHA256}}</code>{{end}}</td></tr>
 {{end}}{{else}}<tr><td class="none">None.</td></tr>
 {{end}}</table>
-</section>
+{{with .PrunedLine}}<p class="pruned"><b>Pruned</b> {{.}}</p>
+{{end}}{{with .ReceiverLine}}<p class="pruned"><b>Receiver</b> {{.}}</p>
+{{end}}</section>
 {{with .Setup}}<section class="setup">
 <h2>Setup</h2>
 <p class="intro">{{setupIntro $.Head}}</p>
@@ -204,6 +207,7 @@ const htmlSource = `{{define "head" -}}
 <caption>Schemas</caption>
 {{range .Schemas}}<tr><th scope="row">{{.Name}}</th><td>{{.Use}}</td></tr>
 {{end}}</table>
+{{end}}{{with .Receiver}}<p class="intro"><b>Receiver</b> {{.}}</p>
 {{end}}<table class="kv3">
 <caption>Rules · in order; the first that holds answers</caption>
 {{range .Rules}}<tr><td class="n">{{.No}}</td><th scope="row">{{.When}}</th><td>{{.Then}}</td></tr>
@@ -234,7 +238,9 @@ const htmlSource = `{{define "head" -}}
 <dl class="facts">
 <div><dt>Received</dt><dd>{{stamp .At}} from <code>{{.Remote}}</code> · {{.Proto}}</dd></div>
 <div><dt>Answer</dt><dd>{{answer .Answer}}</dd></div>
-{{if gt .Delivery 1}}<div><dt>Delivery</dt><dd>{{ordinal .Delivery}} of this body (a retry)</dd></div>
+{{with .Receiver}}<div><dt>Receiver</dt><dd>{{.}}</dd></div>
+{{end}}{{if .Pinned}}<div><dt>Pinned</dt><dd>never pruned by retention</dd></div>
+{{end}}{{if gt .Delivery 1}}<div><dt>Delivery</dt><dd>{{ordinal .Delivery}} of this body (a retry)</dd></div>
 {{end}}</dl>
 {{if .Verdicts}}<section class="verdicts">
 <h3>Verdicts</h3>
@@ -262,7 +268,13 @@ const htmlSource = `{{define "head" -}}
 {{else if isText .Body}}<pre class="body">{{.Body.Text}}</pre>
 {{end}}{{if .Body.Cut}}<p class="note">Cut at {{size .Body.Shown}}.</p>
 {{end}}</section>
-</article>
+{{with .ReceiverBody}}<section>
+<h3>The receiver's answer <span class="note">{{len $.ReceiverHeaders}} header lines · {{receiverNote $}}</span></h3>
+{{if $.ReceiverHeaders}}<table class="kv">{{range $.ReceiverHeaders}}<tr><th><code>{{.Name}}</code></th><td>{{if .Masked}}<span class="masked">{{.Value}}</span>{{else}}<code>{{.Value}}</code>{{end}}</td></tr>{{end}}</table>
+{{end}}{{if isJSON .}}<pre class="body json">{{range .Tokens}}{{if or .Class .Bad}}<span class="{{tokenClass .Class .Bad}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}</pre>
+{{else if isText .}}<pre class="body">{{.Text}}</pre>
+{{end}}</section>
+{{end}}</article>
 {{end}}
 
 {{define "reply" -}}
@@ -340,6 +352,7 @@ th,td{text-align:left;padding:4px 12px 4px 0;border-bottom:1px solid var(--rule)
 .counts th{font-weight:400;color:var(--muted)}
 .hot{color:var(--alarm)}
 .retries{margin-top:16px;width:100%}
+.pruned{margin:12px 0 0}
 .summary caption{white-space:nowrap}
 .checks td.none{font:inherit;color:var(--muted)}
 .none{color:var(--muted)}

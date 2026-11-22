@@ -16,7 +16,9 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,9 +29,9 @@ import (
 	"github.com/petroladkin/hookwitness/internal/access"
 	"github.com/petroladkin/hookwitness/internal/api"
 	"github.com/petroladkin/hookwitness/internal/catch"
-	"github.com/petroladkin/hookwitness/internal/emulate"
 	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/mcp"
+	"github.com/petroladkin/hookwitness/internal/oidc"
 	"github.com/petroladkin/hookwitness/internal/replay"
 	"github.com/petroladkin/hookwitness/internal/secret"
 	"github.com/petroladkin/hookwitness/internal/store"
@@ -58,7 +60,9 @@ type Handler struct {
 	reserve string       // what endpoint paths may not use (catch.CheckPath)
 	catch   api.CatchURL // where senders reach the catch listener
 	limit   int64        // the body limit, shown when a body was refused
-	keep    int          // retention per register, so the page can drop pruned rows
+	keep    store.Keep   // the default retention per register
+	maxDB   int64        // the database size limit; 0: none
+	stor    storageCache
 	maxWait time.Duration
 	hosts   map[string]bool
 	keys    *secret.Key
@@ -72,8 +76,14 @@ type Handler struct {
 	auth      *access.Authenticator // nil: login is off for good (tests)
 	limiter   *access.Limiter       // failed logins per client address
 	proxies   access.Proxies        // reverse proxies whose X-Forwarded-For names the client
-	assets    map[string]string     // asset path -> content hash for cache busting
-	replay    *replay.Service       // sends caught requests to targets
+	// Provider sign-in: the providers, the flows in progress, and the
+	// admin's external origin (its host passes the host check).
+	oidc        []*oidc.Provider
+	flows       *oidc.Flows
+	adminOrigin string
+	adminHost   string
+	assets      map[string]string // asset path -> content hash for cache busting
+	replay      *replay.Service   // sends caught requests to targets
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -86,7 +96,7 @@ type Options struct {
 	PublicURL string        // base URL senders reach the catch listener at; "" = derived
 	CatchAddr string        // the catch listener's address (a real port), for catch URLs when the admin is separate
 	MaxBody   int64         // the catcher's body limit, shown when a body was refused
-	Retention int           // requests kept per register
+	Retention store.Keep    // requests kept per register by default
 	MaxWait   time.Duration // longest delay an endpoint may configure
 	Hosts     []string      // host names the UI answers to besides IP addresses and localhost
 	Keys      *secret.Key   // seals and hashes endpoint secrets; verifies on re-check
@@ -98,17 +108,28 @@ type Options struct {
 	Replay *replay.Service
 	// MCPMaxSessions caps the MCP sessions open at once; 0: no limit.
 	MCPMaxSessions int
+	// MaxDBSize is the database size limit, shown with the database's
+	// size; 0: none.
+	MaxDBSize int64
+	// OIDC are the providers people may sign in with; AdminURL the admin's
+	// external origin, which their redirect URIs use (config.AdminOrigin).
+	OIDC     []*oidc.Provider
+	AdminURL string
 }
 
 // New returns the UI.
 func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Handler {
-	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention, maxWait: o.MaxWait, keys: o.Keys,
+	h := &Handler{store: st, live: broker, log: log, prefix: o.Prefix, limit: o.MaxBody, keep: o.Retention, maxWait: o.MaxWait, keys: o.Keys, maxDB: o.MaxDBSize,
 		hosts: map[string]bool{}, stop: make(chan struct{}), auth: o.Access, limiter: access.NewLimiter(nil), proxies: o.Proxies}
 	if h.maxWait == 0 {
 		h.maxWait = 5 * time.Minute
 	}
 	for _, name := range o.Hosts {
 		h.hosts[strings.ToLower(name)] = true
+	}
+	h.oidc, h.flows, h.adminOrigin = o.OIDC, oidc.NewFlows(nil), o.AdminURL
+	if u, err := url.Parse(o.AdminURL); o.AdminURL != "" && err == nil {
+		h.adminHost = hostName(u.Host)
 	}
 	prefix := o.Prefix
 	if !o.Separate {
@@ -138,27 +159,35 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	mux.HandleFunc("POST "+p+"/e/{reg}/delete", h.deleteEndpoint)
 	mux.HandleFunc("POST "+p+"/e/{reg}/switch", h.switchEndpoint)
 	mux.HandleFunc("POST "+p+"/e/{reg}/recheck", h.recheck)
+	mux.HandleFunc("POST "+p+"/e/{reg}/retention", h.saveRetention)
 	mux.HandleFunc("GET "+p+"/e/{reg}/report", h.report)
 	mux.HandleFunc("GET "+p+"/e/{reg}/behaviour", h.behaviourPage)
 	mux.HandleFunc("POST "+p+"/e/{reg}/behaviour", h.editBehaviour)
 	mux.HandleFunc("GET "+p+"/r/{id}/body", h.downloadBody)
 	mux.HandleFunc("GET "+p+"/r/{id}/image", h.image)
 	mux.HandleFunc("POST "+p+"/r/{id}/replay", h.replayRequest)
+	mux.HandleFunc("POST "+p+"/r/{id}/pin", h.pin)
 	mux.HandleFunc("GET "+p+"/replays/{id}/body", h.replayBody)
+	mux.HandleFunc("GET "+p+"/r/{id}/forward/body", h.forwardBody)
 	mux.HandleFunc("GET "+p+"/static/{file...}", h.static)
 	mux.HandleFunc("GET "+p+"/login", h.loginPage)
 	mux.HandleFunc("POST "+p+"/login", h.login)
 	mux.HandleFunc("POST "+p+"/logout", h.logout)
+	mux.HandleFunc("POST "+p+"/oidc/{name}/start", h.oidcStart)
+	mux.HandleFunc("GET "+p+"/oidc/{name}/callback", h.oidcCallback)
 	mux.HandleFunc("POST "+p+"/theme", h.setTheme)
 	mux.HandleFunc("GET "+p+"/account", h.accountPage)
 	mux.HandleFunc("POST "+p+"/account/password", h.changePassword)
 	mux.HandleFunc("POST "+p+"/account/tokens", h.createToken)
 	mux.HandleFunc("POST "+p+"/account/tokens/{id}/revoke", h.revokeOwnToken)
+	mux.HandleFunc("POST "+p+"/account/unlink", h.unlinkOwn)
 	mux.HandleFunc("GET "+p+"/users", h.usersPage)
 	mux.HandleFunc("POST "+p+"/users", h.addUser)
 	mux.HandleFunc("POST "+p+"/users/{name}/role", h.setRole)
 	mux.HandleFunc("POST "+p+"/users/{name}/password", h.resetPassword)
 	mux.HandleFunc("POST "+p+"/users/{name}/remove", h.removeUser)
+	mux.HandleFunc("POST "+p+"/users/{name}/email", h.setEmail)
+	mux.HandleFunc("POST "+p+"/users/{name}/unlink", h.unlinkUser)
 	mux.HandleFunc("POST "+p+"/tokens/{id}/revoke", h.revokeAnyToken)
 
 	// Browsers send Sec-Fetch-Site / Origin; a form posted from another site
@@ -167,17 +196,20 @@ func New(st *store.Store, broker *live.Broker, log *slog.Logger, o Options) *Han
 	h.mux = h.csrf.Handler(mux)
 
 	if o.Replay == nil {
-		o.Replay = replay.New(st, log, replay.Options{MaxWait: h.maxWait})
+		o.Replay = replay.New(st, log, replay.Options{MaxWait: h.maxWait, Live: broker})
 	}
 	h.replay = o.Replay
-	ao := api.Options{Prefix: prefix, Reserved: h.reserve, Catch: h.catch, MaxWait: h.maxWait, Stop: h.stop, Version: version.String(),
-		Access: o.Access, Replay: o.Replay}
+	ao := api.Options{Prefix: prefix, Keep: o.Retention, Reserved: h.reserve, Catch: h.catch, MaxWait: h.maxWait, Stop: h.stop, Version: version.String(),
+		Access: o.Access, Replay: o.Replay, MaxDBSize: o.MaxDBSize}
+	for _, p := range o.OIDC {
+		ao.Providers = append(ao.Providers, api.Provider{Name: p.Name, Label: p.Label, Issuer: p.Issuer})
+	}
 	if o.Keys != nil {
 		ao.Keys, ao.Keyring = o.Keys, o.Keys // a nil *secret.Key must stay a nil interface
 	}
 	ao.Fonts, _ = fs.Sub(staticFS, "static")
 	h.api = api.New(st, broker, log, ao)
-	h.mcp = mcp.Handler(h.api, api.Base(prefix), version.String(), log, h.stop, o.MCPMaxSessions)
+	h.mcp = mcp.Handler(h.api, api.Base(prefix), version.String(), log, h.stop, o.MCPMaxSessions, o.Access)
 	h.mcpAuthed = withMCPIdentity(h.mcp)
 	return h
 }
@@ -193,6 +225,27 @@ func (h *Handler) StopStreams() {
 // csp allows nothing from other origins: the UI is self-contained.
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; " +
 	"connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+
+// csp is the page's policy. With providers, a sign-in's form is answered
+// with a redirect to the provider (or to the admin's own origin), and
+// browsers hold redirects after a form to form-action too: those origins
+// are added to it, nothing else.
+func (h *Handler) csp() string {
+	if len(h.oidc) == 0 {
+		return csp
+	}
+	targets := []string{"'self'"}
+	add := func(o string) {
+		if o != "" && !slices.Contains(targets, o) {
+			targets = append(targets, o)
+		}
+	}
+	add(h.adminOrigin)
+	for _, p := range h.oidc {
+		add(p.AuthOrigin())
+	}
+	return strings.Replace(csp, "form-action 'self'", "form-action "+strings.Join(targets, " "), 1)
+}
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isMCP := r.URL.Path == h.prefix+"/mcp"
@@ -219,7 +272,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(access.With(r.Context(), id))
 	}
 	hd := w.Header()
-	hd.Set("Content-Security-Policy", csp)
+	hd.Set("Content-Security-Policy", h.csp())
 	hd.Set("X-Content-Type-Options", "nosniff")
 	hd.Set("Referrer-Policy", "same-origin")
 	if isAPI {
@@ -264,7 +317,7 @@ func (h *Handler) allowedHost(host string) bool {
 	if _, err := netip.ParseAddr(name); err == nil {
 		return true
 	}
-	return name == "localhost" || strings.HasSuffix(name, ".localhost") || h.hosts[name]
+	return name == "localhost" || strings.HasSuffix(name, ".localhost") || h.hosts[name] || name != "" && name == h.adminHost
 }
 
 // regID reads the {reg} path value: an endpoint id, or "unmatched".
@@ -322,6 +375,10 @@ func (h *Handler) nav(r *http.Request, current int64, onRegister bool) (navView,
 		Build:      version.String(),
 		Theme:      theme(r),
 		Here:       r.URL.RequestURI(),
+	}
+	if st, err := h.storage(r.Context()); err == nil {
+		v.Storage = &st
+		v.StorageWarnings = st.Warnings()
 	}
 	if h.auth != nil {
 		on, err := h.uiLoginOn(r.Context())
@@ -540,13 +597,17 @@ func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.showRegister(w, r, reg, ep, ex, export, draft, replayDialog, http.StatusOK)
+	var retain *retentionDialogView
+	if r.URL.Query().Has("retention") {
+		retain = h.retentionDefaults(reg, ep.Kept, h.regPath(reg))
+	}
+	h.showRegister(w, r, reg, ep, ex, export, draft, replayDialog, http.StatusOK, retain)
 }
 
 // showRegister renders a register page, with an exhibit and the report
 // dialog when given.
 func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64, ep store.Endpoint, ex *exhibitView, export *exportView,
-	draft *draftDialogView, replay *replayDialogView, status int) {
+	draft *draftDialogView, replay *replayDialogView, status int, retention ...*retentionDialogView) {
 	ctx := r.Context()
 	// The change sequence before the rows: the page shows every change up
 	// to it, and its feed sends the ones after.
@@ -587,6 +648,7 @@ func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64
 		Path:     ep.Path,
 		Enabled:  ep.Enabled || reg == store.Unmatched,
 		Unset:    unsetSecrets(ep.Config),
+		Receiver: receiverOf(ep.Config),
 		Count:    ep.Count,
 		Rows:     rows,
 		More:     more,
@@ -594,11 +656,19 @@ func (h *Handler) showRegister(w http.ResponseWriter, r *http.Request, reg int64
 		Seq:      seq,
 		Base:     h.regPath(reg),
 		Selected: selectedID(ex),
-		Keep:     h.keep,
+		Keeps:    h.keepsOf(reg, ep.Kept),
 		Export:   export,
 		Draft:    draft,
 		Replay:   replay,
+		Retain:   firstOf(retention),
 	}, ex))
+}
+
+func firstOf[T any](s []*T) *T {
+	if len(s) == 0 {
+		return nil
+	}
+	return s[0]
 }
 
 func selectedID(ex *exhibitView) int64 {
@@ -651,13 +721,19 @@ func (h *Handler) row(req store.Request, n int, fresh bool) rowView {
 		Delivery: n,
 		Href:     h.regPath(req.EndpointID) + "/r/" + strconv.FormatInt(req.ID, 10),
 		Fresh:    fresh,
-		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
+		Outcome:  h.outcomeOf(req),
 		Verdict:  req.Verdict,
 		Replays:  req.Replays,
 		Repeat:   repeatNote(req.Verdicts),
+		Pinned:   req.Pinned,
+		Anomaly:  req.Anomaly,
 	}
-	if len(req.BodySHA256) > 0 {
-		v.Group = hex.EncodeToString(req.BodySHA256[:6])
+	// Retries group by the event when the endpoint names one, else by body.
+	if key, byEvent := req.RetryGroup(); len(key) > 0 {
+		v.Group = hex.EncodeToString(key[:6])
+		if byEvent {
+			v.Delivery = req.Attempt
+		}
 	}
 	if req.EndpointID == store.Unmatched {
 		v.Detail = req.Path
@@ -712,6 +788,8 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		No:       req.No,
 		Method:   req.Method,
 		Path:     req.Path,
+		Pinned:   req.Pinned,
+		PinURL:   h.prefix + "/r/" + strconv.FormatInt(req.ID, 10) + "/pin",
 		RawQuery: req.RawQuery,
 		Proto:    req.Proto,
 		At:       req.ReceivedAt,
@@ -719,8 +797,10 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		Size:     req.Size,
 		Kept:     int64(len(req.Body)),
 		TooLarge: req.TooLarge,
+		Dropped:  req.BodyDropped,
 		Status:   req.Status,
 		Delivery: n,
+		Event:    req.Event,
 		Headers:  req.Headers,
 		Query:    parseQuery(req.RawQuery),
 		Body:     viewBody(req.Body),
@@ -728,8 +808,11 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 		Self:     h.regPath(req.EndpointID) + "/r/" + strconv.FormatInt(req.ID, 10),
 		Unmatch:  req.EndpointID == store.Unmatched,
 		Limit:    h.limit,
-		Outcome:  emulate.ParseOutcome(req.Outcome, req.Status),
+		Outcome:  h.outcomeOf(req),
 		Verdicts: parseVerdicts(req.Verdicts),
+	}
+	if req.Event != nil && *req.Event != "" {
+		v.Delivery = req.Attempt
 	}
 	if bad := badPaths(v.Verdicts); len(bad) > 0 && v.Body.Kind == bodyJSON {
 		markBad(v.Body.JSON, bad)
@@ -746,6 +829,11 @@ func (h *Handler) exhibit(ctx context.Context, req store.Request) (exhibitView, 
 			return exhibitView{}, err
 		}
 	}
+	if v.Outcome.Forward != nil {
+		if v.Exchange, err = h.exchange(ctx, req, v.Outcome); err != nil {
+			return exhibitView{}, err
+		}
+	}
 	return v, nil
 }
 
@@ -756,6 +844,10 @@ func (h *Handler) downloadBody(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req, err := h.store.Request(r.Context(), id)
+	if err == nil && req.BodyDropped {
+		http.Error(w, store.DroppedReason, http.StatusNotFound)
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) || (err == nil && req.TooLarge) {
 		http.NotFound(w, r)
 		return
@@ -846,7 +938,14 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 		}
-		b, _ := json.Marshal(map[string]int{"kept": ep.Count, "pass": c["pass"], "fail": c["fail"], "nv": c["n/v"], "nc": c["n/c"]})
+		// The lowest kept id of each lane: an open page drops a loaded row
+		// below its lane's (pruned), never by a count.
+		wn, wa, err := h.store.Watermarks(r.Context(), reg)
+		if err != nil {
+			return err
+		}
+		b, _ := json.Marshal(map[string]int64{"kept": int64(ep.Count), "pass": int64(c["pass"]), "fail": int64(c["fail"]), "nv": int64(c["n/v"]),
+			"nc": int64(c["n/c"]), "pinned": int64(ep.Kept.Pinned), "pruned": ep.Kept.Pruned, "wm_normal": wn, "wm_anomaly": wa})
 		fmt.Fprintf(w, "id: %d.%d\nevent: counts\ndata: %s\n\n", last, next, b)
 		return nil
 	}
@@ -923,9 +1022,10 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-check.C:
 			// The login of this page ended (logout, expiry, a password or role
-			// change): the page reloads onto the login page. An open feed
-			// otherwise counts as activity, which the check records.
-			if h.sessionEnded(r) {
+			// change; a token revoked): the page reloads onto the login page.
+			// An open feed otherwise counts as activity, which the check
+			// records.
+			if h.loginEnded(r) {
 				fmt.Fprint(w, "event: login\ndata: ended\n\n")
 				rc.Flush()
 				return

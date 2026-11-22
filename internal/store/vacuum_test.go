@@ -29,7 +29,7 @@ func fill(t *testing.T, s *Store, ep int64, n, keep int) {
 		r := sample(ep, "")
 		r.Body = make([]byte, 64<<10)
 		rand.Read(r.Body)
-		if err := s.AddRequest(context.Background(), r, keep, nil); err != nil {
+		if err := s.AddRequest(context.Background(), r, Keep{Normal: keep}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -92,7 +92,7 @@ func TestPruneShrinksByHousekeeping(t *testing.T) {
 	// pruned pages are not reused, 10 MiB stay free.
 	fill(t, s, ep.ID, 160, 160)
 	for range 160 {
-		s.AddRequest(ctx, sample(ep.ID, "{}"), 160, nil)
+		s.AddRequest(ctx, sample(ep.ID, "{}"), Keep{Normal: 160}, nil)
 	}
 	before := fileSize(t, s, p)
 	if freed, _ := s.Reclaim(ctx, 64<<20); freed != 0 {
@@ -107,7 +107,7 @@ func TestPruneShrinksByHousekeeping(t *testing.T) {
 		// Between steps the writer is free: a request is caught (it would
 		// wait forever if a step kept the lock).
 		if len(steps) == 1 {
-			if err := s.AddRequest(ctx, sample(ep.ID, "{}"), 160, nil); err != nil {
+			if err := s.AddRequest(ctx, sample(ep.ID, "{}"), Keep{Normal: 160}, nil); err != nil {
 				t.Error(err)
 			}
 		}

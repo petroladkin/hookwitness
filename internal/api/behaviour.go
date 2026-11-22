@@ -23,17 +23,24 @@ type behaviourJSON struct {
 	Vars    []emulate.Var    `json:"vars"`
 	Schemas []emulate.Schema `json:"schemas"`
 	Secrets []secretJSON     `json:"secrets"`
+	Event   *emulate.Source  `json:"event,omitempty"`
+	Forward *emulate.Forward `json:"forward,omitempty"`
+	// Warnings: what the configuration risks (an open relay).
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // behaviourIn is what a PUT replaces. Secrets are managed on their own
 // route; a "secrets" list sent back as read is accepted and ignored.
 type behaviourIn struct {
-	Default emulate.Reply    `json:"default"`
-	Rules   []emulate.Rule   `json:"rules"`
-	Checks  []emulate.Check  `json:"checks"`
-	Vars    []emulate.Var    `json:"vars"`
-	Schemas []emulate.Schema `json:"schemas"`
-	Secrets json.RawMessage  `json:"secrets"`
+	Default  emulate.Reply    `json:"default"`
+	Rules    []emulate.Rule   `json:"rules"`
+	Checks   []emulate.Check  `json:"checks"`
+	Vars     []emulate.Var    `json:"vars"`
+	Schemas  []emulate.Schema `json:"schemas"`
+	Secrets  json.RawMessage  `json:"secrets"`
+	Event    *emulate.Source  `json:"event"`
+	Forward  *emulate.Forward `json:"forward"`
+	Warnings json.RawMessage  `json:"warnings"` // sent back as read: ignored
 }
 
 // secretJSON describes a secret.
@@ -55,7 +62,8 @@ func secretView(c emulate.Config, s emulate.Secret) secretJSON {
 }
 
 func behaviourView(c emulate.Config) behaviourJSON {
-	v := behaviourJSON{Default: c.Default, Rules: c.Rules, Checks: c.Checks, Vars: c.Vars, Schemas: c.Schemas, Secrets: []secretJSON{}}
+	v := behaviourJSON{Default: c.Default, Rules: c.Rules, Checks: c.Checks, Vars: c.Vars, Schemas: c.Schemas, Secrets: []secretJSON{}, Event: c.Event,
+		Forward: c.Forward, Warnings: behaviourWarnings(c)}
 	if v.Rules == nil {
 		v.Rules = []emulate.Rule{}
 	}
@@ -72,6 +80,14 @@ func behaviourView(c emulate.Config) behaviourJSON {
 		v.Secrets = append(v.Secrets, secretView(c, s))
 	}
 	return v
+}
+
+// receiverOrigin names a receiver in logs: its origin, "none" when removed.
+func receiverOrigin(f *emulate.Forward) string {
+	if f == nil {
+		return "none"
+	}
+	return f.Origin()
 }
 
 func etag(stored string) string { return `"` + emulate.Version(stored) + `"` }
@@ -114,12 +130,20 @@ func (h *Handler) putBehaviour(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "behaviour", err)
 		return
 	}
-	cfg := emulate.Config{Default: in.Default, Rules: in.Rules, Checks: in.Checks, Vars: in.Vars, Schemas: in.Schemas, Secrets: stored.Secrets}
+	cfg := emulate.Config{Default: in.Default, Rules: in.Rules, Checks: in.Checks, Vars: in.Vars, Schemas: in.Schemas, Secrets: stored.Secrets,
+		Event: in.Event, Forward: in.Forward}
 	if cfg.Default.Status == 0 {
 		cfg.Default.Status = 200 // as stored configurations read
 	}
+	changed := forwardChanged(stored.Forward, cfg.Forward)
+	if changed && !mayForward(w, r) {
+		return
+	}
 	if err := cfg.Validate(h.o.MaxWait); err != nil {
 		WriteError(w, http.StatusUnprocessableEntity, "invalid", err.Error(), fieldOf(err))
+		return
+	}
+	if changed && !h.checkTarget(w, cfg.Forward) {
 		return
 	}
 	if h.beforeSave != nil {
@@ -135,6 +159,9 @@ func (h *Handler) putBehaviour(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("endpoint behaviour changed", logAttrs(r, "path", ep.Path, "via", "api")...)
+	if changed {
+		h.log.Warn("endpoint receiver changed", logAttrs(r, "path", ep.Path, "receiver", receiverOrigin(cfg.Forward))...)
+	}
 	w.Header().Set("ETag", etag(cfg.String()))
 	writeJSON(w, http.StatusOK, behaviourView(cfg))
 }
@@ -145,7 +172,7 @@ func (h *Handler) stale(w http.ResponseWriter) {
 }
 
 // fieldPrefixes map the start of a validation message to its JSON path.
-var fieldPrefixes = regexp.MustCompile(`^(rule|check) (\d+)|^default reply|^variable|^secret|^schema`)
+var fieldPrefixes = regexp.MustCompile(`^(rule|check) (\d+)|^default reply|^variable|^secret|^schema|^receiver`)
 
 // fieldOf names the part of the behaviour a validation error is about.
 func fieldOf(err error) string {
@@ -162,6 +189,8 @@ func fieldOf(err error) string {
 		return "vars"
 	case m[0] == "schema":
 		return "schemas"
+	case m[0] == "receiver":
+		return "forward"
 	}
 	return "secrets"
 }

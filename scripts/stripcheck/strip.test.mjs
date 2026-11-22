@@ -135,3 +135,15 @@ test("a long range's retries get labels in minutes and hours", () => {
   const labels = layout(marks, w, 150, pen, measure).brackets.map((b) => b.label).filter(Boolean);
   assert.ok(labels.includes("+2 h") && labels.includes("+30 min"), `labels: ${labels}`);
 });
+
+test("a loaded row leaves the page exactly when its lane pruned it", () => {
+  const { pruned } = sandbox.HookwitnessStrip;
+  const low = { normal: 40, anomaly: 12 };
+  assert.equal(pruned("normal", 39, low), true);
+  assert.equal(pruned("normal", 40, low), false);
+  assert.equal(pruned("anomaly", 13, low), false); // an old anomaly outlives newer normal rows
+  assert.equal(pruned("anomaly", 11, low), true);
+  assert.equal(pruned("pinned", 1, low), false); // pinned: never pruned
+  assert.equal(pruned("anomaly", 99, { normal: 40, anomaly: 0 }), true); // the lane is empty
+  assert.equal(pruned("normal", 5, {}), false); // no watermarks: nothing known
+});

@@ -1,13 +1,20 @@
 package setup
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/emulate"
+	"github.com/petroladkin/hookwitness/internal/store"
 )
 
 var opts = Options{Reserved: "/admin", MaxWait: time.Minute}
@@ -46,7 +53,7 @@ func TestExportCarriesNoSecretValue(t *testing.T) {
 	if err := json.Unmarshal(b, &raw); err != nil {
 		t.Fatal(err)
 	}
-	if raw["hookwitness"] != float64(Format) {
+	if raw["hookwitness"] != float64(1) { // nothing newer used: 0.2 reads it
 		t.Errorf("format marker %v", raw["hookwitness"])
 	}
 	if !strings.Contains(string(b), `"name": "GH"`) || !strings.Contains(string(b), `"kind": "token"`) {
@@ -109,7 +116,9 @@ func TestParseRefuses(t *testing.T) {
 		{"not json", "hello", "not a hookwitness setup file"},
 		{"no marker", `{"endpoints":[]}`, "not a hookwitness setup file"},
 		{"marker of another type", `{"hookwitness":"1","endpoints":[]}`, "not a hookwitness setup file"},
-		{"newer", strings.Replace(good, `"hookwitness": 1`, `"hookwitness": 2`, 1), "newer hookwitness (format 2"},
+		{"newer", strings.Replace(good, `"hookwitness": 1`, `"hookwitness": 3`, 1), "newer hookwitness (format 3"},
+		{"bad retention", `{"hookwitness":2,"endpoints":[{"path":"/a","default":{"status":200},"retention":{"normal":{"count":0}}}]}`, "normal.count"},
+		{"unknown retention field", `{"hookwitness":2,"endpoints":[{"path":"/a","default":{"status":200},"retention":{"normal":{"keep":3}}}]}`, `unknown field "keep"`},
 		{"zero", strings.Replace(good, `"hookwitness": 1`, `"hookwitness": 0`, 1), "format 0"},
 		{"unknown top field", strings.Replace(good, `"hookwitness": 1,`, `"hookwitness": 1, "extra": true,`, 1), `unknown field "extra"`},
 		{"unknown nested field", strings.Replace(good, `"status": 202`, `"status": 202, "color": "red"`, 1), `unknown field "color"`},
@@ -139,5 +148,211 @@ func TestFileName(t *testing.T) {
 		if got := FileName(in); got != want {
 			t.Errorf("FileName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestRetentionInSetup: an endpoint's own retention travels in format 2
+// and is applied at import, pruning at once; a file without it gives the
+// defaults back.
+func TestRetentionInSetup(t *testing.T) {
+	ctx := context.Background()
+	var p store.Retention
+	if err := json.Unmarshal([]byte(`{"normal":{"count":3,"max_age":"36h"},"anomalies":{"count":0}}`), &p); err != nil {
+		t.Fatal(err)
+	}
+	f := Export(Source{Path: "/keep", Config: emulate.Config{Default: emulate.Reply{Status: 200}}, Retention: p})
+	b := f.JSON()
+	if f.Hookwitness != 2 || !strings.Contains(string(b), `"retention": {`) || !strings.Contains(string(b), `"max_age": "36h"`) ||
+		!strings.Contains(string(b), `"anomalies": {`) {
+		t.Fatalf("export with retention (format %d):\n%s", f.Hookwitness, b)
+	}
+	opts := Options{Reserved: "/admin", MaxWait: time.Minute, Keep: store.Keep{Normal: 1000, Anomalies: 1000}}
+	parsed, err := Parse(b, opts)
+	if err == nil && (parsed.Endpoints[0].Retention == nil || *parsed.Endpoints[0].Retention != p) {
+		t.Fatalf("parsed retention %+v", parsed.Endpoints[0].Retention)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "hw.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ep, _ := st.CreateEndpoint(ctx, "/keep")
+	for i := range 10 {
+		r := &store.Request{EndpointID: ep.ID, ReceivedAt: time.Now(), Method: "POST", Path: "/keep", Body: []byte(strconv.Itoa(i)), Size: 1, Status: 200}
+		if err := st.AddRequest(ctx, r, opts.Keep, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := Apply(ctx, st, parsed, Plan{Replace: Always}, opts)
+	if err != nil || res[0].Result != Replaced || res[0].Pruned != 7 {
+		t.Fatalf("import: %+v %v", res, err)
+	}
+	got, _ := st.Endpoint(ctx, ep.ID)
+	if got.Count != 3 || got.Kept.Policy != p {
+		t.Fatalf("after the import: %d kept, policy %+v", got.Count, got.Kept.Policy)
+	}
+	if res, _ := Apply(ctx, st, parsed, Plan{Replace: Always}, opts); res[0].Result != Unchanged || res[0].Pruned != 0 {
+		t.Fatalf("the same file again: %+v", res)
+	}
+	plain, _ := Parse(Export(Source{Path: "/keep", Config: emulate.Config{Default: emulate.Reply{Status: 200}}}).JSON(), opts)
+	if res, _ := Apply(ctx, st, plain, Plan{Replace: Always}, opts); res[0].Result != Replaced {
+		t.Fatalf("a file without retention: %+v", res)
+	}
+	if got, _ := st.Endpoint(ctx, ep.ID); !got.Kept.Policy.IsZero() {
+		t.Fatalf("a file without retention left %+v", got.Kept.Policy)
+	}
+}
+
+// TestDeliveryInSetup: the event source and the delivery checks travel in
+// format 2; nothing new used stays format 1.
+func TestDeliveryInSetup(t *testing.T) {
+	cfg := emulate.Config{Default: emulate.Reply{Status: 200}, Event: &emulate.Source{From: emulate.FromHeader, Key: "X-GitHub-Delivery"},
+		Checks: []emulate.Check{{Kind: emulate.KindBackoff, FirstS: 5}}}
+	f := Export(Source{Path: "/gh", Config: cfg})
+	b := f.JSON()
+	if f.Hookwitness != 2 || !strings.Contains(string(b), `"event": {`) || !strings.Contains(string(b), `"kind": "backoff"`) {
+		t.Fatalf("format %d:\n%s", f.Hookwitness, b)
+	}
+	parsed, err := Parse(b, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parsed.Endpoints[0].Config(nil)
+	if got.Event == nil || *got.Event != *cfg.Event || len(got.Checks) != 1 || got.Checks[0].FirstS != 5 {
+		t.Fatalf("round trip: %+v", got)
+	}
+	if f := Export(Source{Path: "/x", Config: emulate.Config{Default: emulate.Reply{Status: 200}, Checks: []emulate.Check{{Kind: emulate.KindDuplicates}}}}); f.Hookwitness != 2 {
+		t.Fatalf("a delivery check alone: format %d", f.Hookwitness)
+	}
+}
+
+// TestClockRulesInSetup: rules by time and state travel in format 2 and
+// come back the same; the clock and the rules' state are not part of a
+// setup file.
+func TestClockRulesInSetup(t *testing.T) {
+	rules := []emulate.Rule{
+		{When: emulate.Condition{Kind: emulate.WhenWindow, ToS: 1.5}, Do: emulate.ActDrop},
+		{When: emulate.Condition{Kind: emulate.WhenFlap, Down: 1, Up: 2, Unit: "requests"}, Do: emulate.ActTimeout},
+		{When: emulate.Condition{Kind: emulate.WhenRate, N: 5, PerS: 10, BlockS: 30}, Do: emulate.ActReply,
+			Reply: emulate.Reply{Status: 429, Headers: []emulate.Header{{Name: "Retry-After", Value: "{{.RetryAfter}}"}}}},
+		{When: emulate.Condition{Kind: emulate.WhenAttempts, N: 2}, Do: emulate.ActReply, Reply: emulate.Reply{Status: 503}},
+	}
+	for i, r := range rules {
+		cfg := emulate.Config{Default: emulate.Reply{Status: 200}, Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenEvery, N: 2}, Do: emulate.ActDrop}, r}}
+		f := Export(Source{Path: "/clock", Config: cfg})
+		b := f.JSON()
+		if f.Hookwitness != 2 || strings.Contains(string(b), "start") || strings.Contains(string(b), "state") {
+			t.Fatalf("rule %d: format %d:\n%s", i, f.Hookwitness, b)
+		}
+		parsed, err := Parse(b, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := parsed.Endpoints[0].Config(nil); got.String() != cfg.String() {
+			t.Fatalf("rule %d round trip:\n%s\nwant\n%s", i, got.String(), cfg.String())
+		}
+	}
+	if f := Export(Source{Path: "/count", Config: emulate.Config{Default: emulate.Reply{Status: 200},
+		Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenFirst, N: 2}, Do: emulate.ActDrop}}}}); f.Hookwitness != 1 {
+		t.Fatalf("rules by count only: format %d", f.Hookwitness)
+	}
+	bad := `{"hookwitness":2,"endpoints":[{"path":"/w","default":{"status":200},"rules":[{"when":{"kind":"window","from_s":5,"to_s":5},"do":"drop"}],"checks":[],"vars":[],"schemas":[],"secrets":[]}]}`
+	if _, err := Parse([]byte(bad), opts); err == nil || !strings.Contains(err.Error(), "to_s must be above from_s") {
+		t.Fatalf("an empty window: %v", err)
+	}
+}
+
+// An export that uses nothing newer than 0.2 is what 0.2.0 wrote, byte for
+// byte, so 0.2 reads it: testdata/release-0.2/export.json was written by the
+// v0.2.0 code from config.json, an endpoint with every part 0.2 knew.
+func TestExportAsRelease02(t *testing.T) {
+	b, err := os.ReadFile("testdata/release-0.2/config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	var c emulate.Config
+	if err := d.Decode(&c); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Validate(time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile("testdata/release-0.2/export.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Export(Source{Path: "/orders", Config: c}).JSON(); !bytes.Equal(got, want) {
+		t.Fatalf("the export differs from 0.2.0's:\n%s", got)
+	}
+}
+
+// TestForwardInSetup: a receiver travels as configured in format 2 and
+// comes back the same, the rules' forward switch with it; a receiver with a
+// query is refused at parse.
+func TestForwardInSetup(t *testing.T) {
+	cfg := emulate.Config{Default: emulate.Reply{Status: 202},
+		Forward: &emulate.Forward{URL: "https://receiver.test/in", KeepHost: true, TimeoutMs: 5000, OnFailure: emulate.OnFailureDefault},
+		Rules:   []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenEvery, N: 3}, Do: emulate.ActDrop, Forward: true}}}
+	f := Export(Source{Path: "/live", Config: cfg})
+	b := f.JSON()
+	if f.Hookwitness != 2 || !strings.Contains(string(b), `"url": "https://receiver.test/in"`) {
+		t.Fatalf("format %d:\n%s", f.Hookwitness, b)
+	}
+	parsed, err := Parse(b, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Endpoints[0].Config(nil); got.String() != cfg.String() {
+		t.Fatalf("round trip:\n%s\nwant\n%s", got.String(), cfg.String())
+	}
+	// The rule's switch alone is format 2.
+	sw := emulate.Config{Default: emulate.Reply{Status: 200}, Rules: []emulate.Rule{{When: emulate.Condition{Kind: emulate.WhenFirst, N: 1}, Do: emulate.ActDrop, Forward: true}}}
+	if f := Export(Source{Path: "/x", Config: sw}); f.Hookwitness != 2 {
+		t.Fatalf("a rule's switch: format %d", f.Hookwitness)
+	}
+	bad := `{"hookwitness":2,"endpoints":[{"path":"/q","default":{"status":200},"forward":{"url":"https://receiver.test/in?token=1"},"rules":[],"checks":[],"vars":[],"schemas":[],"secrets":[]}]}`
+	if _, err := Parse([]byte(bad), opts); err == nil || !strings.Contains(err.Error(), "must not have a query") {
+		t.Fatalf("a receiver with a query: %v", err)
+	}
+}
+
+// The receiver judge sees the receiver stored when the import runs, inside
+// its transaction, and refuses the whole import.
+func TestReceiverJudgedAtImport(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "hw.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ep, _ := st.CreateEndpoint(ctx, "/x")
+	with := emulate.Config{Default: emulate.Reply{Status: 200}, Forward: &emulate.Forward{URL: "https://receiver.test/in"}}
+	st.SetConfig(ctx, ep.ID, with.String())
+	f, err := Parse([]byte(`{"hookwitness":1,"endpoints":[{"path":"/x","default":{"status":204},"rules":[],"checks":[],"vars":[],"schemas":[],"secrets":[]}]}`), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen *emulate.Forward
+	o := opts
+	o.Receiver = func(path string, before, after *emulate.Forward) error {
+		seen = before
+		if before != nil && after == nil {
+			return errors.New("refused: it removes the receiver")
+		}
+		return nil
+	}
+	if _, err := Apply(ctx, st, f, Plan{Replace: Always}, o); err == nil || !strings.Contains(err.Error(), "removes the receiver") {
+		t.Fatalf("import: %v", err)
+	}
+	if seen == nil || seen.URL != "https://receiver.test/in" {
+		t.Fatalf("the judge saw %+v", seen)
+	}
+	if got, _ := st.Endpoint(ctx, ep.ID); got.Config != with.String() {
+		t.Fatalf("stored after a refused import: %s", got.Config)
 	}
 }

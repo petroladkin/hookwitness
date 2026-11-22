@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/petroladkin/hookwitness/internal/access"
+	"github.com/petroladkin/hookwitness/internal/live"
 	"github.com/petroladkin/hookwitness/internal/send"
 	"github.com/petroladkin/hookwitness/internal/store"
 	"github.com/petroladkin/hookwitness/internal/wire"
@@ -69,6 +70,9 @@ type Options struct {
 	Policy  send.Policy
 	MaxWait time.Duration // the longest timeout a replay may ask for
 	Budget  Budget
+	// Live is told when a request gets a replay, so open registers show
+	// "replayed N" at once; nil tells nobody.
+	Live *live.Broker
 	// SlotWait is how long a replay waits for a slot; 0 means SlotWait.
 	SlotWait time.Duration
 
@@ -83,6 +87,9 @@ type Service struct {
 	log   *slog.Logger
 	o     Options
 	slots chan struct{}
+
+	// body loads a request's body (a seam for tests).
+	body func(ctx context.Context, id int64) ([]byte, error)
 
 	stopCtx context.Context // done on Stop
 	stop    context.CancelFunc
@@ -100,7 +107,7 @@ func New(st *store.Store, log *slog.Logger, o Options) *Service {
 	if o.Send == nil {
 		o.Send = send.Send
 	}
-	s := &Service{st: st, log: log, o: o, slots: make(chan struct{}, Slots)}
+	s := &Service{st: st, log: log, o: o, slots: make(chan struct{}, Slots), body: st.RequestBody}
 	s.stopCtx, s.stop = context.WithCancel(context.Background())
 	return s
 }
@@ -156,7 +163,9 @@ func (s *Service) Replay(ctx context.Context, id int64, in Input) (store.Replay,
 		s.refused(ctx, id, u)
 		return store.Replay{}, err
 	}
-	req, err := s.st.Request(ctx, id)
+	// The body is loaded only once a slot and its bytes are held: replays
+	// refused as busy never hold it.
+	req, err := s.st.RequestHead(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
 		return store.Replay{}, ErrNotFound
 	}
@@ -164,6 +173,8 @@ func (s *Service) Replay(ctx context.Context, id int64, in Input) (store.Replay,
 		return store.Replay{}, err
 	}
 	switch {
+	case req.BodyDropped:
+		return store.Replay{}, &NotKeptError{store.DroppedReason + ", so it cannot be sent as it arrived"}
 	case req.TooLarge:
 		return store.Replay{}, &NotKeptError{"the body of this request was not kept (over the size limit, or the server was busy), so it cannot be sent as it arrived"}
 	case req.Kept < req.Size:
@@ -185,12 +196,19 @@ func (s *Service) Replay(ctx context.Context, id int64, in Input) (store.Replay,
 		return store.Replay{}, ctx.Err()
 	}
 	defer func() { <-s.slots }()
-	n := int64(len(req.Body))
+	n := req.Size
 	if s.o.Budget != nil && !s.o.Budget.Reserve(n) {
 		return store.Replay{}, ErrBusy
 	}
 	if s.o.Budget != nil {
 		defer s.o.Budget.Release(n)
+	}
+	req.Body, err = s.body(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.Replay{}, ErrNotFound // pruned or cleared meanwhile
+	}
+	if err != nil {
+		return store.Replay{}, err
 	}
 	s.running.Add(1)
 	defer s.running.Done()
@@ -249,6 +267,9 @@ func (s *Service) Replay(ctx context.Context, id int64, in Input) (store.Replay,
 			return store.Replay{}, ErrNotFound // cleared while it was sent
 		}
 		return store.Replay{}, err
+	}
+	if s.o.Live != nil {
+		s.o.Live.Publish(rp.Register)
 	}
 	attrs := []any{"request", id, "target", Origin(u), "replay", rp.ID, "ms", rp.Duration.Milliseconds()}
 	if rp.ErrorKind != "" {

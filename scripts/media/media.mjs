@@ -242,6 +242,16 @@ await behave(retry, {
   rules: [{ when: { kind: "first", n: 2 }, do: "reply", reply: { status: 503, headers: [{ name: "Retry-After", value: "2" }] } }],
 });
 await shot("behaviour-rule-edit", `${UI}/e/${retry}/behaviour?tab=rules&edit=rule-0`, { selector: dialog });
+// Rules by time: /deploy/hook is down for its first 2 s; /api/limited allows
+// 2 requests in 10 s, and the third trips its 2 s block.
+const raHeader = [{ name: "Retry-After", value: "{{.RetryAfter}}" }];
+const deploy = (await api("POST", "/endpoints", { path: "/deploy/hook" })).json.id;
+await behave(deploy, { rules: [{ when: { kind: "window", to_s: 2 }, do: "reply", reply: { status: 503, headers: raHeader } }] });
+await shot("behaviour-rule-window", `${UI}/e/${deploy}/behaviour?tab=rules&edit=rule-0`, { selector: dialog, maxHeight: 1100 });
+const limited = (await api("POST", "/endpoints", { path: "/api/limited" })).json.id;
+await behave(limited, { rules: [{ when: { kind: "rate", n: 2, per_s: 10, block_s: 2 }, do: "reply", reply: { status: 429, headers: raHeader } }] });
+for (let i = 0; i < 3; i++) await send("/api/limited", "{}", { "User-Agent": "curl/8.7.1" });
+await shot("behaviour-rules-clock", `${UI}/e/${limited}/behaviour?tab=rules`);
 const slack = (await api("POST", "/endpoints", { path: "/slack/events" })).json.id;
 await behave(slack, {
   default: { status: 200, headers: [{ name: "Content-Type", value: "application/json" }], body: '{"challenge":"{{.JSON "challenge"}}"}' },
@@ -301,6 +311,58 @@ if (!only.length || only.includes("report-html")) {
   writeFileSync(join(work, "report.html"), await res.text());
 }
 await shot("report-html", `file://${join(work, "report.html")}`, { maxHeight: 1000 });
+
+// docs/delivery.md: /github/push names GitHub's delivery header as its event
+// id and has the three delivery checks; its first delivery is answered 503
+// by a rule, and the same delivery comes three times (pass, pass, fail).
+{
+  const gp = (await api("POST", "/endpoints", { path: "/github/push" })).json.id;
+  await behave(gp, {
+    event: { from: "header", key: "X-GitHub-Delivery" },
+    checks: [{ kind: "duplicates" }, { kind: "order", order: { from: "body", key: "/head_commit/timestamp", as: "time" } },
+      { kind: "backoff", first_s: 1, max_s: 3600, max_attempts: 8 }],
+    rules: [{ when: { kind: "first", n: 1 }, do: "reply", reply: { status: 503 } }],
+  });
+  const push = JSON.stringify({ ref: "refs/heads/main", head_commit: { id: "3f9c2e1", timestamp: "2026-11-02T12:00:00Z" } });
+  const delivery = { "X-GitHub-Delivery": "7a1e0c3e-delivery", "X-GitHub-Event": "push" };
+  await send("/github/push", push, delivery);
+  await sleep(1000);
+  await send("/github/push", push, delivery);
+  await sleep(600);
+  await send("/github/push", push, delivery);
+  await shot("delivery-checks", `${UI}/e/${gp}/behaviour?tab=checks`, { maxHeight: 700 });
+  // Wide, the exhibit scrolls on its own: bring its Verdicts to the top.
+  // Narrow, the page scrolls: shoot the verdicts themselves.
+  await shot("delivery-duplicate", `${UI}/e/${gp}/r/${await byNo(gp, 3)}`, WIDTH < 821 ? { selector: "#exhibit .verdicts", maxHeight: 1600 } : { maxHeight: 800,
+    step: `(() => { const x = document.getElementById("exhibit"), v = x.querySelector(".verdicts").previousElementSibling;
+      if (x.scrollHeight > x.clientHeight) x.scrollTop = v.offsetTop - x.offsetTop - 12; else v.scrollIntoView(); })()` });
+  await api("DELETE", `/endpoints/${gp}`);
+}
+
+// docs/keeping.md: a minute of capture on /orders/capture, whose Rules tab
+// answers every 4th request 500, keeping the newest 5 normal requests and 4
+// anomalies, with #2 pinned: the strip hatches what both lanes lost (not
+// kept) and, lighter, where only anomalies are kept. Real time, about 60 s.
+const keepShots = ["keeping-register", "keeping-dialog", "keeping-pinned"];
+if (!only.length || only.some((n) => keepShots.includes(n))) {
+  const cap = (await api("POST", "/endpoints", { path: "/orders/capture" })).json.id;
+  await behave(cap, { rules: [{ when: { kind: "every", n: 4 }, do: "reply", reply: { status: 500 } }] });
+  await api("PATCH", `/endpoints/${cap}`, { retention: { normal: { count: 5 }, anomalies: { count: 4 } } });
+  let pinned = 0;
+  for (let i = 1; i <= 24; i++) {
+    await send("/orders/capture", JSON.stringify({ order: 1000 + i, status: "captured" }), { "Content-Type": "application/json" });
+    if (i === 2) {
+      pinned = await byNo(cap, 2);
+      await api("PUT", `/requests/${pinned}/pin`, {});
+    }
+    await sleep(2500);
+  }
+  await shot("keeping-register", `${UI}/e/${cap}`, { maxHeight: 640 });
+  await shot("keeping-dialog", `${UI}/e/${cap}?retention`, { selector: dialog, maxHeight: 1000,
+    step: `(() => { const f = document.querySelector('dialog[open] form'); f.elements.normal_count.value = "3"; f.submit(); })()` });
+  await shot("keeping-pinned", `${UI}/e/${cap}/r/${pinned}`, { maxHeight: 700 });
+  await api("DELETE", `/endpoints/${cap}`);
+}
 
 // docs/endpoints.md, "The strip": a sender's real minute on its own
 // endpoint, so every mark the text names is on the paper: a body retried
@@ -512,6 +574,24 @@ if (!only.length || ["replay-dialog", "replay-answer"].some((n) => only.includes
     step: `(() => { const x = document.getElementById("exhibit"), r = document.getElementById("replays");
       if (x.scrollHeight > x.clientHeight) x.scrollTop = r.offsetTop - x.offsetTop - 12; else r.scrollIntoView(); })()` });
   handler.close();
+}
+
+// docs/recorder.md: /live forwards to /mock, a second endpoint of the same
+// server that answers 201 by itself; one order passes through.
+{
+  const mock = (await api("POST", "/endpoints", { path: "/mock" })).json.id;
+  await behave(mock, { default: { status: 201, headers: [{ name: "Content-Type", value: "application/json" }], body: '{"accepted":true,"id":"ord_42"}' } });
+  const live = (await api("POST", "/endpoints", { path: "/live" })).json.id;
+  await behave(live, { forward: { url: `${HW}/mock` }, rules: [{ when: { kind: "every", n: 3 }, do: "reply", reply: { status: 503 }, forward: true }] });
+  await shot("behaviour-receiver", `${UI}/e/${live}/behaviour?tab=receiver`, { maxHeight: 620 });
+  await send("/live", JSON.stringify({ order: 42, total: "19.90" }), { "User-Agent": "shop-backend/2.3" });
+  await sleep(300);
+  const fwd = (await reqs(live))[0].id;
+  // Wide, the exhibit scrolls on its own: bring its Receiver to the top.
+  // Narrow, the page scrolls: shoot the section itself.
+  await shot("request-receiver", `${UI}/e/${live}/r/${fwd}`, WIDTH < 821 ? { selector: "#receiver", maxHeight: 1600 } : { maxHeight: 800,
+    step: `(() => { const x = document.getElementById("exhibit"), r = document.getElementById("receiver");
+      if (x.scrollHeight > x.clientHeight) x.scrollTop = r.offsetTop - x.offsetTop - 140; else r.scrollIntoView(); })()` });
 }
 
 // docs/troubleshooting.md, docs/deployment.md: the UI opened by a name that

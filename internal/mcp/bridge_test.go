@@ -49,7 +49,7 @@ func TestBridge(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	a := api.New(st, live.New(), log, api.Options{Prefix: "/admin", Reserved: "/admin", MaxWait: time.Minute, Keys: keys, Keyring: keys, Stop: make(chan struct{}), Version: "test"})
 	mux := http.NewServeMux()
-	mux.Handle("/admin/mcp", Handler(a, api.Base("/admin"), "test", log, nil, 0))
+	mux.Handle("/admin/mcp", Handler(a, api.Base("/admin"), "test", log, nil, 0, nil))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -64,7 +64,7 @@ func TestBridge(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := cs.ListTools(context.Background(), nil)
-	if err != nil || len(list.Tools) != 16 {
+	if err != nil || len(list.Tools) != 18 {
 		t.Fatalf("tools through the bridge: %v %v", err, list)
 	}
 	res, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "create_endpoint", Arguments: map[string]any{"path": "/via/stdio"}})

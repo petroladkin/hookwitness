@@ -64,6 +64,37 @@ setup_api_key() {
   hw_behave "$id" '.checks = [{"header":"X-Api-Key","match":"equals","value":"key_test","error":{"status":401,"headers":[{"name":"Content-Type","value":"application/json"}],"body":"{\"error\":\"bad key\"}"}}]'
 }
 
+# --- recorder ----------------------------------------------------------------
+
+# docs/recorder.md: /live forwards to /mock, a second endpoint of the same
+# server that answers 201 by itself.
+setup_recorder() {
+  local mock live
+  mock=$(hw_endpoint /mock)
+  hw_behave "$mock" '.default = {"status":201,"headers":[{"name":"Content-Type","value":"application/json"}],"body":"{\"ok\":true}"}' || return 1
+  live=$(hw_endpoint /live)
+  hw_behave "$live" ".forward = {\"url\":\"$HW/mock\"}"
+}
+
+# --- replies: rules by time and state ----------------------------------------
+
+setup_deploy_window() {
+  local id; id=$(hw_endpoint /deploy/hook)
+  hw_behave "$id" '.rules = [{"when":{"kind":"window","to_s":2},"do":"reply","reply":{"status":503,"headers":[{"name":"Retry-After","value":"{{.RetryAfter}}"}]}}]'
+}
+setup_rate_limited() {
+  local id; id=$(hw_endpoint /api/limited)
+  hw_behave "$id" '.rules = [{"when":{"kind":"rate","n":2,"per_s":10,"block_s":2},"do":"reply","reply":{"status":429,"headers":[{"name":"Retry-After","value":"{{.RetryAfter}}"}]}}]'
+}
+setup_flapping() {
+  local id; id=$(hw_endpoint /flaky/hook)
+  hw_behave "$id" '.rules = [{"when":{"kind":"flap","down":1,"up":1,"unit":"s"},"do":"reply","reply":{"status":503}}]'
+}
+setup_gone_after() {
+  local id; id=$(hw_endpoint /legacy/gone)
+  hw_behave "$id" '.rules = [{"when":{"kind":"window","from_s":2},"do":"reply","reply":{"status":410}}]'
+}
+
 # --- authorization -----------------------------------------------------------
 
 setup_hooks() { hw_endpoint /hooks >/dev/null; }
@@ -189,4 +220,18 @@ setup_payments_file() {
   ]
 }
 JSON
+}
+
+# --- keeping -----------------------------------------------------------------
+
+setup_capture() {
+  local id; id=$(hw_endpoint /orders/capture)
+  hw_behave "$id" '.rules = [{"when":{"kind":"every","n":4},"do":"reply","reply":{"status":500}}]'
+}
+
+# --- delivery ----------------------------------------------------------------
+
+setup_duplicates() {
+  local id; id=$(hw_endpoint /github/push)
+  hw_behave "$id" '.event = {"from":"header","key":"X-GitHub-Delivery"} | .checks = [{"kind":"duplicates"}] | .rules = [{"when":{"kind":"first","n":1},"do":"reply","reply":{"status":503}}]'
 }
